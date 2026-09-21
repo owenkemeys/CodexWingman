@@ -1,0 +1,13 @@
+{
+  "schemaVersion": 1,
+  "id": "turn-render-recovery",
+  "name": "Turn Render Recovery",
+  "version": "1.5.1",
+  "description": "Repairs clipped or omitted completed turns and restores the saved UI state of current active work without marking it complete.",
+  "refreshSeconds": 1,
+  "capabilities": [],
+  "entrypoints": {
+    "apply": "apply.js",
+    "remove": "remove.js"
+  }
+}

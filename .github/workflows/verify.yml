@@ -1,0 +1,47 @@
+name: Wingman verification
+on:
+  push:
+    branches: [main, 'task/**', 'setup/**']
+  pull_request:
+    branches: [main]
+  workflow_dispatch:
+permissions:
+  contents: read
+concurrency:
+  group: wingman-${{ github.ref }}
+  cancel-in-progress: true
+jobs:
+  verify:
+    runs-on: windows-latest
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262
+        with:
+          fetch-depth: 0
+      # checkout omits .git; use the exact URL required by the publisher.
+      - name: Set canonical release origin
+        run: |
+          $repository = (Get-Content release-repository.json -Raw | ConvertFrom-Json).repository
+          git remote set-url origin ($repository + '.git')
+      - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020
+        with:
+          node-version: '24'
+      - uses: actions/setup-dotnet@67a3573c9a986a3f9c594539f4ab511d57bb3ce9
+        with:
+          dotnet-version: '9.0.x'
+      - uses: actions/setup-python@7f4fc3e22c37d6ff65e88745f38bd3157c663f7c
+        with:
+          python-version: '3.11'
+      - name: Verify exact source commit
+        run: python tools/release_provenance.py verify-source
+      - name: Build sealed main package
+        if: github.event_name == 'push' && github.ref == 'refs/heads/main'
+        shell: pwsh
+        run: ./scripts/Publish-CodexWingman.ps1 -Destination '${{ runner.temp }}/package/CodexWingman-verified'
+      - name: Preserve sealed package
+        if: github.event_name == 'push' && github.ref == 'refs/heads/main'
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02
+        with:
+          name: CodexWingman-${{ github.sha }}
+          path: ${{ runner.temp }}/package/CodexWingman-verified
+          retention-days: 14

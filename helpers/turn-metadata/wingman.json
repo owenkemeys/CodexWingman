@@ -1,0 +1,14 @@
+{
+  "schemaVersion": 1,
+  "id": "turn-metadata",
+  "name": "Turn Metadata",
+  "version": "1.0.6",
+  "description": "Shows recorded model and generation details for each completed assistant turn.",
+  "refreshSeconds": 5,
+  "capabilities": ["files.codexTargetSession"],
+  "entrypoints": {
+    "backend": "backend.js",
+    "apply": "apply.js",
+    "remove": "remove.js"
+  }
+}

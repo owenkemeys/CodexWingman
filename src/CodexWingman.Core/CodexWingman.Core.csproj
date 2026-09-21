@@ -1,0 +1,12 @@
+<Project Sdk="Microsoft.NET.Sdk">
+  <PropertyGroup>
+    <TargetFramework>net9.0</TargetFramework>
+    <ImplicitUsings>enable</ImplicitUsings>
+    <Nullable>enable</Nullable>
+    <RootNamespace>CodexWingman.Core</RootNamespace>
+  </PropertyGroup>
+  <ItemGroup>
+    <EmbeddedResource Include="Injection\usage-dials.mjs" LogicalName="CodexWingman.Core.Injection.usage-dials.mjs" />
+    <PackageReference Include="Jint" Version="4.11.0" />
+  </ItemGroup>
+</Project>

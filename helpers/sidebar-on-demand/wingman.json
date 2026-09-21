@@ -1,0 +1,13 @@
+{
+  "schemaVersion": 1,
+  "id": "sidebar-on-demand",
+  "name": "Sidebar on Demand",
+  "version": "1.1.0",
+  "description": "Keeps the floating sidebar closed until you deliberately open it.",
+  "refreshSeconds": 0,
+  "capabilities": [],
+  "entrypoints": {
+    "apply": "apply.js",
+    "remove": "remove.js"
+  }
+}

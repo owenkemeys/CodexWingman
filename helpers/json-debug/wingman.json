@@ -1,0 +1,11 @@
+{
+  "schemaVersion": 1,
+  "id": "json-debug",
+  "name": "JSON UI debug",
+  "version": "1.0.0",
+  "description": "Shows semantic UI canaries and refresh diagnostics in a renderer-local overlay.",
+  "enabledByDefault": false,
+  "refreshSeconds": 2,
+  "capabilities": [],
+  "entrypoints": { "apply": "apply.js", "remove": "remove.js" }
+}

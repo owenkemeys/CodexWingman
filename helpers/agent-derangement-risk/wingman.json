@@ -1,0 +1,14 @@
+{
+  "schemaVersion": 1,
+  "id": "agent-derangement-risk",
+  "name": "Agent Derangement Risk",
+  "version": "1.0.2",
+  "description": "Shows the estimated risk that a chat has become deranged by context history.",
+  "refreshSeconds": 2,
+  "capabilities": ["files.codexTargetSession"],
+  "entrypoints": {
+    "backend": "backend.js",
+    "apply": "apply.js",
+    "remove": "remove.js"
+  }
+}
