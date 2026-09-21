@@ -1,0 +1,13 @@
+{
+  "schemaVersion": 1,
+  "id": "new-chat-window",
+  "name": "New chat in new window",
+  "version": "1.0.0",
+  "description": "Adds a New chat in new window command to semantic New Chat controls.",
+  "refreshSeconds": 2,
+  "capabilities": ["codex.openNewChatWindow"],
+  "entrypoints": {
+    "apply": "apply.js",
+    "remove": "remove.js"
+  }
+}
