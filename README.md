@@ -2,7 +2,7 @@
 
 MIT licensed. See [LICENSE](LICENSE) and [third-party notices](THIRD_PARTY_NOTICES.md).
 
-Start here: [Agent setup and customization](docs/AGENT_SETUP.md). Give this repository link to your agent and ask it to install Wingman, configure local integrations, and report unresolved choices. Windows only; no Jarvis or shared server required.
+Start here: [Agent setup and customization](docs/AGENT_SETUP.md). Give this repository link to your agent and ask it to install Wingman, configure local integrations, and report unresolved choices. Windows only.
 
 **Launch Codex through the Codex Wingman shortcut.** Wingman automatically launches Codex with the connection its helpers need. Installing agents must create that shortcut, launch it, verify that Codex opens through Wingman, and tell the user to use it for normal launches. Installing Wingman without launching it does not activate the helpers.
 
