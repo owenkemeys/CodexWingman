@@ -1,5 +1,5 @@
 (() => {
-  const version = 'turn-metadata-v7'
+  const version = 'turn-metadata-v8'
   const owner = 'turn-metadata'
   const globalName = '__codexHelperTurnMetadata'
   const existing = window[globalName]
@@ -277,6 +277,25 @@
 
   const observedRootFor = (turn) =>
     turn.closest('[data-request-user-input-auto-resolution-conversation-id]') || turn.parentElement
+  const recordForTurn = (turn) => {
+    const key = turn.getAttribute('data-turn-key')
+    const annotation = turn.querySelector('[data-response-annotation-conversation]')
+    if (annotation && annotation.getAttribute('data-response-annotation-conversation') !== snapshot?.threadId) return null
+    const direct = records()[key]
+    if (direct?.turnId === key) return direct
+    // Current virtualized rows expose display keys. Read only the exact row's
+    // committed entry; never search conversation arrays, alternate fibers or text.
+    const fiberKey = Object.getOwnPropertyNames(turn).find((name) => name.startsWith('__reactFiber$'))
+    let fiber = fiberKey ? turn[fiberKey] : null
+    for (let depth = 0; fiber && depth < 8; depth++, fiber = fiber.return) {
+      const entry = fiber.memoizedProps?.entry
+      if (!entry || entry.turnKey !== key) continue
+      if (entry.conversationId !== snapshot?.threadId || entry.turn?.turnId !== entry.turnId) return null
+      const record = records()[entry.turnId]
+      return record?.turnId === entry.turnId ? record : null
+    }
+    return null
+  }
   const observeRoot = (root) => {
     if (!root || observers.has(root)) return
     const observer = new MutationObserver(() => queueReconcile())
@@ -287,9 +306,9 @@
     const active = new Set()
     for (const turn of document.querySelectorAll('[data-turn-key]')) {
       observeRoot(observedRootFor(turn))
-      const turnId = turn.getAttribute('data-turn-key')
-      const record = records()[turnId]
-      if (!record || record.turnId !== turnId) continue
+      const record = recordForTurn(turn)
+      if (!record) continue
+      const turnId = record.turnId
       const finalAssistant = turn.querySelector('[data-local-conversation-final-assistant="true"]')
       const annotation = finalAssistant?.querySelector('[data-response-annotation-target]')
       const copy = annotation
@@ -298,6 +317,8 @@
             const candidateToolbar = candidate.parentElement?.parentElement
             return candidateToolbar?.querySelector('button[aria-label="Continue in new task from here"]')
               || candidateToolbar?.querySelector('button[aria-label="Good response"]')
+              || candidateToolbar?.querySelector('button[aria-label="Fork chat from here"]')
+              || candidateToolbar?.querySelector('button[aria-label="Rate response"]')
           })
         : null
       const copyWrapper = copy?.parentElement
@@ -405,7 +426,7 @@
   const status = () => {
     const recordIds = Object.keys(records())
     const visibleRecordIds = [...document.querySelectorAll('[data-turn-key]')]
-      .map((turn) => turn.getAttribute('data-turn-key'))
+      .map((turn) => recordForTurn(turn)?.turnId)
       .filter((turnId) => recordIds.includes(turnId)
         && Boolean(document.querySelector(`[data-turn-metadata-slot][data-turn-id="${turnId}"]`)))
     return {
