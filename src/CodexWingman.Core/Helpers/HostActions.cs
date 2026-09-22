@@ -20,21 +20,21 @@ public sealed class HostActionDispatcher : IHostActionDispatcher
 {
     public const string OpenNewChatWindow = "codex.openNewChatWindow";
     public const string OpenObsidianUri = "system.openObsidianUri";
-    public const string OpenLibraryPath = "system.openLibraryPath";
+    public const string OpenFilePath = "system.openFilePath";
     public const string OpenChild = "wingman.openChild";
     public const string SystemHelperId = "__codex-wingman-system";
     private readonly ICdpEvaluator evaluator;
     private readonly Func<string, CancellationToken, Task> openObsidianUri;
-    private readonly Func<string, CancellationToken, Task> openLibraryPath;
+    private readonly Func<string, CancellationToken, Task> openFilePath;
 
     public HostActionDispatcher(
         ICdpEvaluator evaluator,
         Func<string, CancellationToken, Task>? openObsidianUri = null,
-        Func<string, CancellationToken, Task>? openLibraryPath = null)
+        Func<string, CancellationToken, Task>? openFilePath = null)
     {
         this.evaluator = evaluator;
         this.openObsidianUri = openObsidianUri ?? LaunchObsidianUriAsync;
-        this.openLibraryPath = openLibraryPath ?? LaunchLibraryPathAsync;
+        this.openFilePath = openFilePath ?? LaunchFilePathAsync;
     }
 
     public Task DispatchAsync(HostActionRequest request, CancellationToken cancellationToken = default) =>
@@ -42,7 +42,7 @@ public sealed class HostActionDispatcher : IHostActionDispatcher
         {
             OpenNewChatWindow => CodexOpenNewChatWindowAdapter.DispatchAsync(evaluator, request, cancellationToken),
             OpenObsidianUri => ObsidianUriOpenAdapter.DispatchAsync(request, openObsidianUri, cancellationToken),
-            OpenLibraryPath => LibraryPathOpenAdapter.DispatchAsync(request, openLibraryPath, cancellationToken),
+            OpenFilePath => FilePathOpenAdapter.DispatchAsync(request, openFilePath, cancellationToken),
             _ => throw new InvalidOperationException($"Unknown Host Action '{request.Action}'"),
         };
 
@@ -51,14 +51,14 @@ public sealed class HostActionDispatcher : IHostActionDispatcher
         OpenNewChatWindow => OpenNewChatWindow,
         OpenChild => OpenNewChatWindow,
         OpenObsidianUri => OpenObsidianUri,
-        OpenLibraryPath => OpenLibraryPath,
+        OpenFilePath => OpenFilePath,
         _ => throw new InvalidOperationException($"Unknown Host Action '{action}'"),
     };
 
     public static bool IsKnownCapability(string? capability) =>
         string.Equals(capability, OpenNewChatWindow, StringComparison.Ordinal)
         || string.Equals(capability, OpenObsidianUri, StringComparison.Ordinal)
-        || string.Equals(capability, OpenLibraryPath, StringComparison.Ordinal);
+        || string.Equals(capability, OpenFilePath, StringComparison.Ordinal);
 
     private static Task LaunchObsidianUriAsync(string uri, CancellationToken cancellationToken)
     {
@@ -68,23 +68,23 @@ public sealed class HostActionDispatcher : IHostActionDispatcher
         return Task.CompletedTask;
     }
 
-    private static async Task LaunchLibraryPathAsync(string path, CancellationToken cancellationToken)
+    private static async Task LaunchFilePathAsync(string path, CancellationToken cancellationToken)
     {
         cancellationToken.ThrowIfCancellationRequested();
-        var existingPath = LibraryPathOpenAdapter.RequireExistingFileOrDirectory(path);
+        var existingPath = FilePathOpenAdapter.RequireExistingFileOrDirectory(path);
         var isDirectory = Directory.Exists(existingPath);
         var process = Process.Start(new ProcessStartInfo(existingPath) { UseShellExecute = true });
         if (process is null)
         {
             if (isDirectory) return;
-            throw new InvalidOperationException("Windows did not start the registered application for the Library file");
+            throw new InvalidOperationException("Windows did not start the registered application for the file");
         }
         _ = await WindowsForegroundActivator.ActivateProcessAsync(process, cancellationToken);
     }
 
 }
 
-public static class LibraryPathOpenAdapter
+public static class FilePathOpenAdapter
 {
     public static string RequireExistingFileOrDirectory(string path)
     {
@@ -184,19 +184,19 @@ public static class LibraryPathOpenAdapter
             || payload.EnumerateObject().Count() != 1
             || !payload.TryGetProperty("path", out var pathElement)
             || pathElement.ValueKind != JsonValueKind.String)
-            throw new InvalidOperationException("system.openLibraryPath requires only path");
+            throw new InvalidOperationException("system.openFilePath requires only path");
 
         var path = pathElement.GetString();
         if (string.IsNullOrWhiteSpace(path) || path.Any(char.IsControl)
             || path.Length < 3 || !char.IsAsciiLetter(path[0]) || path[1] != ':' || path[2] != '/'
             || path.Contains('\\'))
-            throw new InvalidOperationException("system.openLibraryPath requires a normalized absolute Windows drive file or folder path");
+            throw new InvalidOperationException("system.openFilePath requires a normalized absolute Windows drive file or folder path");
 
         var suffix = path[3..];
         if (suffix.Length > 0 && (suffix.EndsWith('/')
             || suffix.Split('/').Any(segment => segment is "" or "." or ".."
                 || segment.IndexOfAny("<>:\"|?*".ToCharArray()) >= 0)))
-            throw new InvalidOperationException("system.openLibraryPath requires a normalized absolute Windows drive file or folder path");
+            throw new InvalidOperationException("system.openFilePath requires a normalized absolute Windows drive file or folder path");
         return path;
     }
 
@@ -204,7 +204,7 @@ public static class LibraryPathOpenAdapter
         HostActionRequest request,
         Func<string, CancellationToken, Task> launcher,
         CancellationToken cancellationToken = default) =>
-        launcher(Parse(request.Payload ?? throw new InvalidOperationException("system.openLibraryPath requires a payload")), cancellationToken);
+        launcher(Parse(request.Payload ?? throw new InvalidOperationException("system.openFilePath requires a payload")), cancellationToken);
 }
 
 public static class ObsidianUriOpenAdapter

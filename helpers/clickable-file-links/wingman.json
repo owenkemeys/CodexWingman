@@ -1,0 +1,19 @@
+{
+  "schemaVersion": 1,
+  "id": "clickable-file-links",
+  "name": "Clickable file links",
+  "version": "1.4.0",
+  "description": "Opens native Codex file and folder references in their Windows applications, with optional remote path mappings.",
+  "refreshSeconds": 0,
+  "capabilities": [
+    "system.openFilePath"
+  ],
+  "config": {
+    "mappings": [],
+    "excludePrefixes": []
+  },
+  "entrypoints": {
+    "apply": "apply.js",
+    "remove": "remove.js"
+  }
+}

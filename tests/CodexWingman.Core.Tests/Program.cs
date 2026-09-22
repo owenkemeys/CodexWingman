@@ -1214,24 +1214,24 @@ try
     }
     Equal("obsidian://open?vault=Library&file=Existing.md", openedObsidianUris.Single(), "Obsidian Host Action preserves legacy open URIs");
 
-    var openedLibraryPaths = new List<string>();
-    using (var libraryPathPayload = JsonDocument.Parse(JsonSerializer.Serialize(new { path = "R:/codex/Projects/ExampleWorkspace/Example Project/home.html" })))
+    var openedFilePaths = new List<string>();
+    using (var filePathPayload = JsonDocument.Parse(JsonSerializer.Serialize(new { path = "R:/codex/Projects/ExampleWorkspace/Example Project/home.html" })))
     {
         await new HostActionDispatcher(
             adapterEvaluator,
-            openLibraryPath: (path, _) => { openedLibraryPaths.Add(path); return Task.CompletedTask; }).DispatchAsync(
-            new HostActionRequest("example-file-links", HostActionDispatcher.OpenLibraryPath, libraryPathPayload.RootElement, hostTargets[0]));
+            openFilePath: (path, _) => { openedFilePaths.Add(path); return Task.CompletedTask; }).DispatchAsync(
+            new HostActionRequest("clickable-file-links", HostActionDispatcher.OpenFilePath, filePathPayload.RootElement, hostTargets[0]));
     }
-    Equal("R:/codex/Projects/ExampleWorkspace/Example Project/home.html", openedLibraryPaths.Single(), "Library path Host Action preserves a normalized J path for the Windows shell");
-    openedLibraryPaths.Clear();
+    Equal("R:/codex/Projects/ExampleWorkspace/Example Project/home.html", openedFilePaths.Single(), "File path Host Action preserves a normalized J path for the Windows shell");
+    openedFilePaths.Clear();
     using (var localWindowsPathPayload = JsonDocument.Parse(JsonSerializer.Serialize(new { path = "C:/Users/Example/Documents/Tools/Example Tool.exe" })))
     {
         await new HostActionDispatcher(
             adapterEvaluator,
-            openLibraryPath: (path, _) => { openedLibraryPaths.Add(path); return Task.CompletedTask; }).DispatchAsync(
-            new HostActionRequest("example-file-links", HostActionDispatcher.OpenLibraryPath, localWindowsPathPayload.RootElement, hostTargets[0]));
+            openFilePath: (path, _) => { openedFilePaths.Add(path); return Task.CompletedTask; }).DispatchAsync(
+            new HostActionRequest("clickable-file-links", HostActionDispatcher.OpenFilePath, localWindowsPathPayload.RootElement, hostTargets[0]));
     }
-    Equal("C:/Users/Example/Documents/Tools/Example Tool.exe", openedLibraryPaths.Single(), "path Host Action preserves a normalized absolute local Windows path without an extension allowlist");
+    Equal("C:/Users/Example/Documents/Tools/Example Tool.exe", openedFilePaths.Single(), "path Host Action preserves a normalized absolute local Windows path without an extension allowlist");
     var foregroundHandles = new Queue<IntPtr>(new[] { IntPtr.Zero, new IntPtr(42) });
     var foregroundActivations = new List<IntPtr>();
     var foregroundDelays = 0;
@@ -1241,9 +1241,9 @@ try
         (_, _) => { foregroundDelays++; return Task.CompletedTask; },
         attempts: 3,
         CancellationToken.None);
-    Equal(true, foregroundActivated, "Library file launching activates the first available application window");
-    Equal(1, foregroundDelays, "Library file launching waits while the associated application creates its window");
-    Equal(new IntPtr(42), foregroundActivations.Single(), "Library file launching targets the associated application window");
+    Equal(true, foregroundActivated, "file launching activates the first available application window");
+    Equal(1, foregroundDelays, "file launching waits while the associated application creates its window");
+    Equal(new IntPtr(42), foregroundActivations.Single(), "file launching targets the associated application window");
 
     foreach (var invalidPath in new[]
     {
@@ -1253,8 +1253,8 @@ try
         "R://codex/file.html",
     })
     {
-        using var invalidLibraryPathPayload = JsonDocument.Parse(JsonSerializer.Serialize(new { path = invalidPath }));
-        Throws<InvalidOperationException>(() => LibraryPathOpenAdapter.Parse(invalidLibraryPathPayload.RootElement), $"Library path Host Action rejects {invalidPath}");
+        using var invalidFilePathPayload = JsonDocument.Parse(JsonSerializer.Serialize(new { path = invalidPath }));
+        Throws<InvalidOperationException>(() => FilePathOpenAdapter.Parse(invalidFilePathPayload.RootElement), $"File path Host Action rejects {invalidPath}");
     }
 
     openedObsidianUris.Clear();
