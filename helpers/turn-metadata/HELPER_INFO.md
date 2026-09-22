@@ -1,7 +1,7 @@
 # Turn Metadata
 
-- Helper generation: v7
-- Manifest version: 1.0.6
+- Helper generation: v8
+- Manifest version: 1.0.7
 - Helper ID: `turn-metadata`
 
 ## Purpose and behavior
@@ -19,7 +19,7 @@ The Helper associates records only through Codex's exact turn ID. It uses `files
 
 ## Sharp edges and failure behavior
 
-The renderer depends on Codex's semantic `data-turn-key`, final-assistant marker, response annotation, and native Copy action. If any exact identity or anchor is absent, the Helper shows nothing for that turn. Missing historical fields remain absent and produce a partial-data notice. Malformed or unavailable session data fails closed.
+The renderer depends on Codex's semantic `data-turn-key`, final-assistant marker, response annotation, and native Copy action. Current virtualized history uses display keys, so the helper reads the committed React entry bound to that exact row and verifies its conversation and turn IDs against the session record. It does not infer identity from text, ordering, timestamps, alternate fibers, or conversation arrays. It recognizes both current and earlier native response action labels. If any exact identity or anchor is absent, the Helper shows nothing for that turn. Missing historical fields remain absent and produce a partial-data notice. Malformed or unavailable session data fails closed.
 
 Disable the Helper or choose `Reload helpers` to run its cleanup. Cleanup leaves Codex's native response actions, tooltips, messages, and conversation state unchanged.
 

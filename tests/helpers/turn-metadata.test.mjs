@@ -19,7 +19,7 @@ test('Turn Metadata package declares the target-scoped readable contract', async
     schemaVersion: 1,
     id: 'turn-metadata',
     name: 'Turn Metadata',
-    version: '1.0.6',
+    version: '1.0.7',
     description: 'Shows recorded model and generation details for each completed assistant turn.',
     refreshSeconds: 5,
     capabilities: ['files.codexTargetSession'],
@@ -119,6 +119,36 @@ function completeRecord(turnId) {
     completeness: 'complete',
   }
 }
+
+test('current virtualized history resolves exact entry identity and current native action labels', async () => {
+  const fixture = createBrowserFixture()
+  try {
+    const id = '019f61c0-4444-7444-8444-444444444444'
+    const threadId = '019f61c0-3333-7333-8333-333333333333'
+    const key = 'history-content:tail:0:local:11111111-2222-4333-8444-555555555555'
+    const matching = makeTurn(fixture.document, key)
+    matching.annotation.setAttribute('data-response-annotation-conversation', threadId)
+    matching.toolbar.querySelector('button[aria-label="Continue in new task from here"]').setAttribute('aria-label', 'Fork chat from here')
+    const entry = { turnKey: key, conversationId: threadId, turnId: id, turn: { turnId: id } }
+    matching.turn.__reactFiber$fixture = { memoizedProps: {}, return: { memoizedProps: { entry }, return: null } }
+    executeRenderer(await requiredFile('apply.js'), fixture, { state: { threadId, records: { [id]: completeRecord(id) } } })
+    await fixture.flush()
+    assert.equal(fixture.document.querySelectorAll('[data-turn-metadata-trigger]').length, 1)
+    assert.equal(matching.toolbar.querySelector('[data-turn-metadata-trigger]').getAttribute('data-turn-id'), id)
+    assert.deepEqual(Array.from(fixture.window.__codexHelperTurnMetadata.status().visibleRecordIds), [id])
+    entry.conversationId = '019f61c0-7777-7777-8777-777777777777'
+    fixture.window.__codexHelperTurnMetadata.reconcile()
+    assert.equal(fixture.document.querySelectorAll('[data-turn-metadata-trigger]').length, 0)
+    entry.conversationId = threadId
+    entry.turnKey = 'different-row'
+    fixture.window.__codexHelperTurnMetadata.reconcile()
+    assert.equal(fixture.document.querySelectorAll('[data-turn-metadata-trigger]').length, 0)
+    entry.turnKey = key
+    entry.turn.turnId = '019f61c0-7777-7777-8777-777777777777'
+    fixture.window.__codexHelperTurnMetadata.reconcile()
+    assert.equal(fixture.document.querySelectorAll('[data-turn-metadata-trigger]').length, 0)
+  } finally { fixture.dispose() }
+})
 
 test('renderer places metadata and timestamp inside the native action holder with one shared visibility owner', async () => {
   const fixture = createBrowserFixture()
