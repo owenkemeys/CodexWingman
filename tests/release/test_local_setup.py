@@ -13,7 +13,7 @@ class LocalSetup(unittest.TestCase):
  def test_no_vault_disables_only_optional_integration(self):
   old,new,notices=setup.plan(self.settings,self.registry)
   self.assertFalse(new['helperEnabled']['obsidian-links']);self.assertTrue(new['usageDialsEnabled'])
-  self.assertEqual(new['helperConfig']['jarvis-file-links']['mappings'],[])
+  self.assertEqual(new['helperConfig']['clickable-file-links']['mappings'],[])
   self.assertTrue(notices);self.assertFalse(self.settings.exists())
  def test_cli_is_noninteractive_and_returns_json(self):
   command=[sys.executable,str(Path(setup.__file__)),'--settings',str(self.settings),'--obsidian-registry',str(self.registry)]
@@ -32,7 +32,7 @@ class LocalSetup(unittest.TestCase):
  def test_existing_mappings_are_never_overwritten_by_discovery(self):
   value={'helperConfig':{'obsidian-links':{'mappings':[{'sourcePrefix':'Z:/Notes/','vault':'My notes'}],'uriAction':'open'}}}
   self.settings.write_text(json.dumps(value));_,new,_=setup.plan(self.settings,self.registry)
-  self.assertEqual(new['helperConfig'],{**value['helperConfig'],'jarvis-file-links':{'mappings':[],'excludePrefixes':[]}})
+  self.assertEqual(new['helperConfig'],{**value['helperConfig'],'clickable-file-links':{'mappings':[],'excludePrefixes':[]}})
  def test_upgrade_import_preserves_old_mappings_and_prior_overrides(self):
   package=self.root/'Helpers'/'Notes';package.mkdir(parents=True)
   inherited={'mappings':[{'sourcePrefix':'R:/Notes/','vault':'Notes'}]}

@@ -24,4 +24,4 @@ The helper fails closed and cleans up its prior controller when `config.mappings
 
 ## Personal copy and updates
 
-Configure this helper through `helperConfig` in the current user's Wingman settings, not by editing sealed package files. Public mappings are empty. See `docs/AGENT_SETUP.md` and `docs/configuration.md` in the source repository. For Obsidian use `uriAction: "open"` without a plugin; Wait for Note is an explicit optional integration. Native Codex file-reference controls use `system.openJarvisPath` for local Windows file/folder links; remote translation is optional.
+Configure this helper through `helperConfig` in the current user's Wingman settings, not by editing sealed package files. Public mappings are empty. See `docs/AGENT_SETUP.md` and `docs/configuration.md` in the source repository. For Obsidian use `uriAction: "open"` without a plugin; Wait for Note is an explicit optional integration. Native Codex file-reference controls use `system.openFilePath` for local Windows file/folder links; remote translation is optional.

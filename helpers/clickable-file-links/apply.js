@@ -1,7 +1,7 @@
 (() => {
-  const owner = 'jarvis-file-links'
-  const globalName = '__codexWingmanJarvisFileLinks'
-  const version = 'jarvis-file-links-v8'
+  const owner = 'clickable-file-links'
+  const globalName = '__codexWingmanClickableFileLinks'
+  const version = 'clickable-file-links-v8'
   const controlSelector = '[data-file-reference="true"][data-prompt-link-href]'
   const excludedAncestorSelector = '[contenteditable="true"],[data-codex-composer="true"],[data-codex-wingman-owner]'
 
@@ -104,7 +104,7 @@
       event.preventDefault()
       event.stopImmediatePropagation?.()
       event.stopPropagation()
-      wingman.request('system.openJarvisPath', { path: destination })
+      wingman.request('system.openFilePath', { path: destination })
     }
     control.addEventListener('click', clickHandler, true)
     return clickHandler
@@ -166,16 +166,16 @@
       changed = patchReactState(control, record) || changed
       return changed
     }
-    if (control.hasAttribute('data-jarvis-file-links-native') || isExcluded(control)) return false
+    if (control.hasAttribute('data-clickable-file-links-native') || isExcluded(control)) return false
     const parsed = parseDestination(control.getAttribute('data-prompt-link-href'))
     if (!parsed) return false
     const attributes = originalAttributes(control)
     const nextRecord = { attributes, raw: parsed.raw, destination: parsed.destination, reactSlots: [], clickHandler: null }
     records.set(control, nextRecord)
     control.setAttribute('data-codex-wingman-owner', owner)
-    control.setAttribute('data-jarvis-file-links-native', 'true')
-    control.setAttribute('data-jarvis-file-links-original-attributes', JSON.stringify(attributes))
-    control.setAttribute('data-jarvis-file-links-raw-path', parsed.raw)
+    control.setAttribute('data-clickable-file-links-native', 'true')
+    control.setAttribute('data-clickable-file-links-original-attributes', JSON.stringify(attributes))
+    control.setAttribute('data-clickable-file-links-raw-path', parsed.raw)
     control.setAttribute('data-prompt-link-href', parsed.destination)
     if (control.getAttribute('title') === parsed.raw) control.setAttribute('title', parsed.destination)
     patchReactState(control, nextRecord)
@@ -184,7 +184,7 @@
   }
   const status = () => ({
     version,
-    linkCount: document.querySelectorAll('[data-jarvis-file-links-native="true"]').length,
+    linkCount: document.querySelectorAll('[data-clickable-file-links-native="true"]').length,
     pending: Boolean(pendingFrame),
   })
   const reconcile = () => {

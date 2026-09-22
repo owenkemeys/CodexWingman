@@ -81,7 +81,7 @@ def plan(settings_path, registry_path, explicit_vaults=(), helper_root=None):
         warnings.append('Existing Obsidian configuration has no mappings; configure a vault or keep this helper disabled.')
     elif config['obsidian-links'].get('uriAction') != 'open':
         warnings.append('Existing Obsidian configuration uses Wait for Note; confirm that plugin is installed, or set uriAction to open.')
-    config.setdefault('jarvis-file-links', {'mappings': [], 'excludePrefixes': []})
+    config.setdefault('clickable-file-links', {'mappings': [], 'excludePrefixes': []})
     enabled.setdefault('json-debug', False)
     enabled.setdefault('hook-trace', False)
     proposed.setdefault('usageDialsEnabled', True)

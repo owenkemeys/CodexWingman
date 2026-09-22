@@ -48,8 +48,8 @@
       <CopyToOutputDirectory>PreserveNewest</CopyToOutputDirectory>
       <CopyToPublishDirectory>PreserveNewest</CopyToPublishDirectory>
     </Content>
-    <Content Include="..\..\helpers\jarvis-file-links\**\*">
-      <Link>Helpers\Jarvis file links\%(RecursiveDir)%(Filename)%(Extension)</Link>
+    <Content Include="..\..\helpers\clickable-file-links\**\*">
+      <Link>Helpers\Clickable file links\%(RecursiveDir)%(Filename)%(Extension)</Link>
       <CopyToOutputDirectory>PreserveNewest</CopyToOutputDirectory>
       <CopyToPublishDirectory>PreserveNewest</CopyToPublishDirectory>
     </Content>

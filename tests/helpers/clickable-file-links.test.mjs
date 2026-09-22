@@ -3,14 +3,14 @@ import fs from 'node:fs/promises'
 import test from 'node:test'
 import { createBrowserFixture, executeRenderer } from './fixtures/browser-fixture.mjs'
 
-const helperRoot = new URL('../../helpers/jarvis-file-links/', import.meta.url)
+const helperRoot = new URL('../../helpers/clickable-file-links/', import.meta.url)
 const linuxPrefix = '/mnt/example-data/'
 const remoteFixtureConfig = {
       mappings: [{ sourcePrefix: linuxPrefix, windowsPrefix: 'R:/' }],
       excludePrefixes: [`${linuxPrefix}obsidian/`],
     }
 
-const ownerSelector = '[data-codex-wingman-owner="jarvis-file-links"]'
+const ownerSelector = '[data-codex-wingman-owner="clickable-file-links"]'
 
 async function requiredFile(name) {
   const file = new URL(name, helperRoot)
@@ -43,17 +43,17 @@ test('package declares Jarvis translation plus local Windows path support', asyn
   ])
   assert.deepEqual(JSON.parse(manifestSource), {
     schemaVersion: 1,
-    id: 'jarvis-file-links',
-    name: 'Jarvis file links',
-    version: '1.3.5',
-    description: 'Opens native Codex references to Jarvis and absolute local Windows files or folders.',
+    id: 'clickable-file-links',
+    name: 'Clickable file links',
+    version: '1.4.0',
+    description: 'Opens native Codex file and folder references in their Windows applications, with optional remote path mappings.',
     refreshSeconds: 0,
-    capabilities: ['system.openJarvisPath'],
+    capabilities: ['system.openFilePath'],
     config: { mappings: [], excludePrefixes: [] },
     entrypoints: { apply: 'apply.js', remove: 'remove.js' },
   })
   assert.match(info, /native Codex file-reference control/i)
-  assert.match(info, /system\.openJarvisPath/)
+  assert.match(info, /system\.openFilePath/)
 })
 
 test('the Example native control exposes J slash path through DOM and React props while preserving native click handling', async () => {
@@ -104,7 +104,7 @@ test('the Example native control exposes J slash path through DOM and React prop
     control.addEventListener('click', () => nativeDestinations.push(control.getAttribute('data-prompt-link-href')))
     control.click()
     assert.deepEqual(nativeDestinations, [])
-    assert.equal(wingmanRequests[0]?.[0], 'system.openJarvisPath')
+    assert.equal(wingmanRequests[0]?.[0], 'system.openFilePath')
     assert.equal(wingmanRequests[0]?.[1]?.path, expected)
   } finally {
     fixture.dispose()
@@ -123,14 +123,14 @@ test('a native file control added after startup is rewritten without a message-r
   try {
     executeRenderer(apply, fixture, { helperConfig: remoteFixtureConfig })
     const control = makeNativeFileControl(fixture.document, raw, 'Open README')
-    fixture.window.__codexWingmanJarvisFileLinks.reconcile()
+    fixture.window.__codexWingmanClickableFileLinks.reconcile()
     assert.equal(control.getAttribute('data-prompt-link-href'), expected)
   } finally {
     fixture.dispose()
   }
 })
 
-test('percent-encoded Markdown paths are decoded before Windows opens the Jarvis file', async () => {
+test('percent-encoded Markdown paths are decoded before Windows opens the file', async () => {
   const [apply, manifestSource] = await Promise.all([
     requiredFile('apply.js'),
     requiredFile('wingman.json'),
@@ -148,7 +148,7 @@ test('percent-encoded Markdown paths are decoded before Windows opens the Jarvis
     })
     assert.equal(control.getAttribute('data-prompt-link-href'), expected)
     control.click()
-    assert.equal(wingmanRequests[0]?.[0], 'system.openJarvisPath')
+    assert.equal(wingmanRequests[0]?.[0], 'system.openFilePath')
     assert.equal(wingmanRequests[0]?.[1]?.path, expected)
   } finally {
     fixture.dispose()
@@ -176,7 +176,7 @@ test('folder controls keep a clean drive path after native URL normalization and
     await fixture.flush()
     assert.equal(control.getAttribute('data-prompt-link-href'), expected)
     control.click()
-    assert.equal(wingmanRequests[0]?.[0], 'system.openJarvisPath')
+    assert.equal(wingmanRequests[0]?.[0], 'system.openFilePath')
     assert.equal(wingmanRequests[0]?.[1]?.path, expected)
   } finally {
     fixture.dispose()
@@ -198,13 +198,13 @@ test('absolute Windows executable controls are normalized and opened through the
       helperConfig: remoteFixtureConfig,
       wingman: { request: (...args) => wingmanRequests.push(args) },
     })
-    assert.equal(control.getAttribute('data-codex-wingman-owner'), 'jarvis-file-links')
+    assert.equal(control.getAttribute('data-codex-wingman-owner'), 'clickable-file-links')
     assert.equal(control.getAttribute('data-prompt-link-href'), expected)
     control.setAttribute('data-prompt-link-href', `/${expected}`)
     await fixture.flush()
     assert.equal(control.getAttribute('data-prompt-link-href'), expected)
     control.click()
-    assert.equal(wingmanRequests[0]?.[0], 'system.openJarvisPath')
+    assert.equal(wingmanRequests[0]?.[0], 'system.openFilePath')
     assert.equal(wingmanRequests[0]?.[1]?.path, expected)
   } finally {
     fixture.dispose()
@@ -233,7 +233,7 @@ test('absolute Windows path handling is extension agnostic', async () => {
       wingman: { request: (...args) => wingmanRequests.push(args) },
     })
     for (let index = 0; index < cases.length; index += 1) {
-      assert.equal(controls[index].getAttribute('data-codex-wingman-owner'), 'jarvis-file-links')
+      assert.equal(controls[index].getAttribute('data-codex-wingman-owner'), 'clickable-file-links')
       assert.equal(controls[index].getAttribute('data-prompt-link-href'), cases[index][1])
       controls[index].click()
     }

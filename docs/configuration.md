@@ -13,7 +13,7 @@ For an agent-managed installation without shared infrastructure, start with [Age
       "mappings": [{ "sourcePrefix": "C:/Notes/My Notes/", "vault": "My Notes" }],
       "uriAction": "open"
     },
-    "jarvis-file-links": { "mappings": [], "excludePrefixes": [] }
+    "clickable-file-links": { "mappings": [], "excludePrefixes": [] }
   }
 }
 ```

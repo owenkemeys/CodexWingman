@@ -16,7 +16,7 @@ CodexWingman is a Windows tray companion for the official Codex desktop app. It 
 - Agent Derangement Risk adds a display-only ring after Usage dials that estimates context degradation from current tokens, compactions, and cumulative thread history.
 - Sidebar on Demand stops the floating sidebar from opening when the pointer merely crosses the left edge. Intentional sidebar controls still work.
 - New chat in new window adds that command to the context menu of verified New Chat controls and uses Codex's native window-opening route.
-- File links opens local Windows file references in their registered applications. Remote path mappings are optional and empty by default; the historical helper ID remains `jarvis-file-links`.
+- Clickable file links opens local Windows file references in their registered applications. Remote path mappings are optional and empty by default.
 - Obsidian links opens configured local vault notes using standard Obsidian links. The setup tool discovers local vaults and reports missing configuration.
 - Turn Metadata shows available turn timing and metadata.
 - Turn Render Recovery handles supported render stalls without changing stored chat history.
