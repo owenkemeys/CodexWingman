@@ -1,14 +1,15 @@
 # CodexWingman
 
-MIT licensed. See [LICENSE](LICENSE) and [third-party notices](THIRD_PARTY_NOTICES.md).
+CodexWingman is a Windows tray companion for the official Codex desktop app, to add small quality-of-life improvements by modifying the UI in realtime. It loads small, readable Helper packages and applies them to every connected Codex window. Wingman does not replace Codex or modify its chat history.
 
-Start here: [Agent setup and customization](docs/AGENT_SETUP.md). Give this repository link to your agent and ask it to install Wingman, configure local integrations, and report unresolved choices. Windows only; no Jarvis or shared server required.
+Start here: [Agent setup and customization](docs/AGENT_SETUP.md). Give this repository link to your agent and ask it to install Wingman, configure local integrations, and report unresolved choices. Windows only.
 
 **Launch Codex through the Codex Wingman shortcut.** Wingman automatically launches Codex with the connection its helpers need. Installing agents must create that shortcut, launch it, verify that Codex opens through Wingman, and tell the user to use it for normal launches. Installing Wingman without launching it does not activate the helpers.
 
 > Unofficial community project. CodexWingman is not affiliated with, endorsed by, or sponsored by OpenAI. OpenAI, ChatGPT, and Codex are trademarks of OpenAI.
 
-CodexWingman is a Windows tray companion for the official Codex desktop app. It loads small, readable Helper packages and applies them to every connected Codex window. Wingman does not replace Codex or modify its chat history.
+MIT licensed. See [LICENSE](LICENSE) and [third-party notices](THIRD_PARTY_NOTICES.md).
+
 
 ## Bundled Helpers
 
