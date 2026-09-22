@@ -25,6 +25,8 @@ Personalization belongs in `helperConfig` in the local settings file. Do not edi
 
 ## Build, install and update
 
+**Required launch handoff:** create the per-user **Codex Wingman** shortcut with the installer below and launch that shortcut. Wingman then automatically launches Codex; do not treat a separately launched Codex process as proof that Wingman is active. Tell the user: "Use the Codex Wingman shortcut to start Codex; Wingman opens Codex for you and keeps the helpers running." The setup CLI itself does not launch either app.
+
 When upgrading an installation that customized its helper manifests, first run `python tools/configure_local.py --import-helper-config "C:\Path\To\Installed\Helpers"` to review a report. Stop only the identified Wingman process, then repeat with `--apply` before replacing the package and starting the new build. The import copies configuration into local settings, preserves existing local overrides, and never copies helper code or changes the old package. Keep the settings backup together with the old package for rollback. A missing folder or duplicate helper ID stops import. Do not share the resulting personal report publicly.
 
 From a clean checkout of the repository's current `main`:
@@ -38,12 +40,21 @@ python tools/release_provenance.py verify-package --package dist/CodexWingman-ve
 
 The publisher checks the exact commit against GitHub main, builds a whole package and preserves its predecessor. A public clone requires no author's credentials. If using a fork, set its HTTPS URL in `release-repository.json`, commit it to that fork's main, then verify and build. CI reads the same configuration. Do not weaken clean-source or integrity checks to make an arbitrary checkout pass. No GitHub authentication is required to fetch a public repository; pushing to a fork uses that user's own access.
 
-The resulting folder is the installation; first launch `CodexWingman.exe` there or use the per-user Start Menu shortcut. No service, administrator access or Jarvis installer is required. Keep that folder at a stable location. On updates, stop only the identified Wingman process and wait for it to exit before publishing over its folder, then restart Wingman. If publishing fails, its prior folder is restored; relaunch it. Preserve local settings and user-added helper files separately before replacing a whole package, and report any custom code that needs reintegration instead of silently dropping it.
+The resulting folder is the installation. Keep it at a stable location because the shortcut points there. After creating the shortcut, the agent can launch it without a setup GUI:
+
+```powershell
+$wingmanShortcut = Join-Path ([Environment]::GetFolderPath('Programs')) 'Codex Wingman.lnk'
+Start-Process -FilePath $wingmanShortcut -WindowStyle Hidden
+```
+
+Verify that Wingman is running and has automatically opened Codex with its local debugging connection. If Codex was already running without that connection, Wingman deliberately leaves it alone and reports the restart needed; arrange its normal repair/restart with the user instead of force-killing it. On subsequent launches the same shortcut talks to the existing Wingman instance. Tell the user to use this shortcut as their normal Codex launcher.
+
+No service, administrator access or Jarvis installer is required. On updates, stop only the identified Wingman process and wait for it to exit before publishing over its folder, then restart Wingman through its shortcut. If publishing fails, its prior folder is restored; relaunch it. Preserve local settings and user-added helper files separately before replacing a whole package, and report any custom code that needs reintegration instead of silently dropping it.
 
 For an existing installation outside the checkout, the agent may use `Install-VerifiedWingman.ps1 -Package <verified-folder> -Destination <existing-installation>`. This is an update tool, not a first-install command. It requires an identifiable existing Wingman installation and retains rollback.
 
 ## Acceptance and handback
 
-Inspect the tray's status details and the actual Codex window. Verify the requested helpers, usage popup, and a real note link in each configured vault. A green build is not proof that an installed Codex version supports every helper. If Codex needs a restart, report that honestly and arrange it with the user; do not force-kill it.
+Verify the shortcut targets this installation's Wingman executable, launch it, and confirm that Wingman opens Codex automatically. Inspect the tray's status details and the actual Codex window. Verify the requested helpers, usage popup, and a real note link in each configured vault. A green build is not proof that an installed Codex version supports every helper. If Codex needs a restart, report that honestly and arrange it with the user; do not force-kill it.
 
 Give the user the installed location, what works, any disabled optional integrations, and any customization still needed. If a missing choice or permission blocks an optional helper, finish the rest and identify that exact item. Do not claim a colleague's live installation has been tested on the author's machine.
