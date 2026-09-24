@@ -1,5 +1,5 @@
 (() => {
-  const controllerVersion = 'native-slot-v15';
+  const controllerVersion = 'native-slot-v16';
   const initialSnapshot = state || {};
   const existing = window.__codexHelperUsageDials;
   if (existing?.version === controllerVersion) {
@@ -16,17 +16,25 @@
   let fallbackSnapshot = initialSnapshot;
   let frame = 0;
   let accountClient = null;
+  let accountQuery = null;
   let unsubscribeAccount = null;
   let availableResets = null;
 
   // Read Codex's account cache; session usage does not establish a reset balance.
-  const readAvailableResets = () => {
+  const hasAccountFields = (data) => data && !Array.isArray(data)
+    && (Object.prototype.hasOwnProperty.call(data, 'rate_limit')
+      || Object.prototype.hasOwnProperty.call(data, 'rate_limit_reset_credits'));
+
+  const readAccountState = () => {
     try {
-      const query = accountClient?.getQueryState(['rate-limit-status']);
-      const count = query?.status === 'success'
-        ? query.data?.rate_limit_reset_credits?.available_count : null;
-      return Number.isSafeInteger(count) && count >= 0 ? count : null;
-    } catch { return null; }
+      const direct = accountClient?.getQueryState(['rate-limit-status']);
+      if (direct) { accountQuery = null; return direct; }
+      const matches = accountClient?.getQueryCache()?.findAll?.()
+        ?.filter((query) => hasAccountFields(query?.state?.data)) || [];
+      // Never choose among old or cross-account copies of the same shape.
+      accountQuery = matches.length === 1 ? matches[0] : null;
+      return accountQuery?.state || null;
+    } catch { accountQuery = null; return null; }
   };
 
   const normalizeAccountWindow = (value) => {
@@ -50,13 +58,15 @@
   };
 
   const refreshAccountState = () => {
-    availableResets = readAvailableResets();
+    const query = readAccountState();
+    const count = query?.status === 'success'
+      ? query.data?.rate_limit_reset_credits?.available_count : null;
+    availableResets = Number.isSafeInteger(count) && count >= 0 ? count : null;
     // Explicit state remains supported by the legacy embedded renderer. The
     // packaged helper has no session backend and never waits for shared files.
     snapshot = fallbackSnapshot;
     if (!accountClient) return;
     try {
-      const query = accountClient.getQueryState(['rate-limit-status']);
       if (query?.status !== 'success') { snapshot = {}; return; }
       if (!Object.prototype.hasOwnProperty.call(query.data || {}, 'rate_limit')) return;
       snapshot = { primary: null, secondary: null };
@@ -85,7 +95,9 @@
           if (typeof cache?.subscribe !== 'function') continue;
           accountClient = client;
           unsubscribeAccount = cache.subscribe((event) => {
-            if (event?.query?.queryKey?.[0] !== 'rate-limit-status') return;
+            if (event?.query !== accountQuery
+              && event?.query?.queryKey?.[0] !== 'rate-limit-status'
+              && !hasAccountFields(event?.query?.state?.data)) return;
             reconcile();
           });
           return;
@@ -144,7 +156,8 @@
   document.documentElement.appendChild(style);
 
   const isVerifiedAnchor = (dial) => {
-    if (!dial || dial.tagName !== 'SPAN' || dial.getAttribute('role') !== 'img') return false;
+    if (!dial || !['img', 'progressbar'].includes(dial.getAttribute('role'))
+      && dial.tagName !== 'BUTTON') return false;
     if (!/^Context usage:\s*\d+(?:\.\d+)?%/i.test(dial.getAttribute('aria-label') || '')) return false;
     const wrapper = dial.parentElement;
     const row = wrapper?.parentElement;
@@ -169,12 +182,19 @@
     const groups = [...document.querySelectorAll('div')].map((group) => {
       const classes = new Set(String(group.className || '').split(/\s+/));
       if (!classes.has('flex') || !classes.has('min-w-0')
-        || !classes.has('items-center') || !classes.has('gap-1')) return null;
+        || !classes.has('items-center')
+        || ![...classes].some((name) => /^gap-(?:\d+(?:\.\d+)?|\[[^\]]+\])$/.test(name))) return null;
       const modelWrapper = [...group.children].find((child) => {
         if (child.getAttribute('data-codex-helper') || child.getAttribute('data-codex-helper-context-slot')) return false;
         const text = String(child.textContent || '');
-        if (!/(?:codex|sol|luna|gpt|sonnet|opus|haiku|claude)[\s\S]{0,100}(?:medium|high|low|extra|mini|pro|auto)/i.test(text)) return false;
-        return [...child.querySelectorAll('button,[role="button"],[role="combobox"],[role="listbox"]')].some(isVisible);
+        const effortLabel = /(?:codex|sol|luna|gpt|sonnet|opus|haiku|claude)[\s\S]{0,100}(?:medium|high|low|extra|mini|pro|auto)/i.test(text);
+        const modelName = /\b(?:gpt[-\s]?\d|codex|sol|luna|astra|sonnet|opus|haiku|claude)\b/i.test(text);
+        return [...child.querySelectorAll('button,[role="button"],[role="combobox"],[role="listbox"]')]
+          .some((control) => isVisible(control) && (effortLabel
+            || (modelName && /model/i.test([
+              control.getAttribute('aria-label'), control.getAttribute('title'),
+              control.getAttribute('data-testid'),
+            ].filter(Boolean).join(' ')))));
       });
       return modelWrapper ? { group, modelWrapper } : null;
     }).filter(Boolean);
@@ -194,7 +214,7 @@
   };
 
   const findAnchors = () => {
-    const native = [...document.querySelectorAll('span[role="img"][aria-label^="Context usage:"]')]
+    const native = [...document.querySelectorAll('[aria-label^="Context usage:"]')]
       .filter(isVerifiedAnchor)
       .map((dial) => ({ mode: 'native', dial, wrapper: dial.parentElement }));
     return native.length ? native : findFallbackAnchors();
