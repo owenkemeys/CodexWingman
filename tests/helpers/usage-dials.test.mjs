@@ -18,7 +18,7 @@ test('Usage Dials package declares the readable v1 package contract', async () =
     schemaVersion: 1,
     id: 'usage-dials',
     name: 'Usage dials',
-    version: '1.3.2',
+    version: '1.3.3',
     description: 'Shows five-hour and weekly usage beside every context dial.',
     refreshSeconds: 60,
     capabilities: [],
@@ -206,6 +206,27 @@ test('renderer prefers native anchors over fallback model-picker candidates', as
   }
 })
 
+test('renderer attaches to a semantically identical context indicator after its tag or role changes', async () => {
+  const fixture = createBrowserFixture()
+  const composer = makeComposer(fixture.document, 'changed-native', 60)
+  composer.dial.remove()
+  const indicator = fixture.document.createElement('button')
+  indicator.setAttribute('role', 'progressbar')
+  indicator.setAttribute('aria-label', 'Context usage: 60%')
+  composer.wrapper.append(indicator)
+  try {
+    executeRenderer(await requiredFile('apply.js'), fixture, { state: { primary: {
+      usedPercent: 38, windowMinutes: 300,
+      resetsAtUnixSeconds: Math.floor(Date.now() / 1000) + 9000,
+    } } })
+    await fixture.flush()
+    const bank = fixture.document.querySelector('[data-codex-helper="usage-dials"]')
+    assert.ok(bank, 'usage bank must remain beside the semantic context indicator')
+    assert.equal(bank.previousElementSibling, composer.wrapper)
+    assert.match(bank.querySelector('[data-codex-helper-dial="primary"]').getAttribute('aria-label'), /38%/)
+  } finally { fixture.window.__codexHelperUsageDials?.cleanup(); fixture.dispose() }
+})
+
 test('renderer copies the native context slot until Codex creates the real context dial', async () => {
   const apply = await requiredFile('apply.js')
   const fixture = createBrowserFixture()
@@ -306,6 +327,34 @@ test('renderer copies the native context slot until Codex creates the real conte
   }
 })
 
+test('renderer retains the model-control fallback when Codex changes footer spacing', async () => {
+  const fixture = createBrowserFixture()
+  fixture.setRectResolver((element) => element.dataset.fallbackSurface ? { width: 120, height: 32, bottom: 700 } : {})
+  const controls = fixture.document.createElement('div')
+  controls.className = 'flex min-w-0 items-center gap-2'
+  controls.style.display = 'flex'
+  controls.style.alignItems = 'center'
+  const modelWrapper = fixture.document.createElement('span')
+  const modelPicker = fixture.document.createElement('button')
+  modelPicker.dataset.fallbackSurface = 'model-picker'
+  modelPicker.setAttribute('aria-label', 'Select model')
+  modelPicker.append(fixture.document.createTextNode('GPT-6 Astra'))
+  modelWrapper.append(modelPicker)
+  controls.append(modelWrapper)
+  fixture.document.body.append(controls)
+  try {
+    executeRenderer(await requiredFile('apply.js'), fixture, { state: { secondary: {
+      usedPercent: 55, windowMinutes: 10080,
+      resetsAtUnixSeconds: Math.floor(Date.now() / 1000) + 302400,
+    } } })
+    await fixture.flush()
+    const bank = fixture.document.querySelector('[data-codex-helper="usage-dials"]')
+    assert.ok(bank, 'verified model control must retain the fallback slot')
+    assert.equal(bank.nextElementSibling, modelWrapper)
+    assert.match(bank.querySelector('[data-codex-helper-dial="secondary"]').getAttribute('aria-label'), /55%/)
+  } finally { fixture.window.__codexHelperUsageDials?.cleanup(); fixture.dispose() }
+})
+
 test('renderer replaces a stale Usage Dials controller during a Helper upgrade', async () => {
   const apply = await requiredFile('apply.js')
   const fixture = createBrowserFixture()
@@ -324,8 +373,8 @@ test('renderer replaces a stale Usage Dials controller during a Helper upgrade',
     executeRenderer(apply, fixture, { state: {} })
     await fixture.flush()
     assert.equal(cleaned, 1)
-    assert.equal(fixture.window.__codexHelperUsageDials?.version, 'native-slot-v15')
-    assert.equal(fixture.window.__codexHelperUsageDials?.status().fallbackStrategy, 'native-slot-v15')
+    assert.equal(fixture.window.__codexHelperUsageDials?.version, 'native-slot-v16')
+    assert.equal(fixture.window.__codexHelperUsageDials?.status().fallbackStrategy, 'native-slot-v16')
     assert.equal(native.wrapper.nextElementSibling?.getAttribute('data-codex-helper'), 'usage-dials')
   } finally {
     fixture.window.__codexHelperUsageDials?.cleanup()
@@ -427,6 +476,56 @@ test('native account quota renders without any session backend and updates when 
     controller.cleanup()
     assert.equal(cache.listeners.size,0)
   } finally {fixture.dispose()}
+})
+
+test('native account quota follows one successful renamed rate-limit query without accepting an error cache', async () => {
+  const fixture = createBrowserFixture()
+  makeComposer(fixture.document, 'renamed-account-query', 30)
+  const listeners = new Set()
+  const quota = (used) => ({ status: 'success', data: { rate_limit: {
+    primary_window: { used_percent: used, limit_window_seconds: 18000, reset_at: Math.floor(Date.now() / 1000) + 9000 },
+  }, rate_limit_reset_credits: { available_count: 2 } } })
+  let current = quota(24)
+  const query = { queryKey: ['account', 'rate-limits'], get state() { return current } }
+  const cache = { findAll: () => [query], subscribe(listener) { listeners.add(listener); return () => listeners.delete(listener) } }
+  const client = { getQueryCache: () => cache, getQueryState: () => undefined }
+  fixture.window.__codexRoot = { _internalRoot: { current: { memoizedProps: { client } } } }
+  try {
+    executeRenderer(await requiredFile('apply.js'), fixture)
+    await fixture.flush()
+    const controller = fixture.window.__codexHelperUsageDials
+    assert.equal(controller.status().primary?.usedPercent, 24)
+    assert.equal(controller.status().availableResets, 2)
+    current = quota(71)
+    for (const listener of listeners) listener({ query })
+    await fixture.flush()
+    assert.equal(controller.status().primary?.usedPercent, 71)
+    current = { status: 'error', data: quota(71).data }
+    for (const listener of listeners) listener({ query })
+    await fixture.flush()
+    assert.equal(controller.status().primary, null, 'a failed query must not reuse stale usage')
+  } finally { fixture.window.__codexHelperUsageDials?.cleanup(); fixture.dispose() }
+})
+
+test('renamed account query fails closed when the cache has two plausible accounts', async () => {
+  const fixture = createBrowserFixture()
+  makeComposer(fixture.document, 'ambiguous-account', 30)
+  const data = (used) => ({ rate_limit: { primary_window: {
+    used_percent: used, limit_window_seconds: 18000,
+    reset_at: Math.floor(Date.now() / 1000) + 9000,
+  } } })
+  const queries = [28, 91].map((used) => ({ queryKey: ['account', 'rate-limits', used],
+    state: { status: 'success', data: data(used) } }))
+  const client = { getQueryState: () => undefined,
+    getQueryCache: () => ({ findAll: () => queries, subscribe: () => () => {} }) }
+  fixture.window.__codexRoot = { _internalRoot: { current: { memoizedProps: { client } } } }
+  try {
+    executeRenderer(await requiredFile('apply.js'), fixture)
+    await fixture.flush()
+    const controller = fixture.window.__codexHelperUsageDials
+    assert.equal(controller.status().primary, null)
+    assert.equal(fixture.document.querySelector('[data-codex-helper-dial="primary"]').style.display, 'none')
+  } finally { fixture.window.__codexHelperUsageDials?.cleanup(); fixture.dispose() }
 })
 
 test('native quota rejects malformed and expired windows while preserving pacing', async () => {

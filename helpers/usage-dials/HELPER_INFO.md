@@ -1,7 +1,7 @@
 # Usage dials
 
-- Helper generation: native-slot-v15
-- Manifest version: 1.3.2
+- Helper generation: native-slot-v16
+- Manifest version: 1.3.3
 - Helper ID: `usage-dials`
 
 ## Purpose and behavior
@@ -24,7 +24,7 @@ Change account parsing, warning rules, placement, labels, colors, or tooltip pre
 
 ## Sharp edges and failure behavior
 
-Missing, malformed, expired, or failed native account data produces unavailable state rather than a guessed value. Partial input leaves only the missing window unavailable. The legacy embedded renderer still accepts explicit snapshot input when no native account data exists. Codex DOM changes can prevent placement; the helper then waits for a verified native or fallback anchor. It replaces stale renderer controllers by version and removes its temporary slot when Codex creates the native one. Native usage updates refresh the dials even when the reset-credit count stays unchanged.
+Missing, malformed, expired, or failed native account data produces unavailable state rather than a guessed value. Partial input leaves only the missing window unavailable. The legacy embedded renderer still accepts explicit snapshot input when no native account data exists. Codex DOM changes can prevent placement; the helper then waits for a verified native or fallback anchor. Semantically equivalent context indicators and model controls with changed footer spacing remain supported. If Codex renames the account-cache query, one unambiguous account-data query may supply the same windows; multiple candidates fail closed. It replaces stale renderer controllers by version and removes its temporary slot when Codex creates the native one. Native usage updates refresh the dials even when the reset-credit count stays unchanged.
 
 ## Personal copy and updates
 
