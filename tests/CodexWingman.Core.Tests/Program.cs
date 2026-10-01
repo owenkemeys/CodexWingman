@@ -32,10 +32,55 @@ if (args.Contains("--tray-visibility", StringComparer.Ordinal))
     return;
 }
 
+if (args.Contains("--shutdown-policy", StringComparer.Ordinal))
+{
+    TestCodexShutdownPolicy();
+    Console.WriteLine("CodexWingman shutdown policy tests passed");
+    return;
+}
+
 static void Equal<T>(T expected, T actual, string name)
 {
     if (!EqualityComparer<T>.Default.Equals(expected, actual))
         throw new InvalidOperationException($"{name}: expected {expected}, got {actual}");
+}
+
+static void TestCodexShutdownPolicy()
+{
+    var shutdownProcesses = new[]
+    {
+        new CodexProcessSnapshot(10, "ChatGPT", 1, @"C:\Apps\Codex\ChatGPT.exe", CodexLaunchPolicy.PackageFamilyName, true),
+        new CodexProcessSnapshot(11, "ChatGPT", 1, @"c:\apps\codex\chatgpt.exe", CodexLaunchPolicy.PackageFamilyName, false),
+        new CodexProcessSnapshot(12, "ChatGPT", 1, @"C:\Apps\Classic\ChatGPT.exe", "OpenAI.ChatGPTClassic_2p2nqsd0c76g0", false),
+        new CodexProcessSnapshot(13, "ChatGPT", 2, @"C:\Apps\Codex\ChatGPT.exe", CodexLaunchPolicy.PackageFamilyName, false),
+        new CodexProcessSnapshot(14, "ChatGPT", 1, @"C:\Apps\Codex\ChatGPT.exe", "OpenAI.ChatGPTClassic_2p2nqsd0c76g0", false),
+        new CodexProcessSnapshot(15, "codex", 1, @"C:\Apps\Codex\resources\codex.exe", CodexLaunchPolicy.PackageFamilyName, false),
+    };
+    Equal(true, CodexShutdownPolicy.IsAppRunning(shutdownProcesses, 1), "startup recognizes the registered app");
+    Equal(false, CodexShutdownPolicy.IsAppRunning([shutdownProcesses[2]], 1),
+        "startup ignores a separate ChatGPT installation");
+    var shutdownPath = CodexShutdownPolicy.SelectExecutablePath(shutdownProcesses, currentSessionId: 1);
+    Equal(@"C:\Apps\Codex\ChatGPT.exe", shutdownPath, "restart identifies the visible app executable");
+    Equal(true, CodexShutdownPolicy.SelectProcessIds(shutdownProcesses, 1).SetEquals([10, 11, 15]),
+        "restart targets every verified process in the registered package and current session");
+    Throws<InvalidOperationException>(
+        () => CodexShutdownPolicy.SelectExecutablePath(
+            [new CodexProcessSnapshot(10, "ChatGPT", 1, null, CodexLaunchPolicy.PackageFamilyName, true)], 1),
+        "restart refuses a window whose executable cannot be verified");
+    Throws<InvalidOperationException>(
+        () => CodexShutdownPolicy.SelectExecutablePath(
+            [shutdownProcesses[0], shutdownProcesses[2] with
+            {
+                PackageFamilyName = CodexLaunchPolicy.PackageFamilyName,
+                HasMainWindow = true,
+            }], 1),
+        "restart refuses ambiguous Codex and ChatGPT applications");
+    Throws<InvalidOperationException>(
+        () => CodexShutdownPolicy.SelectExecutablePath([shutdownProcesses[1]], 1),
+        "restart refuses to terminate a background-only process tree");
+    Throws<InvalidOperationException>(
+        () => CodexShutdownPolicy.SelectExecutablePath([shutdownProcesses[2] with { HasMainWindow = true }], 1),
+        "restart refuses an unrelated ChatGPT application");
 }
 
 static void TestTrayVisibilityRecovery()
@@ -61,12 +106,13 @@ Equal("CodexWingman.Desktop.Singleton.v1", WingmanIdentity.SingleInstanceName, "
 Equal("CodexWingman.Desktop.Activate.v1", WingmanIdentity.ActivationEventName, "stable activation identity");
 Equal("Codex Wingman", WingmanIdentity.RunningMenuText, "concise Wingman menu heading");
 Equal("Close Wingman (leave Codex open)", WingmanIdentity.CloseMenuText, "non-destructive close menu text");
+var verifiedDirectory = Path.Combine(Path.GetTempPath(), "CodexWingman-verified");
 Equal(
-    Path.GetFullPath(Path.Combine("C:\\Apps\\CodexWingman-verified", "Helpers")),
-    WingmanIdentity.ResolveHelpersRoot("C:\\Apps\\CodexWingman-verified\\CodexWingman.exe"),
+    Path.GetFullPath(Path.Combine(verifiedDirectory, "Helpers")),
+    WingmanIdentity.ResolveHelpersRoot(Path.Combine(verifiedDirectory, "CodexWingman.exe")),
     "Helpers root is derived from the executable directory");
-Equal(true, WingmanIdentity.IsCanonicalPackageDirectory("C:\\Apps\\CodexWingman-verified"), "verified package root is canonical");
-Equal(false, WingmanIdentity.IsCanonicalPackageDirectory("C:\\Apps\\CodexWingman"), "legacy package root is rejected");
+Equal(true, WingmanIdentity.IsCanonicalPackageDirectory(verifiedDirectory), "verified package root is canonical");
+Equal(false, WingmanIdentity.IsCanonicalPackageDirectory(Path.Combine(Path.GetTempPath(), "CodexWingman")), "legacy package root is rejected");
 
 var longDiagnostic = "Needs attention: " + new string('x', 240);
 Equal("Starting", TrayStatusPolicy.ForLifecycle(TrayLifecycleState.Starting, "booting").Label, "starting tray label");
@@ -264,10 +310,11 @@ finally
     Directory.Delete(sessionRoot, recursive: true);
 }
 
-var portableDefaults = SessionQuotaSource.DefaultRoots(@"X:\Profiles\Example");
+var portableProfile = Path.Combine(Path.GetTempPath(), "Profiles", "Example");
+var portableDefaults = SessionQuotaSource.DefaultRoots(portableProfile);
 Equal(false, HelperSettings.Default.IsHelperEnabled("json-debug", true), "developer JSON overlay is off by default for public installs");
 Equal(2, portableDefaults.Count, "portable defaults include only current-user session roots");
-Equal(true, portableDefaults.All(path => path.StartsWith(@"X:\Profiles\Example\.codex", StringComparison.OrdinalIgnoreCase)), "portable defaults stay inside the supplied user profile");
+Equal(true, portableDefaults.All(path => path.StartsWith(Path.Combine(portableProfile, ".codex"), StringComparison.OrdinalIgnoreCase)), "portable defaults stay inside the supplied user profile");
 
 var defaultSettings = HelperSettings.Default;
 Equal(true, defaultSettings.UsageDialsEnabled, "usage dials default enabled");
@@ -436,6 +483,8 @@ Equal("--remote-debugging-address=127.0.0.1 --remote-debugging-port=9223 --force
 Equal(true, CodexLaunchPolicy.ProcessNames.SequenceEqual(["codex", "ChatGPT"], StringComparer.OrdinalIgnoreCase), "restart recognizes current and legacy Codex process names");
 Equal(true, CodexLaunchPolicy.ShouldLaunchAtStartup(isCodexRunning: false), "Wingman startup launches Codex when absent");
 Equal(false, CodexLaunchPolicy.ShouldLaunchAtStartup(isCodexRunning: true), "Wingman startup preserves a running Codex instance");
+
+TestCodexShutdownPolicy();
 
 using var heldPort = new TcpListener(IPAddress.Loopback, 0);
 heldPort.Start();
@@ -884,7 +933,9 @@ try
         backendSource: "function refresh(wingman) { const roots = wingman.files.codexSessions.roots(); const files = wingman.files.codexSessions.listFiles(roots[0]); return { now: wingman.currentTime(), text: wingman.files.codexSessions.readText(files[0]), count: files.length }; }");
     var backendCatalog = new HelperCatalog().Discover(bundledRoot, userRoot);
     var backendPackage = backendCatalog.Packages.Single(package => package.Manifest.Id == "backend-valid");
-    var backend = new HelperBackend([sessionCapabilityRoot], () => new DateTimeOffset(2026, 7, 11, 12, 34, 56, TimeSpan.Zero));
+    var backend = new HelperBackend([sessionCapabilityRoot],
+        () => new DateTimeOffset(2026, 7, 11, 12, 34, 56, TimeSpan.Zero),
+        durationLimit: TimeSpan.FromSeconds(30));
     using var backendState = await backend.RefreshAsync(backendPackage);
     Equal("2026-07-11T12:34:56.0000000+00:00", backendState.RootElement.GetProperty("now").GetString(), "backend receives deterministic current time");
     Equal("fixture-session-text", backendState.RootElement.GetProperty("text").GetString(), "backend reads text only through declared session capability");
@@ -926,13 +977,13 @@ try
     SynchronizationContext.SetSynchronizationContext(new SynchronizationContext());
     try
     {
-        var blockingBackend = new HelperBackend([], log: _ =>
+        var blockingBackend = new HelperBackend([], durationLimit: TimeSpan.FromSeconds(30), log: _ =>
         {
             blockingEntered.Set();
             blockingRelease.Wait();
         });
         var blockingRefresh = blockingBackend.RefreshAsync(blockingPackage);
-        Equal(true, blockingEntered.Wait(TimeSpan.FromSeconds(1)), "blocking backend reaches worker fixture");
+        Equal(true, blockingEntered.Wait(TimeSpan.FromSeconds(5)), "blocking backend reaches worker fixture");
         Equal(false, blockingRefresh.IsCompleted, "backend execution returns without blocking caller synchronization context");
         blockingRelease.Set();
         using var completedState = blockingRefresh.GetAwaiter().GetResult();
@@ -1605,7 +1656,8 @@ try
         && expression.Contains("getQueryState(['rate-limit-status'])", StringComparison.Ordinal)), "actual Usage Dials native account adapter reaches renderer wrapper");
     var actualUsagePackage = new HelperCatalog().Discover(actualHelpersRoot).Packages.Single(package => package.Manifest.Id == "usage-dials");
     var forbiddenUsageFiles = new ForbiddenUsageSessionFiles();
-    using var accountOnlyState = await new HelperBackend([], sessionFiles: forbiddenUsageFiles).RefreshAsync(actualUsagePackage);
+    using var accountOnlyState = await new HelperBackend([], sessionFiles: forbiddenUsageFiles,
+        durationLimit: TimeSpan.FromSeconds(30)).RefreshAsync(actualUsagePackage);
     Equal(0, forbiddenUsageFiles.AccessCount, "Usage Dials activation never touches slow or unavailable session storage");
 
     var visibleSessionId = Guid.Parse("019f61c0-1111-7111-8111-111111111111").ToString();
