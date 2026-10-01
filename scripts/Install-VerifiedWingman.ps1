@@ -45,6 +45,18 @@ $oldMoved = $false
 $newMoved = $false
 try {
     foreach ($process in $owned) { Stop-Process -Id $process.ProcessId -ErrorAction Stop }
+    if ($owned.Count -gt 0) {
+        $exitDeadline = [DateTime]::UtcNow.AddSeconds(15)
+        do {
+            $remainingWingman = @(Get-CimInstance Win32_Process -Filter "name='CodexWingman.exe'" |
+                Where-Object ExecutablePath -eq $exe)
+            if ($remainingWingman.Count -eq 0) { break }
+            Start-Sleep -Milliseconds 200
+        } while ([DateTime]::UtcNow -lt $exitDeadline)
+        if ($remainingWingman.Count -gt 0) {
+            throw 'The installed Wingman process did not exit within 15 seconds; the package was left untouched'
+        }
+    }
     Move-Item -LiteralPath $destinationFull -Destination $rollback
     $oldMoved = $true
     Move-Item -LiteralPath $staging -Destination $destinationFull
@@ -57,6 +69,10 @@ try {
 catch {
     if ($newMoved) { Move-Item -LiteralPath $destinationFull -Destination ($staging + '.failed') }
     if ($oldMoved) { Move-Item -LiteralPath $rollback -Destination $destinationFull }
-    if ($owned.Count -gt 0 -and (Test-Path -LiteralPath $exe)) { Start-Process -FilePath $exe -WorkingDirectory $destinationFull -WindowStyle Hidden }
+    $survivingWingman = @(Get-CimInstance Win32_Process -Filter "name='CodexWingman.exe'" |
+        Where-Object ExecutablePath -eq $exe)
+    if ($owned.Count -gt 0 -and (Test-Path -LiteralPath $exe) -and $survivingWingman.Count -eq 0) {
+        Start-Process -FilePath $exe -WorkingDirectory $destinationFull -WindowStyle Hidden
+    }
     throw
 }
