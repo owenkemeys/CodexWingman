@@ -234,13 +234,29 @@ internal static class CodexLauncher
 
     private static CodexProcessSnapshot Snapshot(Process process)
     {
+        // A package process can exit between GetProcesses and this snapshot,
+        // especially while the restart is waiting for the tree to close.
+        // An exited process is no longer a shutdown target.
+        try
+        {
+            if (process.HasExited)
+                return new(process.Id, string.Empty, -1, null, null, false);
+        }
+        catch (InvalidOperationException)
+        {
+            return new(process.Id, string.Empty, -1, null, null, false);
+        }
+
         int sessionId;
+        string processName;
         string? executablePath;
         try { sessionId = process.SessionId; }
         catch { sessionId = -1; }
+        try { processName = process.ProcessName; }
+        catch (InvalidOperationException) { processName = string.Empty; }
         try { executablePath = process.MainModule?.FileName; }
         catch { executablePath = null; }
-        return new(process.Id, process.ProcessName, sessionId, executablePath,
+        return new(process.Id, processName, sessionId, executablePath,
             TryGetPackageFamilyName(process.Id), HasMainWindow(process));
     }
 
@@ -258,8 +274,9 @@ internal static class CodexLauncher
                 "A Codex process remains but Wingman cannot verify its executable. Restart stopped before another app could be affected.");
         }
         var targetIds = CodexShutdownPolicy.SelectProcessIds(snapshots, currentSessionId);
+        var targets = processes.Where(process => targetIds.Contains(process.Id)).ToArray();
         foreach (var process in processes.Where(process => !targetIds.Contains(process.Id))) process.Dispose();
-        return processes.Where(process => targetIds.Contains(process.Id)).ToArray();
+        return targets;
     }
 
     private static async Task<bool> WaitForAppExitAsync(
