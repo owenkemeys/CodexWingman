@@ -1,6 +1,7 @@
 using System.Diagnostics;
 using System.Net.Http.Json;
 using System.Runtime.InteropServices;
+using System.Text;
 using System.Text.Json;
 using CodexWingman.Core;
 
@@ -17,7 +18,7 @@ internal sealed record HookReadyAcquisitionResult(int? Port, HookReadyAcquisitio
 
 internal static class CodexLauncher
 {
-    private const string AppUserModelId = "OpenAI.Codex_2p2nqsd0c76g0!App";
+    private const string AppUserModelId = CodexLaunchPolicy.PackageFamilyName + "!App";
     private static readonly TimeSpan EndpointTimeout = TimeSpan.FromSeconds(30);
 
     public static async Task<int> EnsureRunningWithDebuggingAsync(
@@ -90,11 +91,17 @@ internal static class CodexLauncher
 
     public static int GetOpenWindowCount()
     {
-        var processIds = GetCodexProcesses().Select(process =>
+        using var wingmanProcess = Process.GetCurrentProcess();
+        var currentSessionId = wingmanProcess.SessionId;
+        var processes = GetCodexProcesses();
+        var processIds = new HashSet<int>();
+        try
         {
-            try { return process.Id; }
-            finally { process.Dispose(); }
-        }).ToHashSet();
+            foreach (var process in processes)
+                if (CodexShutdownPolicy.IsAppRunning([Snapshot(process)], currentSessionId))
+                    processIds.Add(process.Id);
+        }
+        finally { foreach (var process in processes) process.Dispose(); }
         if (processIds.Count == 0) return 0;
 
         var count = 0;
@@ -175,73 +182,165 @@ internal static class CodexLauncher
 
     private static async Task RequestGracefulCloseAsync(CancellationToken cancellationToken)
     {
+        using var wingmanProcess = Process.GetCurrentProcess();
+        var currentSessionId = wingmanProcess.SessionId;
         var processes = GetCodexProcesses();
-        var closeRequestedProcessIds = new List<int>();
+        string executablePath;
         try
         {
-            foreach (var process in processes.Where(HasMainWindow))
+            var snapshots = processes.Select(Snapshot).ToArray();
+            executablePath = CodexShutdownPolicy.SelectExecutablePath(snapshots, currentSessionId);
+            var targetIds = CodexShutdownPolicy.SelectProcessIds(snapshots, currentSessionId);
+            foreach (var process in processes.Where(process => targetIds.Contains(process.Id) && HasMainWindow(process)))
             {
-                try
-                {
-                    if (process.CloseMainWindow())
-                        closeRequestedProcessIds.Add(process.Id);
-                }
+                try { process.CloseMainWindow(); }
                 catch { }
             }
-
-            if (closeRequestedProcessIds.Count == 0)
-                throw new InvalidOperationException(
-                    "Codex is running, but no closable GUI process was found. Background Codex/ChatGPT children remain untouched; Wingman did not terminate anything.");
-
-            var deadline = DateTime.UtcNow + TimeSpan.FromSeconds(30);
-            while (DateTime.UtcNow < deadline)
-            {
-                cancellationToken.ThrowIfCancellationRequested();
-                var remaining = GetCodexProcesses();
-                try
-                {
-                    if (remaining.Length == 0) return;
-                }
-                finally
-                {
-                    foreach (var process in remaining) process.Dispose();
-                }
-                await Task.Delay(250, cancellationToken);
-            }
-
-            var remainingIds = GetCodexProcesses();
-            var remainingDescription = string.Join(", ", remainingIds.Select(process => $"{process.ProcessName} ({process.Id})"));
-            foreach (var process in remainingIds) process.Dispose();
-            throw new TimeoutException(
-                $"Codex process(es) {remainingDescription} remained after the graceful close request. Close the remaining Codex taskbar/background process, then retry; Wingman did not terminate anything.");
         }
         finally
         {
             foreach (var process in processes) process.Dispose();
         }
+
+        if (await WaitForAppExitAsync(currentSessionId, TimeSpan.FromSeconds(5), cancellationToken))
+            return;
+
+        var remaining = GetAppProcesses(currentSessionId);
+        try
+        {
+            foreach (var process in remaining)
+            {
+                cancellationToken.ThrowIfCancellationRequested();
+                try { process.Kill(); }
+                catch (InvalidOperationException) { } // The process exited after the snapshot.
+            }
+        }
+        finally
+        {
+            foreach (var process in remaining) process.Dispose();
+        }
+
+        if (await WaitForAppExitAsync(currentSessionId, TimeSpan.FromSeconds(10), cancellationToken))
+            return;
+
+        remaining = GetAppProcesses(currentSessionId);
+        try
+        {
+            throw new TimeoutException(
+                $"Codex package processes remained after the restart request for {executablePath}: "
+                + string.Join(", ", remaining.Select(process => process.Id)));
+        }
+        finally
+        {
+            foreach (var process in remaining) process.Dispose();
+        }
     }
+
+    private static CodexProcessSnapshot Snapshot(Process process)
+    {
+        int sessionId;
+        string? executablePath;
+        try { sessionId = process.SessionId; }
+        catch { sessionId = -1; }
+        try { executablePath = process.MainModule?.FileName; }
+        catch { executablePath = null; }
+        return new(process.Id, process.ProcessName, sessionId, executablePath,
+            TryGetPackageFamilyName(process.Id), HasMainWindow(process));
+    }
+
+    private static Process[] GetAppProcesses(int currentSessionId)
+    {
+        var processes = GetCodexProcesses();
+        var snapshots = processes.Select(Snapshot).ToArray();
+        if (snapshots.Any(process => process.SessionId == currentSessionId
+            && string.Equals(process.PackageFamilyName, CodexLaunchPolicy.PackageFamilyName,
+                StringComparison.OrdinalIgnoreCase)
+            && string.IsNullOrWhiteSpace(process.ExecutablePath)))
+        {
+            foreach (var process in processes) process.Dispose();
+            throw new InvalidOperationException(
+                "A Codex process remains but Wingman cannot verify its executable. Restart stopped before another app could be affected.");
+        }
+        var targetIds = CodexShutdownPolicy.SelectProcessIds(snapshots, currentSessionId);
+        foreach (var process in processes.Where(process => !targetIds.Contains(process.Id))) process.Dispose();
+        return processes.Where(process => targetIds.Contains(process.Id)).ToArray();
+    }
+
+    private static async Task<bool> WaitForAppExitAsync(
+        int currentSessionId,
+        TimeSpan timeout,
+        CancellationToken cancellationToken)
+    {
+        var deadline = DateTime.UtcNow + timeout;
+        do
+        {
+            cancellationToken.ThrowIfCancellationRequested();
+            var remaining = GetAppProcesses(currentSessionId);
+            try { if (remaining.Length == 0) return true; }
+            finally { foreach (var process in remaining) process.Dispose(); }
+            await Task.Delay(250, cancellationToken);
+        } while (DateTime.UtcNow < deadline);
+        return false;
+    }
+
+    private static string? TryGetPackageFamilyName(int processId)
+    {
+        const uint processQueryLimitedInformation = 0x1000;
+        const int errorInsufficientBuffer = 122;
+        var handle = OpenProcess(processQueryLimitedInformation, false, processId);
+        if (handle == IntPtr.Zero) return null;
+        try
+        {
+            uint length = 0;
+            if (GetPackageFamilyName(handle, ref length, null) != errorInsufficientBuffer || length == 0)
+                return null;
+            var name = new StringBuilder((int)length);
+            return GetPackageFamilyName(handle, ref length, name) == 0 ? name.ToString() : null;
+        }
+        finally { CloseHandle(handle); }
+    }
+
+    [DllImport("kernel32.dll", SetLastError = true)]
+    private static extern IntPtr OpenProcess(uint desiredAccess, bool inheritHandle, int processId);
+
+    [DllImport("kernel32.dll", CharSet = CharSet.Unicode)]
+    private static extern int GetPackageFamilyName(IntPtr process, ref uint length, StringBuilder? familyName);
+
+    [DllImport("kernel32.dll")]
+    [return: MarshalAs(UnmanagedType.Bool)]
+    private static extern bool CloseHandle(IntPtr handle);
 
     private static bool HasMainWindow(Process process)
     {
-        try { return process.MainWindowHandle != IntPtr.Zero; }
-        catch { return false; }
+        try { if (process.MainWindowHandle != IntPtr.Zero) return true; }
+        catch { }
+        var found = false;
+        EnumWindows((window, _) =>
+        {
+            GetWindowThreadProcessId(window, out var processId);
+            if (processId == process.Id
+                && IsWindowVisible(window)
+                && GetWindow(window, GetWindowCommand.Owner) == IntPtr.Zero
+                && GetWindowTextLength(window) > 0)
+            {
+                found = true;
+                return false;
+            }
+            return true;
+        }, IntPtr.Zero);
+        return found;
     }
 
     private static bool IsCodexRunning()
     {
-        foreach (var processName in CodexLaunchPolicy.ProcessNames)
+        using var wingmanProcess = Process.GetCurrentProcess();
+        var processes = GetCodexProcesses();
+        try
         {
-            var processes = Process.GetProcessesByName(processName);
-            try
-            {
-                if (processes.Length > 0) return true;
-            }
-            finally
-            {
-                foreach (var process in processes) process.Dispose();
-            }
+            return CodexShutdownPolicy.IsAppRunning(
+                processes.Select(Snapshot), wingmanProcess.SessionId);
         }
-        return false;
+        finally { foreach (var process in processes) process.Dispose(); }
     }
 
     private static Process[] GetCodexProcesses() => CodexLaunchPolicy.ProcessNames

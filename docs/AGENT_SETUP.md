@@ -47,7 +47,7 @@ $wingmanShortcut = Join-Path ([Environment]::GetFolderPath('Programs')) 'Codex W
 Start-Process -FilePath $wingmanShortcut -WindowStyle Hidden
 ```
 
-Verify that Wingman is running and has automatically opened Codex with its local debugging connection. If Codex was already running without that connection, Wingman deliberately leaves it alone and reports the restart needed; arrange its normal repair/restart with the user instead of force-killing it. On subsequent launches the same shortcut talks to the existing Wingman instance. Tell the user to use this shortcut as their normal Codex launcher.
+Verify that Wingman is running and has automatically opened Codex with its local debugging connection. If Codex was already running without that connection, Wingman deliberately leaves it alone until its repair confirmation. That confirmation permits Wingman to stop lingering processes verified as part of the registered Codex package after requesting normal window close. On subsequent launches the same shortcut talks to the existing Wingman instance. Tell the user to use this shortcut as their normal Codex launcher.
 
 No service, administrator access or Jarvis installer is required. On updates, stop only the identified Wingman process and wait for it to exit before publishing over its folder, then restart Wingman through its shortcut. If publishing fails, its prior folder is restored; relaunch it. Preserve local settings and user-added helper files separately before replacing a whole package, and report any custom code that needs reintegration instead of silently dropping it.
 

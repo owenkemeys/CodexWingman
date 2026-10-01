@@ -39,6 +39,7 @@ internal sealed class TrayApplicationContext : ApplicationContext
     private bool reloadPending;
     private bool synchronizingMenu;
     private HelperHostReport? lastReport;
+    private string? lastOperationError;
     private TrayStatus currentStatus = new(
         "Status: Checking",
         "Wingman is checking Codex and its Helpers.");
@@ -451,7 +452,7 @@ internal sealed class TrayApplicationContext : ApplicationContext
     {
         if (busy || exiting) return;
         using var operationDeadline = new CancellationTokenSource();
-        operationDeadline.CancelAfter(TimeSpan.FromSeconds(60));
+        operationDeadline.CancelAfter(TimeSpan.FromSeconds(90));
         activeInteractiveOperation = operationDeadline;
         var cancellationToken = operationDeadline.Token;
         SetBusy(true, busyText);
@@ -515,6 +516,7 @@ internal sealed class TrayApplicationContext : ApplicationContext
     private async Task SetConnectionHealthFromReportAsync(HelperHostReport report)
     {
         lastReport = report;
+        if (busy) lastOperationError = null;
         await RefreshConnectionHealthAsync();
     }
 
@@ -530,25 +532,27 @@ internal sealed class TrayApplicationContext : ApplicationContext
                 lastReport,
                 helperHost.IsSuspended,
                 CodexLauncher.GetOpenWindowCount());
-            SetStatus(new TrayStatus(health.Label, diagnosticOverride ?? health.DiagnosticText, health.WindowSummary, health.IconState));
+            var diagnostic = diagnosticOverride ?? health.DiagnosticText;
+            if (lastOperationError is not null)
+                diagnostic += $"\n\nLast failed operation: {lastOperationError}";
+            SetStatus(new TrayStatus(health.Label, diagnostic, health.WindowSummary, health.IconState));
         }
         catch (Exception error)
         {
             Debug.WriteLine($"[CodexWingman Status] {error}");
             SetStatus(new TrayStatus(
                 "Status: Needs attention",
-                "Wingman could not finish checking Codex.\n\nWhat to do: Choose Repair Codex and Helpers.",
-                lastReport is { TargetsDiscovered: > 0 } report
-                    ? ConnectionHealthPolicy.FormatWindowSummary(
-                        report.TargetsDiscovered,
-                        CodexLauncher.GetOpenWindowCount())
-                    : "Window status unavailable",
+                lastOperationError is null
+                    ? $"Wingman could not finish checking Codex: {error.Message}"
+                    : $"Last failed operation: {lastOperationError}\n\nStatus check also failed: {error.Message}",
+                "Window status unavailable",
                 TrayIconState.Attention));
         }
     }
 
     private async Task SetConnectionErrorStatusAsync(string diagnosticText)
     {
+        lastOperationError = diagnosticText;
         Debug.WriteLine($"[CodexWingman Status] {diagnosticText}");
         try
         {
@@ -556,21 +560,18 @@ internal sealed class TrayApplicationContext : ApplicationContext
                 runtimeStatePath,
                 configuredPortOverride);
             var health = ConnectionHealthPolicy.Evaluate(state, lastReport, helperHost.IsSuspended);
-            if (health.State == ConnectionHealthState.CodexClosed)
-                SetStatus(new TrayStatus(health.Label, health.DiagnosticText, health.WindowSummary, health.IconState));
-            else
-                SetStatus(new TrayStatus(
-                    "Status: Needs attention",
-                    "Wingman could not complete the last operation.\n\nWhat to do: Choose Repair Codex and Helpers. If the problem remains, reload Helpers.",
-                    health.WindowSummary,
-                    TrayIconState.Attention));
+            SetStatus(new TrayStatus(
+                "Status: Needs attention",
+                diagnosticText,
+                health.WindowSummary,
+                TrayIconState.Attention));
         }
         catch (Exception probeError)
         {
             Debug.WriteLine($"[CodexWingman Status] Status check failed: {probeError}");
             SetStatus(new TrayStatus(
                 "Status: Needs attention",
-                "Wingman could not check Codex.\n\nWhat to do: Choose Repair Codex and Helpers.",
+                $"{diagnosticText}\n\nStatus check also failed: {probeError.Message}",
                 "Window status unavailable",
                 TrayIconState.Attention));
         }
@@ -579,7 +580,7 @@ internal sealed class TrayApplicationContext : ApplicationContext
     private static bool ConfirmCodexRestart()
     {
         var result = MessageBox.Show(
-            "Codex is already running without a verified helper endpoint. Wingman must close all Codex windows and relaunch Codex with hooks using your normal profile. Save any work first. Continue?",
+            "Codex is already running without a verified helper endpoint. Wingman will close its windows, then stop remaining processes from that same app before relaunching with hooks. Save any work first. Other ChatGPT installations will be left alone. Continue?",
             "Repair Codex and Helpers",
             MessageBoxButtons.YesNo,
             MessageBoxIcon.Warning,

@@ -28,9 +28,9 @@ The checked `Helpers enabled` item is the master injection switch: uncheck it to
 
 Use the Codex Wingman shortcut whenever you want to launch Codex through Codex Wingman. The first launch starts Wingman and a Helper-ready Codex process. Launching the same shortcut again asks the running Wingman instance to open Codex, repair it, or open another native window as needed.
 
-`Repair Codex and Helpers...` is always available. It checks the current Codex windows and reapplies Helpers without restarting Wingman. If Codex is already running without a usable connection, Wingman asks before gracefully closing and relaunching Codex with the normal profile; cancelling leaves every window untouched. `Open another Codex window` remains a separate action.
+`Repair Codex and Helpers...` is always available. It checks the current Codex windows and reapplies Helpers without restarting Wingman. If Codex is already running without a usable connection, Wingman asks before closing and relaunching Codex with the normal profile; cancelling leaves every window untouched. After confirmation, Wingman may stop remaining processes verified as part of the registered Codex package in the current Windows session. `Open another Codex window` remains a separate action.
 
-The tray begins with two native text rows: a health label such as `Status: OK`, followed by coverage such as `Altering 2 of 4 windows`. The first number is the usable Codex windows receiving Helpers; the second is the total visible Codex windows. Other states include `Status: Needs attention`, `Status: Needs repair`, `Status: Codex closed`, and `Status: Helpers paused`. `View status details...` shows the current plain-language diagnostic and next action.
+The tray begins with two native text rows: a health label such as `Status: OK`, followed by coverage such as `Altering 2 of 4 windows`. The first number is the usable Codex windows receiving Helpers; the second is the total visible Codex windows. Other states include `Status: Needs attention`, `Status: Needs repair`, `Status: Codex closed`, and `Status: Helpers paused`. `View status details...` shows the current diagnostic and retains the last operation error until an interactive operation succeeds.
 
 The injected controls use semantic attributes and Codex's existing layout rather than screen coordinates. Wingman reconciles rerenders, side chats, and multiple windows.
 
@@ -40,7 +40,7 @@ The injected controls use semantic attributes and Codex's existing layout rather
 - The official Codex desktop app.
 - A normal signed-in Codex installation. Wingman enables localhost debugging only when it launches or restarts Codex.
 
-After confirming a repair restart, Wingman closes Codex through its normal window-close path, waits for the entire Codex process set to exit, selects the first available localhost port starting at `9223`, and launches the packaged Codex app with:
+After confirming a repair restart, Wingman first asks the identified app windows to close normally. If processes from that same registered package remain in the current Windows session, it stops them individually before selecting an available localhost port and relaunching the packaged app with:
 
 ```text
 --remote-debugging-address=127.0.0.1 --remote-debugging-port=9223
@@ -48,7 +48,7 @@ After confirming a repair restart, Wingman closes Codex through its normal windo
 
 The port shown above is illustrative; it is not a fixed requirement. If `9223` is occupied or stale, Wingman advances to the next available port. The active port is recorded in `%LOCALAPPDATA%\CodexWingman\runtime.json` so a later Wingman launch can reconnect without guessing. The debugging endpoint is loopback-only. Wingman does not expose it to the network.
 
-If Codex is already running without a usable endpoint, Wingman leaves it alone and reports that the restart action is required. It never force-kills an ambiguous Codex process tree. An explicit `--cdp-port=<port>` argument is available for managed or diagnostic launches; ordinary users do not need it.
+If Codex is already running without a usable endpoint, Wingman leaves it alone until repair is confirmed. It refuses to stop processes when it cannot identify one unambiguous registered app from the visible windows. An explicit `--cdp-port=<port>` argument is available for managed or diagnostic launches; ordinary users do not need it.
 
 ## Install and run
 
