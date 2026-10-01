@@ -8,7 +8,6 @@ public static class CodexLaunchPolicy
 {
     public const int PreferredPort = 9223;
     public const string PackageFamilyName = "OpenAI.Codex_2p2nqsd0c76g0";
-    public static IReadOnlyList<string> ProcessNames { get; } = ["codex", "ChatGPT"];
 
     public static bool ShouldLaunchAtStartup(bool isCodexRunning) => !isCodexRunning;
 

@@ -93,29 +93,25 @@ internal static class CodexLauncher
     {
         using var wingmanProcess = Process.GetCurrentProcess();
         var currentSessionId = wingmanProcess.SessionId;
-        var processes = GetCodexProcesses();
-        var processIds = new HashSet<int>();
-        try
-        {
-            foreach (var process in processes)
-                if (CodexShutdownPolicy.IsAppRunning([Snapshot(process)], currentSessionId))
-                    processIds.Add(process.Id);
-        }
-        finally { foreach (var process in processes) process.Dispose(); }
-        if (processIds.Count == 0) return 0;
-
         var count = 0;
         EnumWindows((window, _) =>
         {
             GetWindowThreadProcessId(window, out var processId);
-            if (processIds.Contains((int)processId)
-                && IsWindowVisible(window)
-                && GetWindow(window, GetWindowCommand.Owner) == IntPtr.Zero
-                && GetWindowTextLength(window) > 0)
+            if (processId == 0 || !IsWindowVisible(window)
+                || GetWindow(window, GetWindowCommand.Owner) != IntPtr.Zero
+                || GetWindowTextLength(window) <= 0)
+                return true;
+            try
             {
-                count++;
+                using var process = Process.GetProcessById((int)processId);
+                if (process.SessionId == currentSessionId
+                    && string.Equals(TryGetPackageFamilyName(process.Id), CodexLaunchPolicy.PackageFamilyName,
+                        StringComparison.OrdinalIgnoreCase))
+                    count++;
             }
-
+            catch (ArgumentException) { } // The window's process exited during enumeration.
+            catch (InvalidOperationException) { }
+            catch (System.ComponentModel.Win32Exception) { } // A foreign process is inaccessible.
             return true;
         }, IntPtr.Zero);
         return count;
@@ -184,7 +180,7 @@ internal static class CodexLauncher
     {
         using var wingmanProcess = Process.GetCurrentProcess();
         var currentSessionId = wingmanProcess.SessionId;
-        var processes = GetCodexProcesses();
+        var processes = GetPackageProcesses();
         string executablePath;
         try
         {
@@ -250,7 +246,7 @@ internal static class CodexLauncher
 
     private static Process[] GetAppProcesses(int currentSessionId)
     {
-        var processes = GetCodexProcesses();
+        var processes = GetPackageProcesses();
         var snapshots = processes.Select(Snapshot).ToArray();
         if (snapshots.Any(process => process.SessionId == currentSessionId
             && string.Equals(process.PackageFamilyName, CodexLaunchPolicy.PackageFamilyName,
@@ -334,7 +330,7 @@ internal static class CodexLauncher
     private static bool IsCodexRunning()
     {
         using var wingmanProcess = Process.GetCurrentProcess();
-        var processes = GetCodexProcesses();
+        var processes = GetPackageProcesses();
         try
         {
             return CodexShutdownPolicy.IsAppRunning(
@@ -343,11 +339,20 @@ internal static class CodexLauncher
         finally { foreach (var process in processes) process.Dispose(); }
     }
 
-    private static Process[] GetCodexProcesses() => CodexLaunchPolicy.ProcessNames
-        .SelectMany(Process.GetProcessesByName)
-        .GroupBy(process => process.Id)
-        .Select(group => group.First())
-        .ToArray();
+    private static Process[] GetPackageProcesses()
+    {
+        var processes = Process.GetProcesses();
+        var matches = new List<Process>();
+        foreach (var process in processes)
+        {
+            if (string.Equals(TryGetPackageFamilyName(process.Id), CodexLaunchPolicy.PackageFamilyName,
+                    StringComparison.OrdinalIgnoreCase))
+                matches.Add(process);
+            else
+                process.Dispose();
+        }
+        return [.. matches];
+    }
 
     private delegate bool EnumWindowsCallback(IntPtr window, IntPtr parameter);
 

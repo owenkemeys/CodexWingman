@@ -55,14 +55,15 @@ static void TestCodexShutdownPolicy()
         new CodexProcessSnapshot(13, "ChatGPT", 2, @"C:\Apps\Codex\ChatGPT.exe", CodexLaunchPolicy.PackageFamilyName, false),
         new CodexProcessSnapshot(14, "ChatGPT", 1, @"C:\Apps\Codex\ChatGPT.exe", "OpenAI.ChatGPTClassic_2p2nqsd0c76g0", false),
         new CodexProcessSnapshot(15, "codex", 1, @"C:\Apps\Codex\resources\codex.exe", CodexLaunchPolicy.PackageFamilyName, false),
+        new CodexProcessSnapshot(16, "codex-code-mode-host", 1, @"C:\Apps\Codex\resources\codex-code-mode-host.exe", CodexLaunchPolicy.PackageFamilyName, false),
     };
     Equal(true, CodexShutdownPolicy.IsAppRunning(shutdownProcesses, 1), "startup recognizes the registered app");
     Equal(false, CodexShutdownPolicy.IsAppRunning([shutdownProcesses[2]], 1),
         "startup ignores a separate ChatGPT installation");
     var shutdownPath = CodexShutdownPolicy.SelectExecutablePath(shutdownProcesses, currentSessionId: 1);
     Equal(@"C:\Apps\Codex\ChatGPT.exe", shutdownPath, "restart identifies the visible app executable");
-    Equal(true, CodexShutdownPolicy.SelectProcessIds(shutdownProcesses, 1).SetEquals([10, 11, 15]),
-        "restart targets every verified process in the registered package and current session");
+    Equal(true, CodexShutdownPolicy.SelectProcessIds(shutdownProcesses, 1).SetEquals([10, 11, 15, 16]),
+        "restart targets new process names in the registered package and current session");
     Throws<InvalidOperationException>(
         () => CodexShutdownPolicy.SelectExecutablePath(
             [new CodexProcessSnapshot(10, "ChatGPT", 1, null, CodexLaunchPolicy.PackageFamilyName, true)], 1),
@@ -480,7 +481,6 @@ Equal(true, builtScript.Contains("resetsAtUnixSeconds", StringComparison.Ordinal
 
 Equal("--remote-debugging-address=127.0.0.1 --remote-debugging-port=9223", CodexLaunchPolicy.DebugArguments(9223), "Codex launch arguments default to the existing behavior");
 Equal("--remote-debugging-address=127.0.0.1 --remote-debugging-port=9223 --force_high_performance_gpu", CodexLaunchPolicy.DebugArguments(9223, forceHighPerformanceGpu: true), "Codex launch arguments include the opted-in high-performance GPU override");
-Equal(true, CodexLaunchPolicy.ProcessNames.SequenceEqual(["codex", "ChatGPT"], StringComparer.OrdinalIgnoreCase), "restart recognizes current and legacy Codex process names");
 Equal(true, CodexLaunchPolicy.ShouldLaunchAtStartup(isCodexRunning: false), "Wingman startup launches Codex when absent");
 Equal(false, CodexLaunchPolicy.ShouldLaunchAtStartup(isCodexRunning: true), "Wingman startup preserves a running Codex instance");
 
