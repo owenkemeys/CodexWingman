@@ -163,6 +163,12 @@ internal sealed class TrayApplicationContext : ApplicationContext
         SetBusy(true, "Starting Codex...");
         try
         {
+            if (await CodexLauncher.GetHookStatusAsync(runtimeStatePath, configuredPortOverride)
+                == CodexHookState.OpenButCannotHook)
+            {
+                await RefreshConnectionHealthAsync();
+                return;
+            }
             activePort = await CodexLauncher.EnsureRunningWithDebuggingAsync(runtimeStatePath, configuredPortOverride);
             var report = await helperHost.ReconcileAsync();
             SynchronizeHelpersMenu();
@@ -282,6 +288,12 @@ internal sealed class TrayApplicationContext : ApplicationContext
         if (!automaticRefreshGate.TryEnter(busy, exiting)) return;
         try
         {
+            if (await CodexLauncher.GetHookStatusAsync(runtimeStatePath, configuredPortOverride)
+                != CodexHookState.Hooked)
+            {
+                await RefreshConnectionHealthAsync();
+                return;
+            }
             var report = await helperHost.ReconcileAsync();
             await SetConnectionHealthFromReportAsync(report);
             // Automatic reconciliation must not mutate the tray menu or interactive enabled state.
@@ -516,7 +528,7 @@ internal sealed class TrayApplicationContext : ApplicationContext
     private async Task SetConnectionHealthFromReportAsync(HelperHostReport report)
     {
         lastReport = report;
-        if (busy) lastOperationError = null;
+        lastOperationError = null;
         await RefreshConnectionHealthAsync();
     }
 
