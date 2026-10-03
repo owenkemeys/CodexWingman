@@ -1,7 +1,7 @@
 # Usage dials
 
-- Helper generation: native-slot-v16
-- Manifest version: 1.3.3
+- Helper generation: native-slot-v17
+- Manifest version: 1.3.4
 - Helper ID: `usage-dials`
 
 ## Purpose and behavior
@@ -39,3 +39,7 @@ Usage hover is independent of the native context-window tooltip. Each usage dial
 Available reset credits are separated by a divider and shown count-first, for example "2 resets available". Unknown balances display "Resets unavailable".
 
 Plan names never create or suppress a quota window. Use the durations and reset timestamps reported by the native account cache, including weekly-only and five-hour-only accounts. Reset credits are account-level and distinct from each window's scheduled reset time. See `docs/USAGE_LIMITS.md` for the dated policy research and its limitations.
+
+## Paid usage credits
+
+When any reported usage window has less than 5% remaining, a compact amber paid-credit balance appears after the usage dials. It uses the account response's separate `credits.balance` value, never the reset-credit count. The short label is truncated to at most three characters excluding a decimal point (for example, `62k` or `1.2k`); hover or keyboard focus shows the fuller balance. At exactly 5% remaining it stays hidden. Missing, invalid, or unlimited balances stay hidden rather than showing a guessed amount. The indicator makes no claim that credits will be charged for the next request.

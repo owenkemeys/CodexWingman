@@ -18,7 +18,7 @@ test('Usage Dials package declares the readable v1 package contract', async () =
     schemaVersion: 1,
     id: 'usage-dials',
     name: 'Usage dials',
-    version: '1.3.3',
+    version: '1.3.4',
     description: 'Shows five-hour and weekly usage beside every context dial.',
     refreshSeconds: 60,
     capabilities: [],
@@ -373,8 +373,8 @@ test('renderer replaces a stale Usage Dials controller during a Helper upgrade',
     executeRenderer(apply, fixture, { state: {} })
     await fixture.flush()
     assert.equal(cleaned, 1)
-    assert.equal(fixture.window.__codexHelperUsageDials?.version, 'native-slot-v16')
-    assert.equal(fixture.window.__codexHelperUsageDials?.status().fallbackStrategy, 'native-slot-v16')
+    assert.equal(fixture.window.__codexHelperUsageDials?.version, 'native-slot-v17')
+    assert.equal(fixture.window.__codexHelperUsageDials?.status().fallbackStrategy, 'native-slot-v17')
     assert.equal(native.wrapper.nextElementSibling?.getAttribute('data-codex-helper'), 'usage-dials')
   } finally {
     fixture.window.__codexHelperUsageDials?.cleanup()
@@ -476,6 +476,57 @@ test('native account quota renders without any session backend and updates when 
     controller.cleanup()
     assert.equal(cache.listeners.size,0)
   } finally {fixture.dispose()}
+})
+
+test('paid credit balance appears only below five percent remaining and stays distinct from reset credits', async () => {
+  const fixture = createBrowserFixture()
+  makeComposer(fixture.document, 'paid-credits', 30)
+  const response = (used, balance, overrides = {}) => ({ status: 'success', data: {
+    rate_limit: { primary_window: {
+      used_percent: used, limit_window_seconds: 604800,
+      reset_at: Math.floor(Date.now() / 1000) + 302400,
+    } },
+    credits: { has_credits: true, unlimited: false, balance },
+    rate_limit_reset_credits: { available_count: 2 },
+    ...overrides,
+  } })
+  const cache = installAccountCache(fixture, response(94.9, '62500'))
+  try {
+    executeRenderer(await requiredFile('apply.js'), fixture)
+    const indicator = fixture.document.querySelector('[data-codex-helper-credits]')
+    assert.ok(indicator)
+    assert.equal(indicator.style.display, 'none')
+    cache.set(response(95, '62500'))
+    assert.equal(indicator.style.display, 'none', 'exactly five percent left is not below five percent')
+    cache.set(response(95.1, '62500'))
+    assert.equal(indicator.style.display, 'inline-flex')
+    assert.equal(indicator.textContent, '62k')
+    assert.match(indicator.getAttribute('aria-label'), /62,500 usage credits remaining/)
+    indicator.dispatchEvent(new fixture.PointerEvent('pointerover', { bubbles: true }))
+    const tooltip = fixture.document.querySelector('[data-codex-helper-tooltip="usage-fallback"]')
+    assert.match(tooltip.textContent, /62,500 usage credits remaining/)
+    assert.match(tooltip.textContent, /2 resets available/)
+    assert.equal(indicator.getAttribute('aria-describedby'), tooltip.id)
+    cache.set(response(99, '1200'))
+    assert.equal(indicator.textContent, '1.2k')
+    assert.match(tooltip.textContent, /1,200 usage credits remaining/)
+    cache.set(response(99, '100000'))
+    assert.equal(indicator.textContent, '0.1m')
+    cache.set(response(99, '0'))
+    assert.equal(indicator.textContent, '0')
+    for (const balance of ['9.8', '99', '999', '1000', '99999', '999999', '1000000000']) {
+      cache.set(response(99, balance))
+      assert.ok(indicator.textContent.replace('.', '').length <= 3, balance)
+    }
+    cache.set(response(94, '62500'))
+    assert.equal(indicator.style.display, 'none')
+    cache.set(response(99, 'not-a-balance'))
+    assert.equal(indicator.style.display, 'none')
+    cache.set(response(99, '62500', { credits: { has_credits: true, unlimited: true, balance: '62500' } }))
+    assert.equal(indicator.style.display, 'none')
+    cache.set({ status: 'error', data: response(99, '62500').data })
+    assert.equal(indicator.style.display, 'none', 'failed account reads cannot reuse a stale balance')
+  } finally { fixture.window.__codexHelperUsageDials?.cleanup(); fixture.dispose() }
 })
 
 test('native account quota follows one successful renamed rate-limit query without accepting an error cache', async () => {

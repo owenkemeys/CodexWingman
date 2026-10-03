@@ -1,5 +1,5 @@
 (() => {
-  const controllerVersion = 'native-slot-v16';
+  const controllerVersion = 'native-slot-v17';
   const initialSnapshot = state || {};
   const existing = window.__codexHelperUsageDials;
   if (existing?.version === controllerVersion) {
@@ -19,6 +19,7 @@
   let accountQuery = null;
   let unsubscribeAccount = null;
   let availableResets = null;
+  let paidCredits = null;
 
   // Read Codex's account cache; session usage does not establish a reset balance.
   const hasAccountFields = (data) => data && !Array.isArray(data)
@@ -62,6 +63,11 @@
     const count = query?.status === 'success'
       ? query.data?.rate_limit_reset_credits?.available_count : null;
     availableResets = Number.isSafeInteger(count) && count >= 0 ? count : null;
+    const rawBalance = query?.status === 'success' ? query.data?.credits?.balance : null;
+    const balanceText = typeof rawBalance === 'number' || typeof rawBalance === 'string'
+      ? String(rawBalance).trim() : '';
+    const balance = /^-?\d+(?:\.\d+)?$/.test(balanceText) ? Number(balanceText) : null;
+    paidCredits = Number.isFinite(balance) && query?.data?.credits?.unlimited !== true ? balance : null;
     // Explicit state remains supported by the legacy embedded renderer. The
     // packaged helper has no session backend and never waits for shared files.
     snapshot = fallbackSnapshot;
@@ -144,6 +150,18 @@
     [data-codex-helper-dial] .codex-helper-unused { stroke: var(--codex-helper-usage-neutral); opacity: .4; }
     [data-codex-helper-dial] .codex-helper-within { stroke: var(--codex-helper-usage-neutral); }
     [data-codex-helper-dial] .codex-helper-ahead { stroke: var(--codex-helper-usage-alert); }
+    [data-codex-helper-credits] {
+      display: inline-flex;
+      align-items: center;
+      justify-content: center;
+      height: 20px;
+      min-width: 24px;
+      color: #d89614;
+      font-size: 10px;
+      font-weight: 600;
+      font-variant-numeric: tabular-nums;
+      cursor: default;
+    }
     /* Keep the original composer circle; only the enlarged popup uses an outline. */
     .codex-helper-usage-preview [data-codex-helper-dial] .codex-helper-unused { stroke-width: 2px; vector-effect: non-scaling-stroke; }
     .codex-helper-usage-shared { opacity: .6; }
@@ -221,6 +239,32 @@
   };
 
   const formatUsage = (value) => Number.isFinite(value) ? `${Math.round(value * 10) / 10}%` : 'unavailable';
+  const formatCredits = (balance) => {
+    if (balance < 0) return '0';
+    const amount = Math.abs(balance);
+    if (amount < 1000) {
+      if (amount > 0 && amount < 0.1) return '<1';
+      if (amount < 10 && !Number.isInteger(amount)) return (Math.floor(amount * 10) / 10).toFixed(1);
+      return String(Math.floor(amount));
+    }
+    const units = ['k', 'm', 'b', 't'];
+    for (let index = 0; index < units.length; index += 1) {
+      const scaled = amount / (1000 ** (index + 1));
+      if (scaled < 1000 || index === units.length - 1) {
+        const whole = Math.floor(scaled);
+        if (index === units.length - 1 && whole >= 100) return '>1t';
+        if (whole >= 100) continue;
+        if (whole >= 10) return `${whole}${units[index]}`;
+        return `${Math.floor(scaled * 10) / 10}${units[index]}`;
+      }
+    }
+    return null;
+  };
+  const creditsVisible = () => paidCredits !== null && [snapshot.primary, snapshot.secondary]
+    .some((value) => Number.isFinite(value?.usedPercent) && value.usedPercent > 95);
+  const fullCreditBalance = () => paidCredits < 0
+    ? `Usage credit balance: ${paidCredits.toLocaleString('en-US', { maximumFractionDigits: 20 })}`
+    : `${paidCredits.toLocaleString('en-US', { maximumFractionDigits: 20 })} usage credits remaining`;
   const elapsedPercent = (value) => {
     if (!Number.isFinite(value?.windowMinutes) || value.windowMinutes <= 0 || !Number.isFinite(value?.resetsAtUnixSeconds))
       return null;
@@ -333,12 +377,17 @@
     bank.setAttribute('aria-label', 'Codex account usage');
     const primary = makeDial('primary', '5-hour usage');
     const secondary = makeDial('secondary', 'Weekly usage');
-    bank.append(primary, secondary);
-    const instance = { wrapper: anchor.wrapper, anchor: anchor.dial || anchor.wrapper, mode: anchor.mode, bank, primary, secondary };
+    const credits = document.createElement('span');
+    credits.dataset.codexHelperCredits = '';
+    credits.setAttribute('role', 'img');
+    credits.setAttribute('tabindex', '0');
+    bank.append(primary, secondary, credits);
+    const instance = { wrapper: anchor.wrapper, anchor: anchor.dial || anchor.wrapper, mode: anchor.mode, bank, primary, secondary, credits };
     const selectWindow = (event) => {
       const dial = event.target?.closest?.('[data-codex-helper-dial]');
+      instance.activeCredit = event.target?.closest?.('[data-codex-helper-credits]') === credits;
       instance.activeWindow = dial && bank.contains(dial) ? dial.dataset.codexHelperDial
-        : (snapshot.primary ? 'primary' : 'secondary');
+        : (snapshot.primary?.usedPercent > 95 ? 'primary' : 'secondary');
       showFallbackTooltip(instance);
     };
     instance.onPointerOver = selectWindow;
@@ -379,6 +428,12 @@
   const updateInstance = (instance) => {
     renderDial(instance.primary, snapshot.primary);
     renderDial(instance.secondary, snapshot.secondary);
+    const showCredits = creditsVisible();
+    if (!showCredits) instance.activeCredit = false;
+    instance.credits.style.display = showCredits ? 'inline-flex' : 'none';
+    instance.credits.textContent = showCredits ? formatCredits(paidCredits) : '';
+    if (showCredits) instance.credits.setAttribute('aria-label', fullCreditBalance());
+    else instance.credits.removeAttribute('aria-label');
     if (!instance.wrapper?.parentElement) return;
     if (instance.bank.parentElement !== instance.wrapper.parentElement || instance.bank.previousElementSibling !== instance.wrapper)
       instance.wrapper.insertAdjacentElement('afterend', instance.bank);
@@ -433,6 +488,7 @@
 
   const appendAvailableReadouts = (stack, key) => {
     if (snapshot[key]) appendWindowReadout(stack, formatWindowLabel(snapshot[key], key === 'primary' ? '5-hour usage' : 'Weekly usage'), snapshot[key], false);
+    if (creditsVisible()) stack.appendChild(makeText(fullCreditBalance(), 'codex-helper-usage-paid-credits'));
     const resetLabel = availableResets === null ? 'Resets unavailable'
       : `${availableResets} ${availableResets === 1 ? 'reset' : 'resets'} available`;
     stack.appendChild(makeText(resetLabel, 'codex-helper-usage-resets'));
@@ -457,7 +513,8 @@
       document.body.appendChild(tooltip);
     }
     for (const dial of [instance.primary, instance.secondary]) dial.removeAttribute('aria-describedby');
-    instance[key].setAttribute('aria-describedby', tooltip.id);
+    instance.credits.removeAttribute('aria-describedby');
+    (instance.activeCredit ? instance.credits : instance[key]).setAttribute('aria-describedby', tooltip.id);
     tooltip.replaceChildren();
     const stack = document.createElement('div');
     stack.className = 'flex w-38 flex-col gap-0.5 text-center';
@@ -475,7 +532,7 @@
     stack.appendChild(preview);
     appendAvailableReadouts(stack, key);
     tooltip.appendChild(stack);
-    const bankRect = instance[key].getBoundingClientRect();
+    const bankRect = (instance.activeCredit ? instance.credits : instance[key]).getBoundingClientRect();
     const tooltipRect = tooltip.getBoundingClientRect();
     const margin = 4;
     const viewportWidth = window.innerWidth || document.documentElement?.clientWidth || tooltipRect.width + margin * 2;
@@ -495,6 +552,7 @@
     instance.tooltip = null;
     instance.bank.removeAttribute('aria-describedby');
     for (const dial of [instance.primary, instance.secondary]) dial.removeAttribute('aria-describedby');
+    instance.credits.removeAttribute('aria-describedby');
   };
 
   const status = () => ({
@@ -504,6 +562,7 @@
     primary: snapshot.primary || null,
     secondary: snapshot.secondary || null,
     availableResets,
+    paidCredits,
   });
 
   const update = (nextSnapshot) => {

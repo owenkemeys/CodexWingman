@@ -5,6 +5,7 @@ Verified against official OpenAI documentation on 2026-09-21.
 - [Pricing](https://learn.chatgpt.com/docs/pricing) describes five-hour allowance estimates for Plus, Pro, and standard Business, with weekly limits potentially also applying. Legacy Enterprise/Edu follows Plus for most features; flexible Enterprise/Edu uses credits without fixed rate limits. Free and Go include Codex, but this page does not establish their exact window combination. Actual account windows take precedence over plan-name assumptions, including weekly-only high-tier accounts.
 - Plus/Pro can buy additional credits. These purchased usage credits are distinct from earned rate-limit reset credits. Referral rewards are promotion-dependent; the documented June promotion is not a current entitlement guarantee.
 - [App Server](https://learn.chatgpt.com/docs/app-server) exposes each window's duration and next reset independently, plus one authoritative available reset-credit count. It documents the generic `codexRateLimits` reset type, not separate five-hour and weekly credit balances. The service decides reset eligibility; the consume response does not establish which windows changed. Re-read limits afterward. Wingman only displays the balance and never redeems it.
+- The separate paid-usage `credits.balance` field is an account balance, not a rate-limit reset count. The compact balance indicator appears only when a reported usage window has less than 5% remaining, and does not infer whether a request is already billing against credits.
 
 ## Interface decisions
 
