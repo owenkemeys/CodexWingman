@@ -18,6 +18,8 @@ internal sealed class TrayApplicationContext : ApplicationContext
     private readonly ToolStripMenuItem injectItem;
     private readonly ToolStripMenuItem repairItem;
     private readonly ToolStripMenuItem openWindowItem;
+    private readonly ToolStripMenuItem t3RepairItem;
+    private readonly ToolStripMenuItem t3OpenWindowItem;
     private readonly ToolStripMenuItem statusDetailsItem;
     private readonly ToolStripMenuItem openHelpersFolderItem;
     private readonly ToolStripMenuItem reloadHelpersItem;
@@ -71,8 +73,7 @@ internal sealed class TrayApplicationContext : ApplicationContext
             ?? CodexRuntimeStateStore.LoadPort(runtimeStatePath)
             ?? CodexLaunchPolicy.PreferredPort;
         var targetSource = new HttpCodexTargetSource(targetHttp, () => activePort);
-        var t3TargetSource = new T3CodeTargetSource(
-            targetHttp, () => CodexRuntimeStateStore.LoadPort(t3RuntimeStatePath));
+        var t3TargetSource = new T3CodeTargetSource(targetHttp, GetT3Port);
         var evaluator = new WebSocketCdpEvaluator();
         userHelpersRoot = WingmanIdentity.ResolveHelpersRoot(Application.ExecutablePath);
         Directory.CreateDirectory(userHelpersRoot);
@@ -106,7 +107,6 @@ internal sealed class TrayApplicationContext : ApplicationContext
         {
             CheckOnClick = true,
             Checked = settings.OpenT3CodeOnLaunch,
-            Enabled = false, // Enable with the dedicated T3 launcher after its window trial.
         };
         t3OpenOnLaunchItem.CheckedChanged += T3OpenOnLaunchChanged;
         helpersItem = new ToolStripMenuItem("Manage helpers");
@@ -129,9 +129,11 @@ internal sealed class TrayApplicationContext : ApplicationContext
             new ToolStripSeparator(),
             codexOpenOnLaunchItem,
         ]);
+        t3OpenWindowItem = new ToolStripMenuItem("Open a hooked window", null, T3OpenWindowClicked);
+        t3RepairItem = new ToolStripMenuItem("Repair T3 Code", null, T3RepairClicked);
         t3CodeMenuItem.DropDownItems.AddRange([
-            new ToolStripMenuItem("Open a hooked window") { Enabled = false },
-            new ToolStripMenuItem("Repair T3 Code") { Enabled = false },
+            t3OpenWindowItem,
+            t3RepairItem,
             new ToolStripMenuItem("View status details...", null, T3StatusDetailsClicked),
             new ToolStripSeparator(),
             t3OpenOnLaunchItem,
@@ -204,7 +206,22 @@ internal sealed class TrayApplicationContext : ApplicationContext
         SetBusy(true, "Starting Codex...");
         try
         {
-            await ReconcileT3Async();
+            var t3StartupFailed = false;
+            if (t3OpenOnLaunchItem.Checked)
+            {
+                try
+                {
+                    await T3CodeLauncher.EnsureRunningWithDebuggingAsync(t3RuntimeStatePath, activePort);
+                }
+                catch (Exception error)
+                {
+                    Debug.WriteLine($"[T3 Code startup] {error}");
+                    t3StartupFailed = true;
+                    t3CheckFailed = true;
+                    SetT3MenuStatus();
+                }
+            }
+            if (!t3StartupFailed) await ReconcileT3Async();
             var startupState = await CodexLauncher.GetHookStatusAsync(runtimeStatePath, configuredPortOverride);
             if (startupState == CodexHookState.OpenButCannotHook
                 || (startupState == CodexHookState.NotOpen && !codexOpenOnLaunchItem.Checked))
@@ -429,7 +446,7 @@ internal sealed class TrayApplicationContext : ApplicationContext
         }
         try
         {
-            if (CodexRuntimeStateStore.LoadPort(t3RuntimeStatePath) is not null)
+            if (GetT3Port() is not null)
                 await t3HelperHost.DrainHostActionsAsync();
         }
         catch (Exception error)
@@ -493,6 +510,63 @@ internal sealed class TrayApplicationContext : ApplicationContext
         await EnsureCodexReadyAsync(openWindowWhenHealthy: true, "Opening another Codex window...");
     }
 
+    private async void T3OpenWindowClicked(object? sender, EventArgs eventArgs)
+    {
+        await EnsureT3ReadyAsync(repair: false);
+    }
+
+    private async void T3RepairClicked(object? sender, EventArgs eventArgs)
+    {
+        await EnsureT3ReadyAsync(repair: true);
+    }
+
+    private async Task EnsureT3ReadyAsync(bool repair)
+    {
+        if (busy || exiting) return;
+        using var deadline = new CancellationTokenSource(TimeSpan.FromSeconds(90));
+        activeInteractiveOperation = deadline;
+        SetBusy(true, repair ? "Repairing T3 Code..." : "Opening T3 Code...");
+        try
+        {
+            if (repair)
+            {
+                if (!ConfirmT3Restart()) return;
+                await T3CodeLauncher.RestartWithDebuggingAsync(t3RuntimeStatePath, deadline.Token);
+            }
+            else
+            {
+                var acquisition = await T3CodeLauncher.OpenHookReadyWindowAsync(
+                    t3RuntimeStatePath, activePort, deadline.Token);
+                if (acquisition.Mode == HookReadyAcquisitionMode.RestartRequired)
+                {
+                    if (!ConfirmT3Restart()) return;
+                    await T3CodeLauncher.RestartWithDebuggingAsync(t3RuntimeStatePath, deadline.Token);
+                }
+            }
+            await ReconcileT3Async(() => t3HelperHost.ResumeAndReconcileAsync(deadline.Token));
+            if (t3CheckFailed)
+                throw new InvalidOperationException("T3 Code started, but its Helpers could not be checked.");
+            SynchronizeHelpersMenu();
+        }
+        catch (Exception error)
+        {
+            Debug.WriteLine($"[T3 Code launch or repair] {error}");
+            t3CheckFailed = true;
+            SetT3MenuStatus();
+            MessageBox.Show(error.Message, "T3 Code needs attention", MessageBoxButtons.OK, MessageBoxIcon.Warning);
+        }
+        finally
+        {
+            if (ReferenceEquals(activeInteractiveOperation, deadline)) activeInteractiveOperation = null;
+            SetBusy(false);
+        }
+    }
+
+    private static bool ConfirmT3Restart() => MessageBox.Show(
+        "Wingman will close this session's T3 Code windows and relaunch T3 Code with Helpers. Save your work first. Codex will be left alone. Continue?",
+        "Repair T3 Code", MessageBoxButtons.YesNo, MessageBoxIcon.Warning,
+        MessageBoxDefaultButton.Button2) == DialogResult.Yes;
+
     private void StatusDetailsClicked(object? sender, EventArgs eventArgs)
     {
         MessageBox.Show(
@@ -508,8 +582,15 @@ internal sealed class TrayApplicationContext : ApplicationContext
         MessageBox.Show(status.Details, "T3 Code status", MessageBoxButtons.OK, MessageBoxIcon.Information);
     }
 
+    private int? GetT3Port()
+    {
+        var port = CodexRuntimeStateStore.LoadPort(t3RuntimeStatePath);
+        return port is not null && port != CodexLaunchPolicy.PreferredPort && port != activePort
+            ? port : null;
+    }
+
     private T3CodeMenuStatus CurrentT3MenuStatus() => T3CodeMenuPolicy.Evaluate(
-        CodexRuntimeStateStore.LoadPort(t3RuntimeStatePath) is not null,
+        GetT3Port() is not null,
         lastT3Report,
         t3CheckFailed);
 
@@ -522,8 +603,8 @@ internal sealed class TrayApplicationContext : ApplicationContext
 
     private async Task ReconcileT3Async(Func<Task<HelperHostReport>>? operation = null)
     {
-        // No T3 endpoint is recorded until a dedicated window trial proves its ownership.
-        if (operation is null && CodexRuntimeStateStore.LoadPort(t3RuntimeStatePath) is null)
+        // Without a saved, app-isolated endpoint, leave existing T3 windows untouched.
+        if (operation is null && GetT3Port() is null)
         {
             lastT3Report = null;
             t3CheckFailed = false;
@@ -748,6 +829,8 @@ internal sealed class TrayApplicationContext : ApplicationContext
         injectItem.Enabled = !value;
         repairItem.Enabled = !value;
         openWindowItem.Enabled = !value;
+        t3RepairItem.Enabled = !value;
+        t3OpenWindowItem.Enabled = !value;
         checkUpdatesItem.Enabled = !value && !checkingRelease;
         openHelpersFolderItem.Enabled = !value;
         reloadHelpersItem.Enabled = !exiting;

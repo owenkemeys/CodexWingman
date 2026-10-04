@@ -107,6 +107,7 @@ try
 await TestReleaseDiscoveryAsync();
 TestSealedReleasePackage();
 await TestTargetAppIsolation();
+TestT3CodeLaunchPolicy();
 Equal("CodexWingman.Desktop.Singleton.v1", WingmanIdentity.SingleInstanceName, "stable single-instance identity");
 Equal("CodexWingman.Desktop.Activate.v1", WingmanIdentity.ActivationEventName, "stable activation identity");
 Equal("Codex Wingman", WingmanIdentity.RunningMenuText, "concise Wingman menu heading");
@@ -2082,6 +2083,47 @@ static void TestSealedReleasePackage()
     {
         Directory.Delete(root, recursive: true);
     }
+}
+
+static void TestT3CodeLaunchPolicy()
+{
+    var paths = T3CodeLaunchPolicy.CandidateExecutables("/local", "/programs");
+    Equal(true, paths.Any(path => path.Replace('\\', '/').EndsWith("T3 Code Nightly/T3 Code Nightly.exe", StringComparison.Ordinal)),
+        "T3 Nightly per-user executable discovery");
+    Equal(true, paths.All(T3CodeLaunchPolicy.IsT3Executable), "candidate paths identify only T3 executables");
+    var installed = new[] { paths[0], paths[1] };
+    Equal(paths[1], T3CodeLaunchPolicy.SelectExecutable(paths, [paths[1]], installed.Contains),
+        "running T3 Nightly takes precedence over installed stable");
+    Equal(paths[0], T3CodeLaunchPolicy.SelectExecutable(paths, [], installed.Contains),
+        "stable T3 takes precedence when no installed instance runs");
+    Equal<string?>(null, T3CodeLaunchPolicy.SelectExecutable(paths, [], _ => false),
+        "missing T3 executable fails closed");
+    Equal(false, T3CodeLaunchPolicy.IsT3Executable(@"C:\Programs\Codex\Codex.exe"),
+        "T3 discovery rejects Codex");
+    Equal(false, T3CodeLaunchPolicy.IsT3Executable(@"C:\Programs\Other\T3 Code.exe"),
+        "T3 discovery rejects lookalike path");
+    Equal(true, T3CodeLaunchPolicy.MatchesRunningProcess(paths[1], 2, paths[1], 2),
+        "T3 repair selects its exact executable in the current session");
+    Equal(false, T3CodeLaunchPolicy.MatchesRunningProcess(paths[1], 2, paths[0], 2),
+        "T3 repair excludes stable when Nightly is selected");
+    Equal(false, T3CodeLaunchPolicy.MatchesRunningProcess(paths[1], 2, paths[1], 3),
+        "T3 repair excludes another session");
+    Equal(false, T3CodeLaunchPolicy.MatchesRunningProcess(paths[1], 2, @"C:\Programs\Codex\Codex.exe", 2),
+        "T3 repair excludes Codex");
+    Equal(true, T3CodeLaunchPolicy.CandidatePorts(9411).SequenceEqual([9411, T3CodeLaunchPolicy.PreferredPort]),
+        "T3 port search uses its own remembered port");
+    Equal(false, T3CodeLaunchPolicy.CandidatePorts(null).Contains(CodexLaunchPolicy.PreferredPort),
+        "T3 port selection excludes Codex port");
+    Equal(false, T3CodeLaunchPolicy.CandidatePorts(CodexLaunchPolicy.PreferredPort)
+        .Contains(CodexLaunchPolicy.PreferredPort), "T3 rejects a saved Codex default port");
+    Equal(false, T3CodeLaunchPolicy.CandidatePorts(9411, codexPort: 9411).Contains(9411),
+        "T3 rejects a saved active Codex port");
+    Equal(0, T3CodeLaunchPolicy.CandidatePorts(null, codexPort: T3CodeLaunchPolicy.PreferredPort).Count,
+        "T3 rejects its preferred port when Codex owns it");
+    Equal(true, T3CodeLaunchPolicy.DebugArguments(T3CodeLaunchPolicy.PreferredPort).Contains("127.0.0.1"),
+        "T3 CDP binds loopback");
+    Equal(true, T3CodeLaunchPolicy.DebugArguments(T3CodeLaunchPolicy.PreferredPort, newWindow: true)
+        .Contains("--new-window", StringComparison.Ordinal), "T3 new-window request is explicit");
 }
 
 static async Task TestTargetAppIsolation()
