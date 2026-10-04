@@ -1,0 +1,9 @@
+<Project>
+  <ItemGroup Condition="Exists('$(MSBuildThisFileDirectory)..\tools\Apply-CodexAppUpdate.ps1')">
+    <Content Include="$(MSBuildThisFileDirectory)..\tools\Apply-CodexAppUpdate.ps1">
+      <Link>Apply-CodexAppUpdate.ps1</Link>
+      <CopyToOutputDirectory>PreserveNewest</CopyToOutputDirectory>
+      <CopyToPublishDirectory>PreserveNewest</CopyToPublishDirectory>
+    </Content>
+  </ItemGroup>
+</Project>

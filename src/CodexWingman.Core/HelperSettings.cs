@@ -7,7 +7,9 @@ public sealed record HelperSettings(
     IReadOnlyList<string> AdditionalSessionRoots,
     IReadOnlyDictionary<string, bool>? HelperEnabled = null,
     bool ForceHighPerformanceGpu = false,
-    IReadOnlyDictionary<string, JsonElement>? HelperConfig = null)
+    IReadOnlyDictionary<string, JsonElement>? HelperConfig = null,
+    bool OpenCodexOnLaunch = true,
+    bool OpenT3CodeOnLaunch = false)
 {
     public static HelperSettings Default { get; } = new(
         true,
@@ -101,7 +103,9 @@ public static class HelperSettingsStore
                     value.AdditionalSessionRoots ?? [],
                     new Dictionary<string, bool>(value.HelperEnabled ?? new Dictionary<string, bool>(), StringComparer.Ordinal),
                     value.ForceHighPerformanceGpu,
-                    value.HelperConfig);
+                    value.HelperConfig,
+                    value.OpenCodexOnLaunch,
+                    value.OpenT3CodeOnLaunch);
         }
         catch (JsonException) { return HelperSettings.Default; }
         catch (IOException) { return HelperSettings.Default; }

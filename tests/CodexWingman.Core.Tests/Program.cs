@@ -6,6 +6,7 @@ using System.Net.Sockets;
 using System.Net.WebSockets;
 using CodexWingman.Core;
 using CodexWingman.Core.Helpers;
+using CodexApp.ReleaseKit;
 using Jint;
 
 if (args.Contains("--live-quota", StringComparer.Ordinal))
@@ -103,10 +104,13 @@ static void TestTrayVisibilityRecovery()
 
 try
 {
+await TestReleaseDiscoveryAsync();
+TestSealedReleasePackage();
+TestTargetAppIsolation();
 Equal("CodexWingman.Desktop.Singleton.v1", WingmanIdentity.SingleInstanceName, "stable single-instance identity");
 Equal("CodexWingman.Desktop.Activate.v1", WingmanIdentity.ActivationEventName, "stable activation identity");
 Equal("Codex Wingman", WingmanIdentity.RunningMenuText, "concise Wingman menu heading");
-Equal("Close Wingman (leave Codex open)", WingmanIdentity.CloseMenuText, "non-destructive close menu text");
+Equal("Close Wingman", WingmanIdentity.CloseMenuText, "app-neutral close menu text");
 var verifiedDirectory = Path.Combine(Path.GetTempPath(), "CodexWingman-verified");
 Equal(
     Path.GetFullPath(Path.Combine(verifiedDirectory, "Helpers")),
@@ -321,6 +325,8 @@ var defaultSettings = HelperSettings.Default;
 Equal(true, defaultSettings.UsageDialsEnabled, "usage dials default enabled");
 Equal(0, defaultSettings.AdditionalSessionRoots.Count, "additional roots default empty");
 Equal(false, defaultSettings.ForceHighPerformanceGpu, "high-performance GPU launch defaults off");
+Equal(true, defaultSettings.OpenCodexOnLaunch, "existing Codex startup remains enabled by default");
+Equal(false, defaultSettings.OpenT3CodeOnLaunch, "T3 startup is opt-in");
 
 var settingsRoot = Path.Combine(Path.GetTempPath(), $"codex-wingman-settings-{Guid.NewGuid():N}");
 var settingsPath = Path.Combine(settingsRoot, "settings.json");
@@ -334,6 +340,10 @@ try
     var loaded = HelperSettingsStore.Load(settingsPath);
     Equal(false, loaded.UsageDialsEnabled, "settings round trip feature state");
     Equal(true, loaded.ForceHighPerformanceGpu, "settings round trip high-performance GPU launch preference");
+    HelperSettingsStore.Save(settingsPath, configured with { OpenCodexOnLaunch = false, OpenT3CodeOnLaunch = true });
+    var launchChoices = HelperSettingsStore.Load(settingsPath);
+    Equal(false, launchChoices.OpenCodexOnLaunch, "Codex launch choice persists");
+    Equal(true, launchChoices.OpenT3CodeOnLaunch, "T3 launch choice persists");
     var personalConfig = JsonSerializer.SerializeToElement(new { mappings = new[] { new { sourcePrefix = "C:/Notes/", vault = "Notes" } }, uriAction = "open" });
     HelperSettingsStore.Save(settingsPath, configured with { HelperConfig = new Dictionary<string, JsonElement> { ["obsidian-links"] = personalConfig } });
     var personalized = HelperSettingsStore.Load(settingsPath).WithHelperEnabled("usage-dials", true);
@@ -346,6 +356,10 @@ try
     Equal(4, composed.Count, "composed roots deduplicate additional paths");
     Equal(1, composed.Count(path => path.Equals(@"R:\shared-codex\sessions", StringComparison.OrdinalIgnoreCase)), "duplicate additional root removed");
 
+    await File.WriteAllTextAsync(settingsPath, "{\"usageDialsEnabled\":true,\"additionalSessionRoots\":[]}");
+    var oldSettings = HelperSettingsStore.Load(settingsPath);
+    Equal(true, oldSettings.OpenCodexOnLaunch, "older settings preserve Codex startup");
+    Equal(false, oldSettings.OpenT3CodeOnLaunch, "older settings leave T3 startup off");
     await File.WriteAllTextAsync(settingsPath, "{not-json");
     Equal(HelperSettings.Default, HelperSettingsStore.Load(settingsPath), "malformed settings fail closed to defaults");
 }
@@ -565,7 +579,7 @@ try
     Equal(false, catalog.Packages.Any(package => package.Manifest.Id == "duplicate-helper"), "duplicates within one root are rejected together");
     Equal(true, catalog.Diagnostics.Count >= 3, "invalid catalog entries produce diagnostics");
 
-    Equal("About CodexWingman v1.2.3", TrayAboutText.For(new Version(1, 2, 3, 0)), "About row uses the application assembly version");
+    Equal("About Wingman v1.2.3", TrayAboutText.For(new Version(1, 2, 3, 0)), "About row uses the application assembly version");
 
     var childWindowRoot = Path.Combine(helperRoot, "child-window-bundled");
     var childWindowUserRoot = Path.Combine(helperRoot, "child-window-user");
@@ -1986,6 +2000,103 @@ catch (Exception error)
 {
     Console.Error.WriteLine($"CodexWingman core tests failed cleanly: {error}");
     Environment.ExitCode = 1;
+}
+
+static async Task TestReleaseDiscoveryAsync()
+{
+    const string digest = "sha256:0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef";
+    var json = JsonSerializer.Serialize(new
+    {
+        draft = false,
+        prerelease = false,
+        tag_name = "v2.0.0",
+        body = "## What's in this release\n\n- Supports Codex and T3 Code.\n- Updates from GitHub Releases.",
+        assets = new[]
+        {
+            new
+            {
+                name = "Wingman-v2.0.0-win-x64.zip",
+                state = "uploaded",
+                digest,
+                browser_download_url = "https://github.com/owenkemeys/CodexWingman/releases/download/v2.0.0/Wingman-v2.0.0-win-x64.zip",
+            },
+        },
+    });
+    using var http = new HttpClient(new StaticHttpMessageHandler(request =>
+    {
+        Equal("api.github.com", request.RequestUri?.Host, "release check uses the GitHub API");
+        return new HttpResponseMessage(HttpStatusCode.OK) { Content = new StringContent(json) };
+    }));
+    var client = new AppReleaseClient(http, "Wingman");
+    var found = await client.CheckAsync("owenkemeys/CodexWingman", "Wingman", new Version(1, 0, 0));
+    Equal("v2.0.0", found?.Tag, "a newer complete release is offered");
+    Equal(true, found?.Summary.Contains("Supports Codex and T3 Code.") == true, "release summary is user-facing");
+    Equal(null, await client.CheckAsync("owenkemeys/CodexWingman", "Wingman", new Version(2, 0, 0)),
+        "current release is not offered again");
+    async Task<AppRelease?> CheckFixtureAsync(string fixture)
+    {
+        using var fixtureHttp = new HttpClient(new StaticHttpMessageHandler(_ =>
+            new HttpResponseMessage(HttpStatusCode.OK) { Content = new StringContent(fixture) }));
+        return await new AppReleaseClient(fixtureHttp, "Wingman")
+            .CheckAsync("owenkemeys/CodexWingman", "Wingman", new Version(1, 0, 0));
+    }
+    Equal(null, await CheckFixtureAsync(json.Replace("sha256:", "unverified:", StringComparison.Ordinal)),
+        "release without a GitHub SHA-256 digest is not installable");
+    Equal(null, await CheckFixtureAsync(json.Replace("https://github.com/", "https://example.invalid/", StringComparison.Ordinal)),
+        "asset outside the selected repository is not installable");
+    Equal(null, await CheckFixtureAsync(json.Replace("\"prerelease\":false", "\"prerelease\":true", StringComparison.Ordinal)),
+        "stable channel ignores prereleases");
+}
+
+static void TestSealedReleasePackage()
+{
+    var root = Path.Combine(Path.GetTempPath(), "wingman-release-test-" + Guid.NewGuid().ToString("N"));
+    Directory.CreateDirectory(Path.Combine(root, "Helpers", "Sample"));
+    try
+    {
+        File.WriteAllText(Path.Combine(root, "CodexWingman.exe"), "exe");
+        File.WriteAllText(Path.Combine(root, "Helpers", "Sample", "wingman.json"), "helper");
+        var files = new Dictionary<string, string>
+        {
+            ["CodexWingman.exe"] = Convert.ToHexString(System.Security.Cryptography.SHA256.HashData(
+                File.ReadAllBytes(Path.Combine(root, "CodexWingman.exe")))).ToLowerInvariant(),
+            ["Helpers/Sample/wingman.json"] = Convert.ToHexString(System.Security.Cryptography.SHA256.HashData(
+                File.ReadAllBytes(Path.Combine(root, "Helpers", "Sample", "wingman.json")))).ToLowerInvariant(),
+        };
+        File.WriteAllText(Path.Combine(root, "release.json"), JsonSerializer.Serialize(new
+        {
+            schema = "codexwingman.release.v1",
+            repository = "https://github.com/owenkemeys/CodexWingman",
+            version = "2.0.0",
+            files,
+        }));
+        SealedReleasePackage.Verify(root, "https://github.com/owenkemeys/CodexWingman",
+            new Version(2, 0, 0), "codexwingman.release.v1", "CodexWingman.exe", "Helpers/");
+        File.WriteAllText(Path.Combine(root, "Helpers", "Sample", "wingman.json"), "changed");
+        Throws<InvalidDataException>(
+            () => SealedReleasePackage.Verify(root, "https://github.com/owenkemeys/CodexWingman",
+                new Version(2, 0, 0), "codexwingman.release.v1", "CodexWingman.exe", "Helpers/"),
+            "tampered release file cannot be installed");
+    }
+    finally
+    {
+        Directory.Delete(root, recursive: true);
+    }
+}
+
+static void TestTargetAppIsolation()
+{
+    var targets = new[]
+    {
+        new CodexTarget("codex", "page", "app://-/index.html", "ws://127.0.0.1/devtools/page/codex"),
+        new CodexTarget("t3", "page", "t3code://app/index.html", "ws://127.0.0.1/devtools/page/t3"),
+        new CodexTarget("t3-dev", "page", "t3code-dev://app/index.html", "ws://127.0.0.1/devtools/page/t3-dev"),
+        new CodexTarget("remote-web", "page", "https://app.t3.codes/", "ws://127.0.0.1/devtools/page/remote-web"),
+    };
+    Equal("codex", CodexTargetCatalog.SelectPages(targets).Single().Id,
+        "Codex discovery selects only the official Codex page");
+    Equal("t3", T3CodeTargetCatalog.SelectPages(targets).Single().Id,
+        "T3 discovery selects only the production T3 desktop page");
 }
 
 static string WritePackage(

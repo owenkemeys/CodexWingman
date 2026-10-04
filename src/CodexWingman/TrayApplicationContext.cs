@@ -1,16 +1,18 @@
 using System.Diagnostics;
 using CodexWingman.Core;
 using CodexWingman.Core.Helpers;
+using CodexApp.ReleaseKit;
 
 namespace CodexWingman;
 
 internal sealed class TrayApplicationContext : ApplicationContext
 {
-    private const string TrayHoverText = "Codex Wingman";
+    private const string TrayHoverText = "Wingman";
     private readonly TrayIconSet trayIcons;
     private readonly NotifyIcon tray;
-    private readonly ToolStripLabel statusLabel;
-    private readonly ToolStripLabel windowStatusLabel;
+    private readonly ToolStripMenuItem codexMenuItem;
+    private readonly ToolStripMenuItem t3CodeMenuItem;
+    private readonly ToolStripMenuItem codexOpenOnLaunchItem;
     private readonly ToolStripMenuItem helpersItem;
     private readonly ToolStripMenuItem injectItem;
     private readonly ToolStripMenuItem repairItem;
@@ -19,13 +21,16 @@ internal sealed class TrayApplicationContext : ApplicationContext
     private readonly ToolStripMenuItem openHelpersFolderItem;
     private readonly ToolStripMenuItem reloadHelpersItem;
     private readonly ToolStripMenuItem aboutItem;
+    private readonly ToolStripMenuItem checkUpdatesItem;
     private readonly ToolStripMenuItem exitItem;
     private readonly System.Windows.Forms.Timer refreshTimer;
     private readonly System.Windows.Forms.Timer actionTimer;
     private readonly System.Windows.Forms.Timer trayRecoveryTimer;
     private readonly HelperHost helperHost;
+    private readonly HttpClient releaseHttp = new() { Timeout = TimeSpan.FromSeconds(20) };
     private readonly string userHelpersRoot;
     private readonly string runtimeStatePath;
+    private readonly string settingsPath;
     private readonly int? configuredPortOverride;
     private readonly RegisteredWaitHandle? activationRegistration;
     private readonly SynchronizationContext uiContext;
@@ -38,6 +43,7 @@ internal sealed class TrayApplicationContext : ApplicationContext
     private bool exiting;
     private bool reloadPending;
     private bool synchronizingMenu;
+    private bool checkingRelease;
     private HelperHostReport? lastReport;
     private string? lastOperationError;
     private TrayStatus currentStatus = new(
@@ -53,6 +59,7 @@ internal sealed class TrayApplicationContext : ApplicationContext
         var http = new HttpClient { Timeout = TimeSpan.FromSeconds(3) };
         var settingsDirectory = Path.GetDirectoryName(initializedSettings.Path)
             ?? throw new InvalidOperationException("Settings directory is unavailable");
+        settingsPath = initializedSettings.Path;
         runtimeStatePath = Path.Combine(settingsDirectory, "runtime.json");
         activePort = configuredPortOverride
             ?? CodexRuntimeStateStore.LoadPort(runtimeStatePath)
@@ -70,18 +77,14 @@ internal sealed class TrayApplicationContext : ApplicationContext
             settings.ComposeSessionRoots(),
             log: message => Debug.WriteLine($"[CodexWingman Helper] {message}"));
 
-        statusLabel = new ToolStripLabel
+        codexMenuItem = new ToolStripMenuItem("Codex: Checking");
+        t3CodeMenuItem = new ToolStripMenuItem("T3 Code: Not ready");
+        codexOpenOnLaunchItem = new ToolStripMenuItem("Open on launch")
         {
-            Padding = new Padding(4, 2, 4, 1),
-            TextAlign = ContentAlignment.MiddleLeft,
-            ForeColor = SystemColors.MenuText,
+            CheckOnClick = true,
+            Checked = settings.OpenCodexOnLaunch,
         };
-        windowStatusLabel = new ToolStripLabel
-        {
-            Padding = new Padding(4, 1, 4, 2),
-            TextAlign = ContentAlignment.MiddleLeft,
-            ForeColor = SystemColors.MenuText,
-        };
+        codexOpenOnLaunchItem.CheckedChanged += CodexOpenOnLaunchChanged;
         helpersItem = new ToolStripMenuItem("Manage helpers");
         injectItem = new ToolStripMenuItem("Helpers enabled")
         {
@@ -92,24 +95,38 @@ internal sealed class TrayApplicationContext : ApplicationContext
         openHelpersFolderItem = new ToolStripMenuItem("Open Helpers folder", null, OpenHelpersFolderClicked);
         reloadHelpersItem = new ToolStripMenuItem("Reload helpers", null, ReloadHelpersClicked);
         RebuildHelpersMenu();
-        repairItem = new ToolStripMenuItem("Repair Codex and Helpers...", null, RepairClicked);
-        openWindowItem = new ToolStripMenuItem("Open another Codex window", null, OpenWindowClicked);
+        repairItem = new ToolStripMenuItem("Repair Codex", null, RepairClicked);
+        openWindowItem = new ToolStripMenuItem("Open a hooked window", null, OpenWindowClicked);
         statusDetailsItem = new ToolStripMenuItem("View status details...", null, StatusDetailsClicked);
+        codexMenuItem.DropDownItems.AddRange([
+            openWindowItem,
+            repairItem,
+            statusDetailsItem,
+            new ToolStripSeparator(),
+            codexOpenOnLaunchItem,
+        ]);
+        t3CodeMenuItem.DropDownItems.AddRange([
+            new ToolStripMenuItem("Open a hooked window") { Enabled = false },
+            new ToolStripMenuItem("Repair T3 Code") { Enabled = false },
+            new ToolStripMenuItem("View status details...", null, (_, _) => MessageBox.Show(
+                "T3 Code support is being built. This Wingman version has not verified a T3 window yet.",
+                "T3 Code status", MessageBoxButtons.OK, MessageBoxIcon.Information)),
+            new ToolStripSeparator(),
+            new ToolStripMenuItem("Open on launch") { CheckOnClick = true, Checked = settings.OpenT3CodeOnLaunch, Enabled = false },
+        ]);
         aboutItem = new ToolStripMenuItem("About", null, AboutClicked);
+        checkUpdatesItem = new ToolStripMenuItem("Check for Updates", null, CheckUpdatesClicked);
         exitItem = new ToolStripMenuItem(WingmanIdentity.CloseMenuText, null, ExitClicked);
         var menu = new ContextMenuStrip();
         menu.Items.AddRange([
-            statusLabel,
-            windowStatusLabel,
-            new ToolStripSeparator(),
-            repairItem,
-            openWindowItem,
-            statusDetailsItem,
+            codexMenuItem,
+            t3CodeMenuItem,
             new ToolStripSeparator(),
             injectItem,
             helpersItem,
             new ToolStripSeparator(),
             aboutItem,
+            checkUpdatesItem,
             exitItem,
         ]);
 
@@ -153,6 +170,7 @@ internal sealed class TrayApplicationContext : ApplicationContext
             startTimer.Stop();
             startTimer.Dispose();
             await InitializeAsync();
+            await CheckForUpdatesAsync(showCurrentResult: false);
         };
         startTimer.Start();
     }
@@ -163,8 +181,9 @@ internal sealed class TrayApplicationContext : ApplicationContext
         SetBusy(true, "Starting Codex...");
         try
         {
-            if (await CodexLauncher.GetHookStatusAsync(runtimeStatePath, configuredPortOverride)
-                == CodexHookState.OpenButCannotHook)
+            var startupState = await CodexLauncher.GetHookStatusAsync(runtimeStatePath, configuredPortOverride);
+            if (startupState == CodexHookState.OpenButCannotHook
+                || (startupState == CodexHookState.NotOpen && !codexOpenOnLaunchItem.Checked))
             {
                 await RefreshConnectionHealthAsync();
                 return;
@@ -181,6 +200,23 @@ internal sealed class TrayApplicationContext : ApplicationContext
         finally
         {
             SetBusy(false);
+        }
+    }
+
+    private void CodexOpenOnLaunchChanged(object? sender, EventArgs eventArgs)
+    {
+        try
+        {
+            var settings = HelperSettingsStore.Load(settingsPath);
+            HelperSettingsStore.Save(settingsPath, settings with { OpenCodexOnLaunch = codexOpenOnLaunchItem.Checked });
+        }
+        catch (Exception error)
+        {
+            codexOpenOnLaunchItem.CheckedChanged -= CodexOpenOnLaunchChanged;
+            codexOpenOnLaunchItem.Checked = HelperSettingsStore.Load(settingsPath).OpenCodexOnLaunch;
+            codexOpenOnLaunchItem.CheckedChanged += CodexOpenOnLaunchChanged;
+            MessageBox.Show($"Wingman could not save the startup choice: {error.Message}",
+                "Wingman settings", MessageBoxButtons.OK, MessageBoxIcon.Warning);
         }
     }
 
@@ -380,12 +416,123 @@ internal sealed class TrayApplicationContext : ApplicationContext
 
     private static void AboutClicked(object? sender, EventArgs eventArgs)
     {
-        var version = typeof(TrayApplicationContext).Assembly.GetName().Version ?? new Version(1, 0, 0);
+        string content;
+        try
+        {
+            content = ReleaseAbout.TextFor(typeof(TrayApplicationContext).Assembly);
+        }
+        catch (Exception error)
+        {
+            Debug.WriteLine($"[Wingman About] {error}");
+            var version = typeof(TrayApplicationContext).Assembly.GetName().Version;
+            content = $"Wingman v{version?.ToString(3) ?? "unknown"}\n\nRelease details are unavailable in this copy.";
+        }
         MessageBox.Show(
-            $"CodexWingman v{version.Major}.{version.Minor}.{Math.Max(version.Build, 0)}\n\nUnofficial Windows tray companion for the Codex desktop app.",
-            "About CodexWingman",
+            content,
+            "About Wingman",
             MessageBoxButtons.OK,
             MessageBoxIcon.Information);
+    }
+
+    private async void CheckUpdatesClicked(object? sender, EventArgs eventArgs) =>
+        await CheckForUpdatesAsync(showCurrentResult: true);
+
+    private async Task CheckForUpdatesAsync(bool showCurrentResult)
+    {
+        if (checkingRelease || exiting || busy) return;
+        checkingRelease = true;
+        checkUpdatesItem.Enabled = false;
+        var updateAccepted = false;
+        try
+        {
+            var version = typeof(TrayApplicationContext).Assembly.GetName().Version
+                ?? throw new InvalidOperationException("Wingman version is unavailable.");
+            var client = new AppReleaseClient(releaseHttp, "Wingman");
+            var release = await client.CheckAsync("owenkemeys/CodexWingman", "Wingman", version);
+            if (exiting) return;
+            if (release is null)
+            {
+                if (showCurrentResult)
+                    MessageBox.Show("Wingman is up to date.", "Wingman updates",
+                        MessageBoxButtons.OK, MessageBoxIcon.Information);
+                return;
+            }
+            var choice = MessageBox.Show(
+                $"Wingman {release.Tag} is available.\n\n{release.Summary}\n\nDownload and install this update now?",
+                "Wingman update available",
+                MessageBoxButtons.YesNo,
+                MessageBoxIcon.Information,
+                MessageBoxDefaultButton.Button2);
+            if (choice != DialogResult.Yes) return;
+            updateAccepted = true;
+            if (!WingmanIdentity.IsCanonicalPackageDirectory(AppContext.BaseDirectory))
+                throw new InvalidOperationException("This copy is not running from the installed Wingman folder.");
+            SetBusy(true, "Downloading Wingman update...");
+            try
+            {
+                var (package, script) = await new AppReleasePackageStager(
+                    releaseHttp,
+                    "https://github.com/owenkemeys/CodexWingman",
+                    "codexwingman.release.v1",
+                    "CodexWingman.exe",
+                    "CodexWingman-verified",
+                    "Helpers/").StageAsync(release);
+                ProcessStartInfo CreateUpdaterStartInfo(bool preflight)
+                {
+                    var startInfo = new ProcessStartInfo("powershell.exe")
+                    {
+                        UseShellExecute = false,
+                        CreateNoWindow = true,
+                        WindowStyle = ProcessWindowStyle.Hidden,
+                    };
+                    foreach (var argument in new[]
+                    {
+                        "-NoProfile", "-NonInteractive", "-ExecutionPolicy", "Bypass", "-File", script,
+                        "-Package", package,
+                        "-Installed", AppContext.BaseDirectory.TrimEnd(Path.DirectorySeparatorChar),
+                        "-WaitingPid", Environment.ProcessId.ToString(),
+                        "-ExpectedVersion", $"{release.Version.Major}.{release.Version.Minor}.{release.Version.Build}",
+                        "-ExpectedRepository", "https://github.com/owenkemeys/CodexWingman",
+                        "-ExpectedSchema", "codexwingman.release.v1",
+                        "-ExecutableName", "CodexWingman.exe",
+                        "-StableDirectoryName", "CodexWingman-verified",
+                        "-ExtensionsDirectoryName", "Helpers",
+                    }) startInfo.ArgumentList.Add(argument);
+                    if (preflight) startInfo.ArgumentList.Add("-PreflightOnly");
+                    return startInfo;
+                }
+                using (var preflight = Process.Start(CreateUpdaterStartInfo(preflight: true))
+                    ?? throw new InvalidOperationException("Could not preflight the Wingman updater."))
+                {
+                    await preflight.WaitForExitAsync();
+                    if (preflight.ExitCode != 0)
+                        throw new InvalidOperationException("The Windows updater preflight failed; Wingman was left unchanged.");
+                }
+                var start = CreateUpdaterStartInfo(preflight: false);
+                using var updater = Process.Start(start)
+                    ?? throw new InvalidOperationException("Could not start the Wingman updater.");
+                if (updater.WaitForExit(250) && updater.ExitCode != 0)
+                    throw new InvalidOperationException("Wingman could not prepare the update.");
+                SetBusy(false);
+                await ExitAsync();
+            }
+            finally
+            {
+                if (!exiting) SetBusy(false);
+            }
+        }
+        catch (Exception error)
+        {
+            Debug.WriteLine($"[Wingman update] {error}");
+            if (!exiting && (showCurrentResult || updateAccepted))
+                MessageBox.Show($"Wingman could not update: {error.Message}", "Wingman updates",
+                    MessageBoxButtons.OK, MessageBoxIcon.Warning);
+        }
+        finally
+        {
+            checkingRelease = false;
+            if (!exiting) checkUpdatesItem.Enabled = true;
+        }
     }
 
     private async void ReloadHelpersClicked(object? sender, EventArgs eventArgs)
@@ -448,6 +595,7 @@ internal sealed class TrayApplicationContext : ApplicationContext
         injectItem.Enabled = !value;
         repairItem.Enabled = !value;
         openWindowItem.Enabled = !value;
+        checkUpdatesItem.Enabled = !value && !checkingRelease;
         openHelpersFolderItem.Enabled = !value;
         reloadHelpersItem.Enabled = !exiting;
         foreach (var item in helperMenuItems.Values) item.Enabled = !value;
@@ -547,11 +695,13 @@ internal sealed class TrayApplicationContext : ApplicationContext
             var diagnostic = diagnosticOverride ?? health.DiagnosticText;
             if (lastOperationError is not null)
                 diagnostic += $"\n\nLast failed operation: {lastOperationError}";
+            SetCodexMenu(health);
             SetStatus(new TrayStatus(health.Label, diagnostic, health.WindowSummary, health.IconState));
         }
         catch (Exception error)
         {
             Debug.WriteLine($"[CodexWingman Status] {error}");
+            codexMenuItem.Text = "Codex: Status unavailable";
             SetStatus(new TrayStatus(
                 "Status: Needs attention",
                 lastOperationError is null
@@ -571,7 +721,9 @@ internal sealed class TrayApplicationContext : ApplicationContext
             var state = await CodexLauncher.GetHookStatusAsync(
                 runtimeStatePath,
                 configuredPortOverride);
-            var health = ConnectionHealthPolicy.Evaluate(state, lastReport, helperHost.IsSuspended);
+            var health = ConnectionHealthPolicy.Evaluate(
+                state, lastReport, helperHost.IsSuspended, CodexLauncher.GetOpenWindowCount());
+            SetCodexMenu(health, forceProblem: true);
             SetStatus(new TrayStatus(
                 "Status: Needs attention",
                 diagnosticText,
@@ -581,6 +733,7 @@ internal sealed class TrayApplicationContext : ApplicationContext
         catch (Exception probeError)
         {
             Debug.WriteLine($"[CodexWingman Status] Status check failed: {probeError}");
+            codexMenuItem.Text = "Codex: Status unavailable";
             SetStatus(new TrayStatus(
                 "Status: Needs attention",
                 $"{diagnosticText}\n\nStatus check also failed: {probeError.Message}",
@@ -603,12 +756,21 @@ internal sealed class TrayApplicationContext : ApplicationContext
     private void SetStatus(TrayStatus status)
     {
         currentStatus = status;
-        statusLabel.Text = status.Label;
-        windowStatusLabel.Text = status.WindowSummary;
-        statusLabel.ToolTipText = status.DiagnosticText;
-        windowStatusLabel.ToolTipText = status.DiagnosticText;
+        codexMenuItem.ToolTipText = status.DiagnosticText;
         tray.Icon = trayIcons.For(status.IconState);
         tray.Text = TrayIconPresentation.TextFor(status.IconState);
+    }
+
+    private void SetCodexMenu(ConnectionHealthSnapshot health, bool forceProblem = false)
+    {
+        var label = forceProblem ? "Problem" : health.State switch
+        {
+            ConnectionHealthState.Working => "OK",
+            ConnectionHealthState.CodexClosed => "Closed",
+            ConnectionHealthState.HelpersPaused => "Paused",
+            _ => "Problem",
+        };
+        codexMenuItem.Text = $"Codex: {label} ({health.Windows}/{health.VisibleWindows})";
     }
 
     private void ShowCurrentStatusBalloon()
@@ -628,6 +790,7 @@ internal sealed class TrayApplicationContext : ApplicationContext
             activationRegistration?.Unregister(null);
             tray.Dispose();
             trayIcons.Dispose();
+            releaseHttp.Dispose();
         }
         base.Dispose(disposing);
     }

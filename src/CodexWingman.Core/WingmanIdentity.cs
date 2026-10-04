@@ -8,7 +8,7 @@ public static class WingmanIdentity
     public const string ActivationEventName = "CodexWingman.Desktop.Activate.v1";
     public const string AppUserModelId = "CodexWingman.Desktop.v1";
     public const string RunningMenuText = "Codex Wingman";
-    public const string CloseMenuText = "Close Wingman (leave Codex open)";
+    public const string CloseMenuText = "Close Wingman";
 
     public static string ResolveHelpersRoot(string executablePath)
     {

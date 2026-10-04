@@ -14,6 +14,15 @@
   </PropertyGroup>
   <ItemGroup>
     <ProjectReference Include="..\CodexWingman.Core\CodexWingman.Core.csproj" />
+    <ProjectReference Include="..\CodexApp.ReleaseKit\CodexApp.ReleaseKit.csproj" />
+  </ItemGroup>
+  <ItemGroup>
+    <EmbeddedResource Include="..\..\release-content.json" LogicalName="Wingman.ReleaseContent.json" />
+    <Content Include="..\CodexApp.ReleaseKit\Apply-CodexAppUpdate.ps1">
+      <Link>Apply-CodexAppUpdate.ps1</Link>
+      <CopyToOutputDirectory>PreserveNewest</CopyToOutputDirectory>
+      <CopyToPublishDirectory>PreserveNewest</CopyToPublishDirectory>
+    </Content>
   </ItemGroup>
   <ItemGroup>
     <Content Include="..\..\LICENSE;..\..\THIRD_PARTY_NOTICES.md">

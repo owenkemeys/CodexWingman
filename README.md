@@ -1,6 +1,8 @@
-# CodexWingman
+# Wingman
 
-CodexWingman is a Windows tray companion for the official Codex desktop app, to add small quality-of-life improvements by modifying the UI in realtime. It loads small, readable Helper packages and applies them to every connected Codex window. Wingman does not replace Codex or modify its chat history.
+**Wingman 2.0 is in development.** The user-facing name is becoming Wingman, with Codex and T3 Code as separate target apps. The current installed loadout remains Codex-specific. See [the 2.0 design](docs/wingman-2.md) and [the GitHub release contract](docs/codex-app-release-contract.md) for the implementation and acceptance boundaries.
+
+Wingman (formerly CodexWingman) is a Windows tray companion for the official Codex desktop app, to add small quality-of-life improvements by modifying the UI in realtime. It loads small, readable Helper packages and applies them to every connected Codex window. Wingman does not replace Codex or modify its chat history.
 
 Start here: [Agent setup and customization](docs/AGENT_SETUP.md). Give this repository link to your agent and ask it to install Wingman, configure local integrations, and report unresolved choices. Windows only.
 
@@ -75,7 +77,7 @@ All Helpers live in `Helpers` beside `CodexWingman.exe`. This is the only folder
 
 Helpers are plain JavaScript, JSON, and Markdown. Each bundled package includes `HELPER_INFO.md` with its purpose, files, capabilities, customization guidance, and sharp edges. Wingman treats installed Helpers as trusted code. Read a Helper before installing it. See [Helper authoring](docs/helper-authoring.md) for the package format and the capabilities available to scripts.
 
-The tray menu includes an `About` command. Its dialog shows `CodexWingman v<installed version>`, taken from the executable version set once in the project file.
+The tray menu includes `About` and `Check for Updates`. About reads the executable version and packaged user-facing highlights; CI checks that both agree with the release tag. The update checker offers complete stable GitHub releases and asks before installation. This path remains a development candidate until the Windows updater and installed tray have passed target-machine acceptance.
 
 Settings live under `%LOCALAPPDATA%\CodexWingman\settings.json`. On first launch, Wingman imports an existing `%LOCALAPPDATA%\CodexHelper\settings.json` without deleting the old file. Optional remote or shared session roots are configuration, never compiled defaults. See [configuration](docs/configuration.md).
 
