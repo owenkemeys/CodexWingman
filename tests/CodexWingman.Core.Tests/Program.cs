@@ -2110,6 +2110,18 @@ static void TestT3CodeLaunchPolicy()
         "T3 repair excludes another session");
     Equal(false, T3CodeLaunchPolicy.MatchesRunningProcess(paths[1], 2, @"C:\Programs\Codex\Codex.exe", 2),
         "T3 repair excludes Codex");
+    Equal(true, T3CodeLaunchPolicy.MatchesVisibleWindow(paths, 2, paths[1], 2,
+        visible: true, owned: false, titled: true), "visible T3 window is counted");
+    Equal(false, T3CodeLaunchPolicy.MatchesVisibleWindow(paths, 2, paths[1], 2,
+        visible: false, owned: false, titled: true), "hidden T3 window is excluded");
+    Equal(false, T3CodeLaunchPolicy.MatchesVisibleWindow(paths, 2, paths[1], 2,
+        visible: true, owned: true, titled: true), "owned T3 popup is excluded");
+    Equal(false, T3CodeLaunchPolicy.MatchesVisibleWindow(paths, 2, paths[1], 2,
+        visible: true, owned: false, titled: false), "untitled background window is excluded");
+    Equal(false, T3CodeLaunchPolicy.MatchesVisibleWindow(paths, 2, paths[1], 3,
+        visible: true, owned: false, titled: true), "other-session T3 window is excluded");
+    Equal(false, T3CodeLaunchPolicy.MatchesVisibleWindow(paths, 2, @"C:\Programs\Codex\Codex.exe", 2,
+        visible: true, owned: false, titled: true), "Codex window is excluded from T3 coverage");
     Equal(true, T3CodeLaunchPolicy.CandidatePorts(9411).SequenceEqual([9411, T3CodeLaunchPolicy.PreferredPort]),
         "T3 port search uses its own remembered port");
     Equal(false, T3CodeLaunchPolicy.CandidatePorts(null).Contains(CodexLaunchPolicy.PreferredPort),
@@ -2139,13 +2151,48 @@ static async Task TestTargetAppIsolation()
         "Codex discovery selects only the official Codex page");
     Equal("t3", T3CodeTargetCatalog.SelectPages(targets).Single().Id,
         "T3 discovery selects only the production T3 desktop page");
-    Equal("T3 Code: Not ready", T3CodeMenuPolicy.Evaluate(false, null, false).Label,
-        "T3 menu stays honest before a renderer trial");
-    Equal(true, T3CodeMenuPolicy.Evaluate(false, null, false).Details.Contains("left alone", StringComparison.Ordinal),
-        "T3 details explain untouched existing windows");
-    Equal(true, T3CodeMenuPolicy.Evaluate(true, new HelperHostReport(1, 1, 1, 0, []), false)
-            .Details.Contains("dedicated window trial", StringComparison.Ordinal),
-        "a discovered T3 page is not reported as a verified hook");
+    var twoConnected = new T3CodeConnectionReport(2, 2, 0);
+    Equal("T3 Code: Closed (0/0)", T3CodeMenuPolicy.Evaluate(0, false, null, null, false).Label,
+        "T3 menu counts closed visible windows");
+    Equal("T3 Code: Problem (0/3)", T3CodeMenuPolicy.Evaluate(3, false, null, null, false).Label,
+        "visible T3 windows without an endpoint need repair");
+    Equal("T3 Code: Problem (2/3)", T3CodeMenuPolicy.Evaluate(
+        3, true, new HelperHostReport(1, 2, 2, 0, []), twoConnected, false).Label,
+        "partial T3 coverage uses visible-window denominator");
+    Equal("T3 Code: OK (2/2)", T3CodeMenuPolicy.Evaluate(
+        2, true, new HelperHostReport(1, 2, 2, 0, []), twoConnected, false).Label,
+        "complete T3 coverage reports all visible windows");
+    Equal("T3 Code: OK (1/1)", T3CodeMenuPolicy.Evaluate(
+        1, true, new HelperHostReport(1, 3, 3, 0, []), new T3CodeConnectionReport(3, 3, 0), false).Label,
+        "extra renderer pages never inflate visible T3 window count");
+    Equal("T3 Code: Problem (1/2)", T3CodeMenuPolicy.Evaluate(
+        2, true, new HelperHostReport(1, 1, 1, 0, []), twoConnected, false).Label,
+        "newly probed renderers not yet reconciled cannot inflate coverage");
+    Equal("T3 Code: Problem (2/2)", T3CodeMenuPolicy.Evaluate(
+        2, true, new HelperHostReport(1, 2, 1, 1, []), twoConnected, false).Label,
+        "failed Helper keeps complete T3 window coverage in problem state");
+    Equal("T3 Code: Problem (2/2)", T3CodeMenuPolicy.Evaluate(
+        2, true, new HelperHostReport(1, 2, 2, 0, [new HelperDiagnostic("helper", "invalid manifest")]), twoConnected, false).Label,
+        "Helper catalog diagnostic keeps complete T3 window coverage in problem state");
+    Equal("T3 Code: Problem (1/2)", T3CodeMenuPolicy.Evaluate(
+        2, true, new HelperHostReport(1, 2, 1, 1, []), new T3CodeConnectionReport(2, 1, 1), false).Label,
+        "unresponsive renderer does not count as a hooked T3 window");
+    Equal("T3 Code: Problem (0/2)", T3CodeMenuPolicy.Evaluate(
+        2, true, new HelperHostReport(1, 2, 2, 0, []), twoConnected, true).Label,
+        "failed T3 status check does not claim coverage");
+    Equal("T3 Code: Paused (0/2)", T3CodeMenuPolicy.Evaluate(
+        2, true, null, null, false, helpersSuspended: true).Label,
+        "paused T3 Helpers do not claim hooked windows");
+    Equal("T3 Code: Status unavailable", T3CodeMenuPolicy.Evaluate(null, true, null, null, true).Label,
+        "window discovery failure does not claim OK");
+    var probedTargets = targets.Append(new CodexTarget("t3-second", "page", "t3code://app/second",
+        "ws://127.0.0.1/devtools/page/t3-second")).ToArray();
+    var probeEvaluator = new FakeEvaluator("t3-second");
+    var probe = await new T3CodeConnectionProbe(new FakeTargetSource(probedTargets), probeEvaluator).ProbeAsync();
+    Equal(new T3CodeConnectionReport(2, 1, 1), probe,
+        "T3 connection probe counts successful renderer evaluations only");
+    Equal(true, probeEvaluator.Calls.All(call => call.Target.Id.StartsWith("t3", StringComparison.Ordinal)),
+        "T3 connection probe does not evaluate Codex targets");
     var requests = 0;
     using (var t3Http = new HttpClient(new StaticHttpMessageHandler(_ =>
     {

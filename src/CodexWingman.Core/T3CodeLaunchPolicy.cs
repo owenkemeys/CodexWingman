@@ -45,6 +45,19 @@ public static class T3CodeLaunchPolicy
         && selectedSession == processSession
         && string.Equals(selectedExecutable, processExecutable, StringComparison.OrdinalIgnoreCase);
 
+    public static bool MatchesVisibleWindow(
+        IEnumerable<string> installedCandidates,
+        int currentSession,
+        string? processExecutable,
+        int processSession,
+        bool visible,
+        bool owned,
+        bool titled) =>
+        visible && !owned && titled && processSession == currentSession
+        && processExecutable is not null
+        && installedCandidates.Any(path => IsT3Executable(path)
+            && string.Equals(path, processExecutable, StringComparison.OrdinalIgnoreCase));
+
     public static IReadOnlyList<int> CandidatePorts(int? rememberedPort, int? codexPort = null)
     {
         var preferred = codexPort == PreferredPort ? Array.Empty<int>() : [PreferredPort];
