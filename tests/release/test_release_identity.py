@@ -13,12 +13,12 @@ SPEC.loader.exec_module(MODULE)
 
 class ReleaseIdentityTests(unittest.TestCase):
     def test_current_identity_matches_binary(self):
-        identity = MODULE.load_identity(ROOT, "v1.0.0")
+        identity = MODULE.load_identity(ROOT, "v2.0.0")
         self.assertIn("What's in this release", MODULE.release_notes(identity))
 
     def test_mismatched_tag_fails_closed(self):
         with self.assertRaisesRegex(ValueError, "Release tag"):
-            MODULE.load_identity(ROOT, "v2.0.0")
+            MODULE.load_identity(ROOT, "v1.0.0")
 
     def test_mismatched_about_content_fails_closed(self):
         with tempfile.TemporaryDirectory() as directory:
