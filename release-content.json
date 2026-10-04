@@ -1,8 +1,10 @@
 {
-  "version": "1.0.0",
+  "version": "2.0.0",
   "highlights": [
-    "Adds optional helpers to every connected Codex window.",
-    "Shows window coverage and offers a guided repair when Codex cannot be hooked.",
-    "Keeps helper choices in your local settings."
+    "Manage Codex and T3 Code from one Wingman tray menu, with separate open and repair controls.",
+    "Choose whether each app opens when Wingman starts.",
+    "Keep Helpers scoped to the right app, with a shared on/off control.",
+    "Check GitHub Releases for updates at startup and install only after you agree.",
+    "T3 Code support is a preview until its window hooking is verified on Windows."
   ]
 }

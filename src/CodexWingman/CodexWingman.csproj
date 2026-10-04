@@ -7,9 +7,9 @@
     <Nullable>enable</Nullable>
     <AssemblyName>CodexWingman</AssemblyName>
     <RootNamespace>CodexWingman</RootNamespace>
-    <Product>CodexWingman</Product>
-    <Version>1.0.0</Version>
-    <Description>Unofficial Windows tray companion for the Codex desktop app.</Description>
+    <Product>Wingman</Product>
+    <Version>2.0.0</Version>
+    <Description>Unofficial Windows tray companion for Codex and T3 Code.</Description>
     <ApplicationIcon>Assets\CodexWingman.ico</ApplicationIcon>
   </PropertyGroup>
   <ItemGroup>
