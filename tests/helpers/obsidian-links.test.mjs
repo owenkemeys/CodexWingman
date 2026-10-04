@@ -69,21 +69,24 @@ test('package declares the exact manifest/config contract and keeps the prefix o
     requiredFile('HELPER_INFO.md'),
   ])
   assert.deepEqual(JSON.parse(manifestSource), {
-    schemaVersion: 1,
+    schemaVersion: 2,
     id: 'obsidian-links',
     name: 'Obsidian links',
-    version: '1.3.1',
+    version: '1.4.0',
     description: 'Turns configured Obsidian note paths in rendered messages into safe deep links.',
     refreshSeconds: 0,
     capabilities: ['system.openObsidianUri'],
     config: { mappings: [], uriAction: 'open' },
-    entrypoints: { apply: 'apply.js', remove: 'remove.js' },
+    targets: {
+      codex: { apply: 'apply.js', remove: 'remove.js' },
+      't3-code': { apply: 'apply.js', remove: 'remove.js' },
+    },
   })
   assert.equal(apply.includes(prefix), false)
   assert.equal(remove.includes(prefix), false)
   assert.match(info, /^# Obsidian links$/m)
   assert.match(info, /Helper ID: `obsidian-links`/)
-  assert.match(info, /Manifest version: 1\.3\.1/)
+  assert.match(info, /Manifest version: 1\.4\.0/)
   assert.match(info, /Wait for Note/)
   assert.match(info, /## Purpose and behavior/)
   assert.match(info, /## Sharp edges and failure behavior/)
@@ -743,7 +746,7 @@ test('repeat apply is idempotent and streaming plus inserted message content rec
   try {
     executeRenderer(apply, fixture, { helperConfig: { pathPrefix: prefix } })
     const controller = fixture.window.__codexWingmanObsidianLinks
-    assert.equal(controller.version, 'message-links-v12')
+    assert.equal(controller.version, 'message-links-v13')
     assert.equal(typeof controller.cleanup, 'function')
     assert.equal(typeof controller.reconcile, 'function')
     assert.equal(typeof controller.status, 'function')
@@ -932,4 +935,54 @@ test('invalid helper configuration fails closed without starting a controller', 
       fixture.dispose()
     }
   }
+})
+
+test('T3 timeline links use the host action while composer text and native click handling stay untouched', async () => {
+  const [apply, remove] = await Promise.all([requiredFile('apply.js'), requiredFile('remove.js')])
+  const fixture = createBrowserFixture()
+  fixture.window.location = { protocol: 't3code:' }
+  const timeline = fixture.document.createElement('div')
+  timeline.setAttribute('data-timeline-root', 'true')
+  fixture.document.body.appendChild(timeline)
+  const message = fixture.document.createElement('div')
+  message.setAttribute('data-message-id', 't3-assistant-1')
+  message.setAttribute('data-message-role', 'assistant')
+  timeline.appendChild(message)
+  const markdown = fixture.document.createElement('div')
+  markdown.setAttribute('class', 'chat-markdown')
+  message.appendChild(markdown)
+  const raw = `${prefix}Jarvis/Notes/T3 Trial.md`
+  const anchor = fixture.document.createElement('a')
+  anchor.setAttribute('href', raw)
+  anchor.textContent = 'The note'
+  markdown.appendChild(anchor)
+  const plain = fixture.document.createElement('p')
+  plain.appendChild(fixture.document.createTextNode(raw))
+  markdown.appendChild(plain)
+  const composer = fixture.document.createElement('div')
+  composer.setAttribute('contenteditable', 'true')
+  composer.textContent = raw
+  fixture.document.body.appendChild(composer)
+  const requests = []
+  let nativeClicks = 0
+  timeline.addEventListener('click', () => nativeClicks++)
+  try {
+    executeRenderer(apply, fixture, {
+      helperConfig: { mappings: [{ sourcePrefix: prefix }] },
+      wingman: { request: (...args) => requests.push(args) },
+    })
+    assert.equal(message.querySelectorAll(linkSelector).length, 2)
+    assert.equal(composer.querySelectorAll(linkSelector).length, 0)
+    const event = new fixture.context.Event('click', { bubbles: true, cancelable: true })
+    anchor.dispatchEvent(event)
+    assert.equal(event.defaultPrevented, true)
+    assert.equal(nativeClicks, 0)
+    assert.equal(requests.length, 1)
+    assert.equal(requests[0][0], 'system.openObsidianUri')
+    assert.match(requests[0][1].uri, /^obsidian:\/\/wait-for-note\?vault=Jarvis&file=/)
+    executeRenderer(remove, fixture)
+    assert.equal(fixture.document.querySelectorAll(ownerSelector).length, 0)
+    assert.equal(anchor.getAttribute('href'), raw)
+    assert.equal(composer.textContent, raw)
+  } finally { fixture.dispose() }
 })

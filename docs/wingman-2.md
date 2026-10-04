@@ -38,7 +38,20 @@ The `wingman.json` manifest and apply/remove lifecycle stay recognizable. Schema
 
 ## T3 first proof
 
-Before treating the T3 menu's repair or hook claims as verified, identify one installed T3 Code executable on Windows and launch one dedicated test window with a loopback CDP endpoint. Verify exact process/window ownership, the `t3code://app` renderer URL, injected Obsidian Links behavior, removal, reload, and survival after an ordinary upstream T3 update. Keep the owner's other T3 windows and foreground focus untouched. T3's remote server does not make the Windows renderer's local paths or Codex session files available; any Hook Trace or Turn Metadata port must prove an exact authorized server-side thread mapping separately.
+Before treating the T3 menu's repair or hook claims as verified, identify one installed T3 Code executable on Windows and launch one dedicated test window with a loopback CDP endpoint. Verify exact process/window ownership, the `t3code://app` renderer URL, injected Helper behavior, removal, reload, and survival after an ordinary upstream T3 update. Keep the owner's other T3 windows and foreground focus untouched. T3's remote server does not make the Windows renderer's local paths or Codex session files available; any Hook Trace or Turn Metadata port must prove an exact authorized server-side thread mapping separately.
+
+The first T3 renderer loadout is **Obsidian links** and **Clickable file links**. Obsidian links scans only rendered timeline messages and uses the same validated Wingman action as Codex. Clickable file links adds an Open in Windows control beside T3's file chips without replacing their native click or context menu. Both were applied and removed on one hidden fixture in the live PersonalOS Nightly renderer. The Codex scripts and settings behavior remain separate. The other bundled Helpers stay Codex-only: their data comes from Codex sessions, their UI behavior has no matching T3 surface, or T3 already owns the feature. A T3-specific replacement requires its own observed behavior and tests before enabling it.
+
+| Helper | T3 decision |
+| --- | --- |
+| Obsidian links | Supported in timeline messages. |
+| Clickable file links | Supported for file-link chips in timeline messages. |
+| Agent derangement risk, Hook Trace, Turn Metadata | Require a verified T3 thread and data contract before accessing session data. |
+| Turn render recovery | Codex render workaround; no matching T3 failure has been observed. |
+| Sidebar on demand | Codex floating-panel behavior does not match T3's sidebar. |
+| New chat window | Needs a T3-specific window action rather than Codex's native action. |
+| Usage Dials | Requires T3 usage data and a T3-specific display. |
+| JSON Debug | Codex-specific diagnostics; a T3 version needs its own evidence and design. |
 
 ## Acceptance
 

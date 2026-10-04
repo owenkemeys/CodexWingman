@@ -42,18 +42,86 @@ test('package declares Jarvis translation plus local Windows path support', asyn
     requiredFile('HELPER_INFO.md'),
   ])
   assert.deepEqual(JSON.parse(manifestSource), {
-    schemaVersion: 1,
+    schemaVersion: 2,
     id: 'clickable-file-links',
     name: 'Clickable file links',
-    version: '1.4.0',
-    description: 'Opens native Codex file and folder references in their Windows applications, with optional remote path mappings.',
+    version: '1.5.0',
+    description: 'Opens local file and folder references in Windows applications from Codex or T3 Code, with optional remote path mappings.',
     refreshSeconds: 0,
     capabilities: ['system.openFilePath'],
     config: { mappings: [], excludePrefixes: [] },
-    entrypoints: { apply: 'apply.js', remove: 'remove.js' },
+    targets: {
+      codex: { apply: 'apply.js', remove: 'remove.js' },
+      't3-code': { apply: 'apply.t3.js', remove: 'remove.t3.js' },
+    },
   })
   assert.match(info, /native Codex file-reference control/i)
   assert.match(info, /system\.openFilePath/)
+})
+
+test('T3 file chips gain a separate Windows-open control without changing their native click', async () => {
+  const [apply, remove] = await Promise.all([requiredFile('apply.t3.js'), requiredFile('remove.t3.js')])
+  const fixture = createBrowserFixture()
+  fixture.window.location = { protocol: 't3code:' }
+  const timeline = fixture.document.createElement('div')
+  timeline.setAttribute('data-timeline-root', 'true')
+  fixture.document.body.appendChild(timeline)
+  const message = fixture.document.createElement('div')
+  message.setAttribute('data-message-id', 't3-assistant-1')
+  message.setAttribute('data-message-role', 'assistant')
+  timeline.appendChild(message)
+  const markdown = fixture.document.createElement('div')
+  markdown.setAttribute('class', 'chat-markdown')
+  message.appendChild(markdown)
+  const makeChip = (raw) => {
+    const chip = fixture.document.createElement('a')
+    chip.setAttribute('class', 'chat-markdown-file-link')
+    chip.setAttribute('href', raw)
+    chip.textContent = 'file chip'
+    markdown.appendChild(chip)
+    return chip
+  }
+  const remote = makeChip(`${linuxPrefix}projects/report%20draft.html`)
+  const local = makeChip('C:/Temp/notes.txt')
+  makeChip(`${linuxPrefix}obsidian/Notes/Private.md`)
+  makeChip(`${linuxPrefix}projects/../unsafe.txt`)
+  const outside = fixture.document.createElement('a')
+  outside.setAttribute('class', 'chat-markdown-file-link')
+  outside.setAttribute('href', 'C:/Temp/outside.txt')
+  fixture.document.body.appendChild(outside)
+  let nativeClicks = 0
+  remote.addEventListener('click', () => nativeClicks++)
+  const requests = []
+  try {
+    executeRenderer(apply, fixture, { helperConfig: remoteFixtureConfig, wingman: { request: (...args) => requests.push(args) } })
+    const buttons = fixture.document.querySelectorAll('[data-clickable-file-links-t3-open="true"]')
+    assert.equal(buttons.length, 2)
+    assert.equal(remote.getAttribute('href'), `${linuxPrefix}projects/report%20draft.html`)
+    assert.equal(local.getAttribute('href'), 'C:/Temp/notes.txt')
+    remote.dispatchEvent(new fixture.context.Event('click', { bubbles: true, cancelable: true }))
+    assert.equal(nativeClicks, 1)
+    assert.equal(requests.length, 0)
+    const click = new fixture.context.Event('click', { bubbles: true, cancelable: true })
+    remote.nextElementSibling.dispatchEvent(click)
+    assert.equal(click.defaultPrevented, true)
+    assert.equal(requests[0][0], 'system.openFilePath')
+    assert.equal(requests[0][1].path, 'R:/projects/report draft.html')
+    local.nextElementSibling.dispatchEvent(new fixture.context.Event('click', { bubbles: true, cancelable: true }))
+    assert.equal(requests[1][0], 'system.openFilePath')
+    assert.equal(requests[1][1].path, 'C:/Temp/notes.txt')
+    executeRenderer(remove, fixture)
+    assert.equal(fixture.document.querySelectorAll('[data-clickable-file-links-t3-open="true"]').length, 0)
+    assert.equal(remote.getAttribute('href'), `${linuxPrefix}projects/report%20draft.html`)
+  } finally { fixture.dispose() }
+})
+
+test('T3 file-link script does not run in a Codex renderer', async () => {
+  const apply = await requiredFile('apply.t3.js')
+  const fixture = createBrowserFixture()
+  try {
+    executeRenderer(apply, fixture)
+    assert.equal(fixture.window.__codexWingmanT3ClickableFileLinks, undefined)
+  } finally { fixture.dispose() }
 })
 
 test('the Example native control exposes J slash path through DOM and React props while preserving native click handling', async () => {
