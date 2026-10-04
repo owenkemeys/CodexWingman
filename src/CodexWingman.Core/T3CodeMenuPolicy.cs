@@ -12,7 +12,8 @@ public static class T3CodeMenuPolicy
         HelperHostReport? report,
         T3CodeConnectionReport? connections,
         bool checkFailed,
-        bool helpersSuspended = false)
+        bool helpersSuspended = false,
+        bool hasEnabledHelpers = true)
     {
         if (visibleWindows is null)
             return new("T3 Code: Status unavailable", "Wingman could not count visible T3 Code windows. Choose View status details again or Repair T3 Code.");
@@ -32,6 +33,8 @@ public static class T3CodeMenuPolicy
             return new($"T3 Code: Problem ({hooked}/{visibleWindows})", $"Wingman has a Helper connection for {hooked} of {visibleWindows} visible T3 Code windows. Choose Repair T3 Code after saving work.");
         if (connections.Failed > 0 || report.Failed > 0 || report.Diagnostics.Count > 0)
             return new($"T3 Code: Problem ({hooked}/{visibleWindows})", "T3 Code windows are connected, but one or more Helpers failed. Choose Reload helpers, then Repair T3 Code if the problem remains.");
+        if (!hasEnabledHelpers)
+            return new($"T3 Code: No Helpers (0/{visibleWindows})", "Wingman can connect to T3 Code, but no T3 Code Helpers are enabled. Add or enable a T3 Code Helper to alter its windows.");
         return new($"T3 Code: OK ({hooked}/{visibleWindows})", "Wingman has a Helper connection for each visible T3 Code window. Live window matching still needs verification.");
     }
 }

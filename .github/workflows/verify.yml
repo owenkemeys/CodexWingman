@@ -34,15 +34,15 @@ jobs:
       - uses: actions/setup-python@7f4fc3e22c37d6ff65e88745f38bd3157c663f7c
         with:
           python-version: '3.11'
-      - name: Verify exact source commit
-        run: python tools/release_provenance.py verify-source
-      - name: Verify About identity
-        run: python tools/release_identity.py
       - name: Pack pinned shared release kit
         shell: pwsh
         run: |
           New-Item -ItemType Directory -Force .packages | Out-Null
           dotnet pack src/CodexApp.ReleaseKit/CodexApp.ReleaseKit.csproj -c Release -o .packages -p:NuGetAudit=false
+      - name: Verify exact source commit
+        run: python tools/release_provenance.py verify-source
+      - name: Verify About identity
+        run: python tools/release_identity.py
       - name: Verify Wingman consumes the packed kit
         shell: pwsh
         run: |
