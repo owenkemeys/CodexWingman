@@ -1,7 +1,8 @@
 (() => {
   const owner = 'obsidian-links'
   const globalName = '__codexWingmanObsidianLinks'
-  const version = 'message-links-v12'
+  const version = 'message-links-v13'
+  const t3Renderer = window.location?.protocol === 't3code:'
   const normalizeMappings = (config) => {
     const supplied = Array.isArray(config?.mappings)
       ? config.mappings
@@ -39,7 +40,7 @@
     try { existing.cleanup?.() } catch {}
   }
 
-  const rootSelector = [
+  const rootSelector = t3Renderer ? '[data-message-id][data-message-role]' : [
     '[data-user-message-bubble="true"]',
     '[data-message-author="user"]',
     '[data-author="user"]',
@@ -217,10 +218,11 @@
       if (event.defaultPrevented || event.button !== 0 || event.ctrlKey || event.metaKey || event.altKey || event.shiftKey
         || typeof wingman?.request !== 'function') return
       event.preventDefault()
+      if (t3Renderer) event.stopImmediatePropagation?.()
       event.stopPropagation()
       wingman.request('system.openObsidianUri', { uri: href })
     }
-    anchor.addEventListener('click', clickHandler)
+    anchor.addEventListener('click', clickHandler, t3Renderer)
     return clickHandler
   }
   const isRawLabel = (anchor, raw) => anchor.textContent.trim() === raw
@@ -413,7 +415,7 @@
   }
   const messageRoots = () => {
     return Array.from(document.querySelectorAll(rootSelector))
-      .filter((root) => !root.closest?.(excludedSelector))
+      .filter((root) => (!t3Renderer || root.closest?.('[data-timeline-root]')) && !root.closest?.(excludedSelector))
   }
   const reconcile = () => {
     if (reconciling) return status()
@@ -456,8 +458,8 @@
     })
   }
   const restoreRecord = (node, record) => {
-    record.anchor?.removeEventListener?.('click', record.clickHandler)
-    if (!record.anchor) node.removeEventListener?.('click', record.clickHandler)
+    record.anchor?.removeEventListener?.('click', record.clickHandler, t3Renderer)
+    if (!record.anchor) node.removeEventListener?.('click', record.clickHandler, t3Renderer)
     if (record.type === 'generated') {
       if (node.isConnected) node.replaceWith(document.createTextNode(record.raw))
       return

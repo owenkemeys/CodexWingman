@@ -2,11 +2,13 @@
 
 Helper ID: `obsidian-links`
 
-Manifest version: 1.3.1
+Manifest version: 1.4.0
 
 ## Purpose and behavior
 
 This helper turns configured Obsidian Markdown paths in rendered user and assistant messages into configured Obsidian links. `wingman.json` supplies `config.mappings`; `apply.js` adds the link, Obsidian mark, and exact-path copy control; `remove.js` restores the original text and links. It declares the narrow `system.openObsidianUri` capability because Codex does not pass custom-scheme anchors to Windows; Wingman validates the exact Vault and Markdown note parameters before asking Windows to open it.
+
+The same Helper now targets Codex and T3 Code. In T3 Code it scans only rendered timeline messages, leaving the composer and other panels alone. Wingman handles Obsidian launch for both apps.
 
 Standard `obsidian://open` requires no plugin. The optional Wait for Note mode requires its matching plugin in each destination vault.
 
