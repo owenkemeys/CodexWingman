@@ -11,8 +11,15 @@ public sealed record HelperManifest(
     [property: JsonPropertyName("description")] string Description,
     [property: JsonPropertyName("refreshSeconds")] int RefreshSeconds,
     [property: JsonPropertyName("capabilities")] IReadOnlyList<string> Capabilities,
-    [property: JsonPropertyName("entrypoints")] HelperEntrypoints Entrypoints,
-    [property: JsonPropertyName("config")] JsonElement? Config = null);
+    [property: JsonPropertyName("entrypoints")] HelperEntrypoints? Entrypoints,
+    [property: JsonPropertyName("config")] JsonElement? Config = null,
+    [property: JsonPropertyName("targets")] IReadOnlyDictionary<string, HelperEntrypoints>? Targets = null);
+
+public static class HelperAppIds
+{
+    public const string Codex = "codex";
+    public const string T3Code = "t3-code";
+}
 
 public sealed record HelperEntrypoints(
     [property: JsonPropertyName("backend")] string? Backend,
@@ -34,9 +41,10 @@ public sealed record HelperPackage(
     string? BackendSource,
     bool OverridesBundled = false)
 {
-    public string ApplyPath => Path.Combine(DirectoryPath, Manifest.Entrypoints.Apply);
-    public string RemovePath => Path.Combine(DirectoryPath, Manifest.Entrypoints.Remove);
-    public string? BackendPath => Manifest.Entrypoints.Backend is { } value
+    // Catalog projects the selected app's entrypoints into Manifest before creating a package.
+    public string ApplyPath => Path.Combine(DirectoryPath, Manifest.Entrypoints!.Apply);
+    public string RemovePath => Path.Combine(DirectoryPath, Manifest.Entrypoints!.Remove);
+    public string? BackendPath => Manifest.Entrypoints!.Backend is { } value
         ? Path.Combine(DirectoryPath, value)
         : null;
 }

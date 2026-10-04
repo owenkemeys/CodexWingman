@@ -106,7 +106,7 @@ try
 {
 await TestReleaseDiscoveryAsync();
 TestSealedReleasePackage();
-TestTargetAppIsolation();
+await TestTargetAppIsolation();
 Equal("CodexWingman.Desktop.Singleton.v1", WingmanIdentity.SingleInstanceName, "stable single-instance identity");
 Equal("CodexWingman.Desktop.Activate.v1", WingmanIdentity.ActivationEventName, "stable activation identity");
 Equal("Codex Wingman", WingmanIdentity.RunningMenuText, "concise Wingman menu heading");
@@ -574,7 +574,7 @@ try
     var catalog = new HelperCatalog().Discover(bundledRoot, userRoot);
     Equal(2, catalog.Packages.Count, "catalog accepts valid packages and user overrides");
     Equal("2.0.0", catalog.Packages.Single(package => package.Manifest.Id == "override-me").Manifest.Version, "user package overrides bundled package by helper id");
-    Equal(false, catalog.Packages.Any(package => package.Manifest.Id == "future-helper"), "unknown schema version rejected");
+    Equal(false, catalog.Packages.Any(package => package.Manifest.Id == "future-helper"), "schema v2 without targets rejected");
     Equal(false, catalog.Packages.Any(package => package.Manifest.Id == "traversal-helper"), "entrypoint traversal rejected");
     Equal(false, catalog.Packages.Any(package => package.Manifest.Id == "duplicate-helper"), "duplicates within one root are rejected together");
     Equal(true, catalog.Diagnostics.Count >= 3, "invalid catalog entries produce diagnostics");
@@ -2084,7 +2084,7 @@ static void TestSealedReleasePackage()
     }
 }
 
-static void TestTargetAppIsolation()
+static async Task TestTargetAppIsolation()
 {
     var targets = new[]
     {
@@ -2097,6 +2097,114 @@ static void TestTargetAppIsolation()
         "Codex discovery selects only the official Codex page");
     Equal("t3", T3CodeTargetCatalog.SelectPages(targets).Single().Id,
         "T3 discovery selects only the production T3 desktop page");
+
+    var root = Path.Combine(Path.GetTempPath(), $"wingman-target-isolation-{Guid.NewGuid():N}");
+    var settingsPath = Path.Combine(root, "settings", "settings.json");
+    Directory.CreateDirectory(root);
+    try
+    {
+        WritePackage(root, "legacy", "legacy-codex-helper");
+        WriteAppTargetPackage(root, "t3-only", "t3-only-helper", [HelperAppIds.T3Code]);
+        WriteAppTargetPackage(root, "both", "both-helper", [HelperAppIds.Codex, HelperAppIds.T3Code]);
+        WriteAppTargetPackage(root, "t3-invalid", "t3-invalid-helper", [HelperAppIds.T3Code],
+            [HostActionDispatcher.OpenNewChatWindow]);
+        WriteAppTargetPackage(root, "t3-private", "t3-private-helper", [HelperAppIds.T3Code],
+            ["files.codexSessions"]);
+        var userRoot = Path.Combine(root, "user-overrides");
+        Directory.CreateDirectory(userRoot);
+        WriteAppTargetPackage(userRoot, "t3-shadow", "legacy-codex-helper", [HelperAppIds.T3Code]);
+        var catalog = new HelperCatalog();
+        var codexPackages = catalog.DiscoverForApp(HelperAppIds.Codex, root).Packages;
+        var t3Packages = catalog.DiscoverForApp(HelperAppIds.T3Code, root).Packages;
+        Equal(true, codexPackages.Any(package => package.Manifest.Id == "legacy-codex-helper"),
+            "legacy manifest still defaults to Codex");
+        Equal(false, codexPackages.Any(package => package.Manifest.Id == "t3-only-helper"),
+            "Codex catalog excludes T3-only Helper");
+        Equal(false, t3Packages.Any(package => package.Manifest.Id == "legacy-codex-helper"),
+            "T3 catalog excludes legacy Codex Helper");
+        Equal(true, t3Packages.Any(package => package.Manifest.Id == "t3-only-helper"),
+            "T3 catalog accepts its targeted Helper");
+        Equal(false, t3Packages.Any(package => package.Manifest.Id == "t3-invalid-helper"),
+            "T3 catalog rejects a Codex-only capability");
+        Equal(false, t3Packages.Any(package => package.Manifest.Id == "t3-private-helper"),
+            "T3 catalog rejects Codex private session access");
+        Equal(HelperPackageSource.Bundled,
+            catalog.DiscoverForApp(HelperAppIds.Codex, root, userRoot).Packages
+                .Single(package => package.Manifest.Id == "legacy-codex-helper").Source,
+            "a T3-only user package cannot override a bundled Codex Helper");
+        Equal(true, codexPackages.Single(package => package.Manifest.Id == "both-helper")
+                .ApplySource.Contains("codex-script", StringComparison.Ordinal),
+            "Codex selects its own script from a shared manifest");
+        Equal(true, t3Packages.Single(package => package.Manifest.Id == "both-helper")
+                .ApplySource.Contains("t3-code-script", StringComparison.Ordinal),
+            "T3 selects its own script from a shared manifest");
+
+        var source = new FakeTargetSource(targets);
+        var codexEvaluator = new FakeEvaluator(null);
+        var codexHost = new HelperHost(root, settingsPath, source, codexEvaluator,
+            new HostActionDispatcher(codexEvaluator), [], appId: HelperAppIds.Codex);
+        var codexReport = await codexHost.ReconcileAsync();
+        Equal(1, codexReport.TargetsDiscovered, "Codex host sees only Codex page");
+        Equal(true, codexEvaluator.Calls.All(call => call.Target.Id == "codex"),
+            "Codex host never evaluates a T3 page");
+        Equal(false, codexEvaluator.Calls.Any(call => call.Expression.Contains("t3-code-script", StringComparison.Ordinal)),
+            "Codex host never evaluates T3 script");
+        await codexHost.RemoveAllAsync();
+        Equal(true, codexEvaluator.Calls.All(call => call.Target.Id == "codex"),
+            "Codex cleanup remains in Codex window");
+
+        var t3Evaluator = new FakeEvaluator(null);
+        IReadOnlyList<string>? t3BackendRoots = null;
+        var t3Host = new HelperHost(root, settingsPath, source, t3Evaluator,
+            new HostActionDispatcher(t3Evaluator), ["private-codex-root"],
+            backendFactory: roots =>
+            {
+                t3BackendRoots = roots.ToArray();
+                return new HelperBackend(roots);
+            },
+            appId: HelperAppIds.T3Code);
+        Equal(0, t3BackendRoots?.Count ?? -1, "T3 backend receives no Codex session roots");
+        var t3Report = await t3Host.ReconcileAsync();
+        Equal(1, t3Report.TargetsDiscovered, "T3 host sees only T3 desktop page");
+        Equal(true, t3Evaluator.Calls.All(call => call.Target.Id == "t3"),
+            "T3 host never evaluates a Codex page");
+        Equal(false, t3Evaluator.Calls.Any(call => call.Expression.Contains("codex-script", StringComparison.Ordinal)),
+            "T3 host never evaluates Codex script");
+        await t3Host.RemoveAllAsync();
+        Equal(true, t3Evaluator.Calls.All(call => call.Target.Id == "t3"),
+            "T3 cleanup remains in T3 window");
+        await ThrowsAsync<NotSupportedException>(() => t3Host.OpenNativeNewWindowAsync(),
+            "unverified Codex new-window action is unavailable to T3 host");
+    }
+    finally { Directory.Delete(root, recursive: true); }
+}
+
+static void WriteAppTargetPackage(string root, string folder, string id, string[] apps, string[]? capabilities = null)
+{
+    var directory = Path.Combine(root, folder);
+    Directory.CreateDirectory(directory);
+    var targets = apps.ToDictionary(app => app, app => new
+    {
+        backend = (string?)null,
+        apply = $"{app}.apply.js",
+        remove = $"{app}.remove.js",
+    });
+    File.WriteAllText(Path.Combine(directory, "wingman.json"), JsonSerializer.Serialize(new
+    {
+        schemaVersion = 2,
+        id,
+        name = id,
+        version = "1.0.0",
+        description = $"Fixture {id}",
+        refreshSeconds = 0,
+        capabilities = capabilities ?? [],
+        targets,
+    }));
+    foreach (var app in apps)
+    {
+        File.WriteAllText(Path.Combine(directory, $"{app}.apply.js"), $"window['__{app}-script']=true;");
+        File.WriteAllText(Path.Combine(directory, $"{app}.remove.js"), $"delete window['__{app}-script'];");
+    }
 }
 
 static string WritePackage(
