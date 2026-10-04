@@ -1,0 +1,8 @@
+{
+  "version": "1.0.0",
+  "highlights": [
+    "Adds optional helpers to every connected Codex window.",
+    "Shows window coverage and offers a guided repair when Codex cannot be hooked.",
+    "Keeps helper choices in your local settings."
+  ]
+}

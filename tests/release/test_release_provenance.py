@@ -26,7 +26,7 @@ class ReleaseContract(unittest.TestCase):
   r=self.receipt();self.assertEqual(p.verified(self.root)['commit'],r['commit'])
  def test_package_tamper_and_extra_files_blocked(self):
   pkg=self.root/'package';pkg.mkdir();(pkg/'CodexWingman.exe').write_bytes(b'fixture')
-  p.write_json(pkg/'release.json',{'schema':p.SCHEMA,'commit':'fixture','files':p.package_files(pkg)})
+  p.write_json(pkg/'release.json',{'schema':p.SCHEMA,'version':'1.0.0','commit':'fixture','files':p.package_files(pkg)})
   self.assertEqual(p.verify_package(pkg)['files'],1)
   (pkg/'extra.txt').write_text('extra')
   with self.assertRaises(ValueError):p.verify_package(pkg)

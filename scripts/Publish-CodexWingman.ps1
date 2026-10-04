@@ -73,6 +73,13 @@ try {
             throw "Staged package is missing $requiredPath"
         }
     }
+    $declaredVersion = [version](Get-Content (Join-Path $projectRootFull 'release-content.json') -Raw | ConvertFrom-Json).version
+    $binaryVersion = [version](Get-Item -LiteralPath (Join-Path $stagingRoot 'CodexWingman.exe')).VersionInfo.FileVersion
+    if ($binaryVersion.Major -ne $declaredVersion.Major -or
+        $binaryVersion.Minor -ne $declaredVersion.Minor -or
+        $binaryVersion.Build -ne $declaredVersion.Build) {
+        throw 'Published executable version does not match About content'
+    }
     $stagedHelpersRoot = Join-Path $stagingRoot 'Helpers'
     if ((Get-Item -LiteralPath $stagedHelpersRoot).Attributes -band [IO.FileAttributes]::ReparsePoint) {
         throw "Staged Helpers root must be a real executable-relative directory: $stagedHelpersRoot"

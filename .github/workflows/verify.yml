@@ -34,6 +34,8 @@ jobs:
           python-version: '3.11'
       - name: Verify exact source commit
         run: python tools/release_provenance.py verify-source
+      - name: Verify About identity
+        run: python tools/release_identity.py
       - name: Build sealed main package
         if: github.event_name == 'push' && github.ref == 'refs/heads/main'
         shell: pwsh
