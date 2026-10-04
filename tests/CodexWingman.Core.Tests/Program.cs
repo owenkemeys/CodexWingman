@@ -2090,12 +2090,16 @@ static void TestT3CodeLaunchPolicy()
     var paths = T3CodeLaunchPolicy.CandidateExecutables("/local", "/programs");
     Equal(true, paths.Any(path => path.Replace('\\', '/').EndsWith("T3 Code Nightly/T3 Code Nightly.exe", StringComparison.Ordinal)),
         "T3 Nightly per-user executable discovery");
+    Equal(true, paths.Any(path => path.Replace('\\', '/').EndsWith("t3code/T3 Code (Nightly).exe", StringComparison.Ordinal)),
+        "installed T3 Nightly executable discovery");
     Equal(true, paths.All(T3CodeLaunchPolicy.IsT3Executable), "candidate paths identify only T3 executables");
     var installed = new[] { paths[0], paths[1] };
     Equal(paths[1], T3CodeLaunchPolicy.SelectExecutable(paths, [paths[1]], installed.Contains),
         "running T3 Nightly takes precedence over installed stable");
     Equal(paths[0], T3CodeLaunchPolicy.SelectExecutable(paths, [], installed.Contains),
         "stable T3 takes precedence when no installed instance runs");
+    Equal(paths[5], T3CodeLaunchPolicy.SelectExecutable(paths, [paths[5]], path => path == paths[5]),
+        "running t3code Nightly install is selected");
     Equal<string?>(null, T3CodeLaunchPolicy.SelectExecutable(paths, [], _ => false),
         "missing T3 executable fails closed");
     Equal(false, T3CodeLaunchPolicy.IsT3Executable(@"C:\Programs\Codex\Codex.exe"),

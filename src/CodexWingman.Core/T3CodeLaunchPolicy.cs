@@ -11,6 +11,8 @@ public static class T3CodeLaunchPolicy
             Path.Combine(localAppData, "Programs", "T3 Code Nightly", "T3 Code Nightly.exe"),
             Path.Combine(programFiles, "T3 Code", "T3 Code.exe"),
             Path.Combine(programFiles, "T3 Code Nightly", "T3 Code Nightly.exe"),
+            Path.Combine(localAppData, "Programs", "t3code", "T3 Code.exe"),
+            Path.Combine(localAppData, "Programs", "t3code", "T3 Code (Nightly).exe"),
         ];
     }
 
@@ -34,9 +36,12 @@ public static class T3CodeLaunchPolicy
         var parent = normalized[..slash];
         var directory = parent[(parent.LastIndexOf('/') + 1)..];
         return (name.Equals("T3 Code.exe", StringComparison.OrdinalIgnoreCase)
-                && directory.Equals("T3 Code", StringComparison.OrdinalIgnoreCase))
+                && (directory.Equals("T3 Code", StringComparison.OrdinalIgnoreCase)
+                    || directory.Equals("t3code", StringComparison.OrdinalIgnoreCase)))
             || (name.Equals("T3 Code Nightly.exe", StringComparison.OrdinalIgnoreCase)
-                && directory.Equals("T3 Code Nightly", StringComparison.OrdinalIgnoreCase));
+                && directory.Equals("T3 Code Nightly", StringComparison.OrdinalIgnoreCase))
+            || (name.Equals("T3 Code (Nightly).exe", StringComparison.OrdinalIgnoreCase)
+                && directory.Equals("t3code", StringComparison.OrdinalIgnoreCase));
     }
 
     public static bool MatchesRunningProcess(string selectedExecutable, int selectedSession,
