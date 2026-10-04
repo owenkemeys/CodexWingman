@@ -2166,6 +2166,10 @@ static async Task TestTargetAppIsolation()
     Equal("T3 Code: OK (2/2)", T3CodeMenuPolicy.Evaluate(
         2, true, new HelperHostReport(1, 2, 2, 0, []), twoConnected, false).Label,
         "complete T3 coverage reports all visible windows");
+    Equal("T3 Code: No Helpers (0/2)", T3CodeMenuPolicy.Evaluate(
+        2, true, new HelperHostReport(0, 2, 0, 0, []), twoConnected, false,
+        hasEnabledHelpers: false).Label,
+        "an endpoint alone does not claim that T3 windows have Helpers");
     Equal("T3 Code: OK (1/1)", T3CodeMenuPolicy.Evaluate(
         1, true, new HelperHostReport(1, 3, 3, 0, []), new T3CodeConnectionReport(3, 3, 0), false).Label,
         "extra renderer pages never inflate visible T3 window count");

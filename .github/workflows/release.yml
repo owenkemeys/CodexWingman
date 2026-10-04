@@ -28,6 +28,11 @@ jobs:
       - uses: actions/setup-python@7f4fc3e22c37d6ff65e88745f38bd3157c663f7c
         with:
           python-version: '3.11'
+      - name: Pack pinned shared release kit
+        shell: pwsh
+        run: |
+          New-Item -ItemType Directory -Force .packages | Out-Null
+          dotnet pack src/CodexApp.ReleaseKit/CodexApp.ReleaseKit.csproj -c Release -o .packages -p:NuGetAudit=false
       - name: Verify release identity and exact source
         shell: pwsh
         run: |
@@ -35,11 +40,6 @@ jobs:
           if ($LASTEXITCODE -ne 0) { throw 'Release identity check failed' }
           python tools/release_provenance.py verify-source
           if ($LASTEXITCODE -ne 0) { throw 'Exact source verification failed' }
-      - name: Pack pinned shared release kit
-        shell: pwsh
-        run: |
-          New-Item -ItemType Directory -Force .packages | Out-Null
-          dotnet pack src/CodexApp.ReleaseKit/CodexApp.ReleaseKit.csproj -c Release -o .packages -p:NuGetAudit=false
       - name: Build sealed package
         shell: pwsh
         run: ./scripts/Publish-CodexWingman.ps1 -Destination '${{ runner.temp }}/package/CodexWingman-verified'

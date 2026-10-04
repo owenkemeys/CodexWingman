@@ -602,7 +602,8 @@ internal sealed class TrayApplicationContext : ApplicationContext
                 lastT3Report,
                 lastT3Connections,
                 t3CheckFailed,
-                t3HelperHost.IsSuspended);
+                t3HelperHost.IsSuspended,
+                t3HelperHost.Helpers.Any(helper => helper.Enabled));
         }
         catch (Exception error)
         {
