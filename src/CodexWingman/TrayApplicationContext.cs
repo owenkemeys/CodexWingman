@@ -13,6 +13,7 @@ internal sealed class TrayApplicationContext : ApplicationContext
     private readonly ToolStripMenuItem codexMenuItem;
     private readonly ToolStripMenuItem t3CodeMenuItem;
     private readonly ToolStripMenuItem codexOpenOnLaunchItem;
+    private readonly ToolStripMenuItem t3OpenOnLaunchItem;
     private readonly ToolStripMenuItem helpersItem;
     private readonly ToolStripMenuItem injectItem;
     private readonly ToolStripMenuItem repairItem;
@@ -27,9 +28,12 @@ internal sealed class TrayApplicationContext : ApplicationContext
     private readonly System.Windows.Forms.Timer actionTimer;
     private readonly System.Windows.Forms.Timer trayRecoveryTimer;
     private readonly HelperHost helperHost;
+    private readonly HelperHost t3HelperHost;
+    private readonly HttpClient targetHttp = new() { Timeout = TimeSpan.FromSeconds(3) };
     private readonly HttpClient releaseHttp = new() { Timeout = TimeSpan.FromSeconds(20) };
     private readonly string userHelpersRoot;
     private readonly string runtimeStatePath;
+    private readonly string t3RuntimeStatePath;
     private readonly string settingsPath;
     private readonly int? configuredPortOverride;
     private readonly RegisteredWaitHandle? activationRegistration;
@@ -45,7 +49,9 @@ internal sealed class TrayApplicationContext : ApplicationContext
     private bool synchronizingMenu;
     private bool checkingRelease;
     private HelperHostReport? lastReport;
+    private HelperHostReport? lastT3Report;
     private string? lastOperationError;
+    private bool t3CheckFailed;
     private TrayStatus currentStatus = new(
         "Status: Checking",
         "Wingman is checking Codex and its Helpers.");
@@ -56,15 +62,17 @@ internal sealed class TrayApplicationContext : ApplicationContext
         configuredPortOverride = portOverride;
         var initializedSettings = HelperSettingsStore.InitializeDefault();
         var settings = initializedSettings.Settings;
-        var http = new HttpClient { Timeout = TimeSpan.FromSeconds(3) };
         var settingsDirectory = Path.GetDirectoryName(initializedSettings.Path)
             ?? throw new InvalidOperationException("Settings directory is unavailable");
         settingsPath = initializedSettings.Path;
         runtimeStatePath = Path.Combine(settingsDirectory, "runtime.json");
+        t3RuntimeStatePath = Path.Combine(settingsDirectory, "t3-runtime.json");
         activePort = configuredPortOverride
             ?? CodexRuntimeStateStore.LoadPort(runtimeStatePath)
             ?? CodexLaunchPolicy.PreferredPort;
-        var targetSource = new HttpCodexTargetSource(http, () => activePort);
+        var targetSource = new HttpCodexTargetSource(targetHttp, () => activePort);
+        var t3TargetSource = new T3CodeTargetSource(
+            targetHttp, () => CodexRuntimeStateStore.LoadPort(t3RuntimeStatePath));
         var evaluator = new WebSocketCdpEvaluator();
         userHelpersRoot = WingmanIdentity.ResolveHelpersRoot(Application.ExecutablePath);
         Directory.CreateDirectory(userHelpersRoot);
@@ -76,6 +84,15 @@ internal sealed class TrayApplicationContext : ApplicationContext
             new HostActionDispatcher(evaluator),
             settings.ComposeSessionRoots(),
             log: message => Debug.WriteLine($"[CodexWingman Helper] {message}"));
+        t3HelperHost = new HelperHost(
+            userHelpersRoot,
+            initializedSettings.Path,
+            t3TargetSource,
+            evaluator,
+            new HostActionDispatcher(evaluator),
+            [],
+            log: message => Debug.WriteLine($"[T3 Code Helper] {message}"),
+            appId: HelperAppIds.T3Code);
 
         codexMenuItem = new ToolStripMenuItem("Codex: Checking");
         t3CodeMenuItem = new ToolStripMenuItem("T3 Code: Not ready");
@@ -85,6 +102,13 @@ internal sealed class TrayApplicationContext : ApplicationContext
             Checked = settings.OpenCodexOnLaunch,
         };
         codexOpenOnLaunchItem.CheckedChanged += CodexOpenOnLaunchChanged;
+        t3OpenOnLaunchItem = new ToolStripMenuItem("Open on launch")
+        {
+            CheckOnClick = true,
+            Checked = settings.OpenT3CodeOnLaunch,
+            Enabled = false, // Enable with the dedicated T3 launcher after its window trial.
+        };
+        t3OpenOnLaunchItem.CheckedChanged += T3OpenOnLaunchChanged;
         helpersItem = new ToolStripMenuItem("Manage helpers");
         injectItem = new ToolStripMenuItem("Helpers enabled")
         {
@@ -108,12 +132,11 @@ internal sealed class TrayApplicationContext : ApplicationContext
         t3CodeMenuItem.DropDownItems.AddRange([
             new ToolStripMenuItem("Open a hooked window") { Enabled = false },
             new ToolStripMenuItem("Repair T3 Code") { Enabled = false },
-            new ToolStripMenuItem("View status details...", null, (_, _) => MessageBox.Show(
-                "T3 Code support is being built. This Wingman version has not verified a T3 window yet.",
-                "T3 Code status", MessageBoxButtons.OK, MessageBoxIcon.Information)),
+            new ToolStripMenuItem("View status details...", null, T3StatusDetailsClicked),
             new ToolStripSeparator(),
-            new ToolStripMenuItem("Open on launch") { CheckOnClick = true, Checked = settings.OpenT3CodeOnLaunch, Enabled = false },
+            t3OpenOnLaunchItem,
         ]);
+        SetT3MenuStatus();
         aboutItem = new ToolStripMenuItem("About", null, AboutClicked);
         checkUpdatesItem = new ToolStripMenuItem("Check for Updates", null, CheckUpdatesClicked);
         exitItem = new ToolStripMenuItem(WingmanIdentity.CloseMenuText, null, ExitClicked);
@@ -152,7 +175,7 @@ internal sealed class TrayApplicationContext : ApplicationContext
                 false);
         }
 
-        refreshTimer = new System.Windows.Forms.Timer { Interval = HelperRefreshSchedule.IntervalMilliseconds(helperHost.Helpers) };
+        refreshTimer = new System.Windows.Forms.Timer { Interval = HelperRefreshSchedule.IntervalMilliseconds(AllHelpers()) };
         refreshTimer.Tick += async (_, _) => await RefreshTimerAsync();
         refreshTimer.Start();
         actionTimer = new System.Windows.Forms.Timer { Interval = HelperRefreshSchedule.HostActionIntervalMilliseconds };
@@ -181,6 +204,7 @@ internal sealed class TrayApplicationContext : ApplicationContext
         SetBusy(true, "Starting Codex...");
         try
         {
+            await ReconcileT3Async();
             var startupState = await CodexLauncher.GetHookStatusAsync(runtimeStatePath, configuredPortOverride);
             if (startupState == CodexHookState.OpenButCannotHook
                 || (startupState == CodexHookState.NotOpen && !codexOpenOnLaunchItem.Checked))
@@ -220,12 +244,47 @@ internal sealed class TrayApplicationContext : ApplicationContext
         }
     }
 
+    private void T3OpenOnLaunchChanged(object? sender, EventArgs eventArgs)
+    {
+        try
+        {
+            var settings = HelperSettingsStore.Load(settingsPath);
+            HelperSettingsStore.Save(settingsPath, settings with { OpenT3CodeOnLaunch = t3OpenOnLaunchItem.Checked });
+        }
+        catch (Exception error)
+        {
+            t3OpenOnLaunchItem.CheckedChanged -= T3OpenOnLaunchChanged;
+            t3OpenOnLaunchItem.Checked = HelperSettingsStore.Load(settingsPath).OpenT3CodeOnLaunch;
+            t3OpenOnLaunchItem.CheckedChanged += T3OpenOnLaunchChanged;
+            MessageBox.Show($"Wingman could not save the T3 Code startup choice: {error.Message}",
+                "Wingman settings", MessageBoxButtons.OK, MessageBoxIcon.Warning);
+        }
+    }
+
+    private IEnumerable<HelperSummary> AllHelpers() => helperHost.Helpers.Concat(t3HelperHost.Helpers);
+
+    private IReadOnlyList<HelperSummary> ManagedHelpers() => AllHelpers()
+        .GroupBy(helper => helper.Id, StringComparer.Ordinal)
+        .Select(group =>
+        {
+            var first = group.First();
+            var diagnostics = group.Select(helper => helper.Diagnostic)
+                .Where(message => !string.IsNullOrWhiteSpace(message)).Distinct(StringComparer.Ordinal);
+            return first with
+            {
+                Enabled = group.All(helper => helper.Enabled),
+                CanToggle = group.All(helper => helper.CanToggle),
+                Diagnostic = string.Join(" | ", diagnostics) is { Length: > 0 } detail ? detail : null,
+            };
+        }).ToArray();
+
     private void RebuildHelpersMenu()
     {
         synchronizingMenu = true;
         helpersItem.DropDownItems.Clear();
         helperMenuItems.Clear();
-        foreach (var helper in helperHost.Helpers)
+        var managedHelpers = ManagedHelpers();
+        foreach (var helper in managedHelpers)
         {
             var item = new ToolStripMenuItem(helper.Diagnostic is null ? helper.Name : $"{helper.Name} (!)")
             {
@@ -242,7 +301,7 @@ internal sealed class TrayApplicationContext : ApplicationContext
             }
             helpersItem.DropDownItems.Add(item);
         }
-        if (helperHost.Helpers.Count == 0)
+        if (managedHelpers.Count == 0)
             helpersItem.DropDownItems.Add(new ToolStripMenuItem("No Helpers found") { Enabled = false });
         helpersItem.DropDownItems.Add(new ToolStripSeparator());
         helpersItem.DropDownItems.Add(openHelpersFolderItem);
@@ -253,8 +312,8 @@ internal sealed class TrayApplicationContext : ApplicationContext
     private void SynchronizeHelpersMenu()
     {
         synchronizingMenu = true;
-        injectItem.Checked = !helperHost.IsSuspended;
-        foreach (var helper in helperHost.Helpers)
+        injectItem.Checked = !helperHost.IsSuspended && !t3HelperHost.IsSuspended;
+        foreach (var helper in ManagedHelpers())
         {
             if (!helperMenuItems.TryGetValue(helper.Id, out var item)) continue;
             item.Checked = helper.Enabled;
@@ -267,7 +326,7 @@ internal sealed class TrayApplicationContext : ApplicationContext
 
     private void SynchronizeActionTimer()
     {
-        actionTimer.Enabled = !exiting && HelperRefreshSchedule.RequiresHostActionPolling(helperHost.Helpers);
+        actionTimer.Enabled = !exiting && HelperRefreshSchedule.RequiresHostActionPolling(AllHelpers());
     }
 
     private void TrayMouseClick(object? sender, MouseEventArgs eventArgs)
@@ -301,12 +360,23 @@ internal sealed class TrayApplicationContext : ApplicationContext
         SetBusy(true);
         try
         {
-            var report = item.Checked
-                ? await helperHost.ResumeAndReconcileAsync()
-                : await helperHost.SuspendAsync();
+            HelperHostReport? report = null;
+            Exception? codexFailure = null;
+            try
+            {
+                report = item.Checked
+                    ? await helperHost.ResumeAndReconcileAsync()
+                    : await helperHost.SuspendAsync();
+            }
+            catch (Exception error) { codexFailure = error; }
+            await ReconcileT3Async(() => item.Checked
+                ? t3HelperHost.ResumeAndReconcileAsync()
+                : t3HelperHost.SuspendAsync());
             SynchronizeHelpersMenu();
-            refreshTimer.Interval = HelperRefreshSchedule.IntervalMilliseconds(helperHost.Helpers);
-            await SetConnectionHealthFromReportAsync(report);
+            refreshTimer.Interval = HelperRefreshSchedule.IntervalMilliseconds(AllHelpers());
+            if (codexFailure is not null)
+                await SetConnectionErrorStatusAsync($"Codex Helper setting needs attention: {codexFailure.Message}");
+            else await SetConnectionHealthFromReportAsync(report!);
         }
         catch (Exception error)
         {
@@ -324,6 +394,7 @@ internal sealed class TrayApplicationContext : ApplicationContext
         if (!automaticRefreshGate.TryEnter(busy, exiting)) return;
         try
         {
+            await ReconcileT3Async();
             if (await CodexLauncher.GetHookStatusAsync(runtimeStatePath, configuredPortOverride)
                 != CodexHookState.Hooked)
             {
@@ -356,6 +427,17 @@ internal sealed class TrayApplicationContext : ApplicationContext
         {
             Debug.WriteLine($"[CodexWingman Host Action poll] {error.Message}");
         }
+        try
+        {
+            if (CodexRuntimeStateStore.LoadPort(t3RuntimeStatePath) is not null)
+                await t3HelperHost.DrainHostActionsAsync();
+        }
+        catch (Exception error)
+        {
+            Debug.WriteLine($"[T3 Code Host Action poll] {error.Message}");
+            t3CheckFailed = true;
+            SetT3MenuStatus();
+        }
         finally
         {
             actionDrainGate.Exit();
@@ -374,10 +456,21 @@ internal sealed class TrayApplicationContext : ApplicationContext
         SetBusy(true, item.Checked ? $"Enabling {item.Text}..." : $"Disabling {item.Text}...");
         try
         {
-            var report = await helperHost.SetEnabledAsync(helperId, item.Checked);
+            HelperHostReport? report = null;
+            Exception? codexFailure = null;
+            if (helperHost.Helpers.Any(helper => helper.Id == helperId))
+            {
+                try { report = await helperHost.SetEnabledAsync(helperId, item.Checked); }
+                catch (Exception error) { codexFailure = error; }
+            }
+            if (t3HelperHost.Helpers.Any(helper => helper.Id == helperId))
+                await ReconcileT3Async(() => t3HelperHost.SetEnabledAsync(helperId, item.Checked));
             SynchronizeHelpersMenu();
-            refreshTimer.Interval = HelperRefreshSchedule.IntervalMilliseconds(helperHost.Helpers);
-            await SetConnectionHealthFromReportAsync(report);
+            refreshTimer.Interval = HelperRefreshSchedule.IntervalMilliseconds(AllHelpers());
+            if (codexFailure is not null)
+                await SetConnectionErrorStatusAsync($"Codex Helper setting needs attention: {codexFailure.Message}");
+            else if (report is null) await RefreshConnectionHealthAsync();
+            else await SetConnectionHealthFromReportAsync(report);
         }
         catch (Exception error)
         {
@@ -407,6 +500,47 @@ internal sealed class TrayApplicationContext : ApplicationContext
             "Codex Wingman status",
             MessageBoxButtons.OK,
             MessageBoxIcon.Information);
+    }
+
+    private void T3StatusDetailsClicked(object? sender, EventArgs eventArgs)
+    {
+        var status = CurrentT3MenuStatus();
+        MessageBox.Show(status.Details, "T3 Code status", MessageBoxButtons.OK, MessageBoxIcon.Information);
+    }
+
+    private T3CodeMenuStatus CurrentT3MenuStatus() => T3CodeMenuPolicy.Evaluate(
+        CodexRuntimeStateStore.LoadPort(t3RuntimeStatePath) is not null,
+        lastT3Report,
+        t3CheckFailed);
+
+    private void SetT3MenuStatus()
+    {
+        var status = CurrentT3MenuStatus();
+        t3CodeMenuItem.Text = status.Label;
+        t3CodeMenuItem.ToolTipText = status.Details;
+    }
+
+    private async Task ReconcileT3Async(Func<Task<HelperHostReport>>? operation = null)
+    {
+        // No T3 endpoint is recorded until a dedicated window trial proves its ownership.
+        if (operation is null && CodexRuntimeStateStore.LoadPort(t3RuntimeStatePath) is null)
+        {
+            lastT3Report = null;
+            t3CheckFailed = false;
+            SetT3MenuStatus();
+            return;
+        }
+        try
+        {
+            lastT3Report = await (operation?.Invoke() ?? t3HelperHost.ReconcileAsync());
+            t3CheckFailed = false;
+        }
+        catch (Exception error)
+        {
+            Debug.WriteLine($"[T3 Code Helper] {error}");
+            t3CheckFailed = true;
+        }
+        SetT3MenuStatus();
     }
 
     private void OpenHelpersFolderClicked(object? sender, EventArgs eventArgs)
@@ -557,12 +691,30 @@ internal sealed class TrayApplicationContext : ApplicationContext
         SetBusy(true, "Reloading Helpers...");
         try
         {
-            await helperHost.ReloadAsync();
+            Exception? codexFailure = null;
+            try { await helperHost.ReloadAsync(); }
+            catch (Exception error) { codexFailure = error; }
+            try
+            {
+                await t3HelperHost.ReloadAsync();
+                await ReconcileT3Async();
+            }
+            catch (Exception error)
+            {
+                Debug.WriteLine($"[T3 Code Helper reload] {error}");
+                t3CheckFailed = true;
+                SetT3MenuStatus();
+            }
             RebuildHelpersMenu();
-            refreshTimer.Interval = HelperRefreshSchedule.IntervalMilliseconds(helperHost.Helpers);
-            var report = await helperHost.ReconcileAsync();
+            refreshTimer.Interval = HelperRefreshSchedule.IntervalMilliseconds(AllHelpers());
             SynchronizeHelpersMenu();
-            await SetConnectionHealthFromReportAsync(report);
+            if (codexFailure is not null)
+                await SetConnectionErrorStatusAsync($"Codex Helper reload needs attention: {codexFailure.Message}");
+            else
+            {
+                var report = await helperHost.ReconcileAsync();
+                await SetConnectionHealthFromReportAsync(report);
+            }
         }
         catch (Exception error)
         {
@@ -583,8 +735,9 @@ internal sealed class TrayApplicationContext : ApplicationContext
         refreshTimer.Stop();
         actionTimer.Stop();
         trayRecoveryTimer.Stop();
-        SetBusy(true, "Cleaning every Codex window before exit...");
+        SetBusy(true, "Removing Helpers from connected windows...");
         try { await helperHost.RemoveAllAsync(); } catch { }
+        try { await t3HelperHost.RemoveAllAsync(); } catch { }
         tray.Visible = false;
         ExitThread();
     }
@@ -790,6 +943,7 @@ internal sealed class TrayApplicationContext : ApplicationContext
             activationRegistration?.Unregister(null);
             tray.Dispose();
             trayIcons.Dispose();
+            targetHttp.Dispose();
             releaseHttp.Dispose();
         }
         base.Dispose(disposing);
