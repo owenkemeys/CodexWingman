@@ -8,6 +8,8 @@ jobs:
   windows-release:
     runs-on: windows-latest
     timeout-minutes: 30
+    env:
+      NUGET_PACKAGES: ${{ runner.temp }}/wingman-nuget
     steps:
       - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262
         with:
@@ -33,6 +35,11 @@ jobs:
           if ($LASTEXITCODE -ne 0) { throw 'Release identity check failed' }
           python tools/release_provenance.py verify-source
           if ($LASTEXITCODE -ne 0) { throw 'Exact source verification failed' }
+      - name: Pack pinned shared release kit
+        shell: pwsh
+        run: |
+          New-Item -ItemType Directory -Force .packages | Out-Null
+          dotnet pack src/CodexApp.ReleaseKit/CodexApp.ReleaseKit.csproj -c Release -o .packages -p:NuGetAudit=false
       - name: Build sealed package
         shell: pwsh
         run: ./scripts/Publish-CodexWingman.ps1 -Destination '${{ runner.temp }}/package/CodexWingman-verified'

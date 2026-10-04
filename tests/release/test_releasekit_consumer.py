@@ -1,5 +1,6 @@
 """Prove another .NET app can consume the packed release kit and updater."""
 
+import os
 import shutil
 import subprocess
 import tempfile
@@ -17,10 +18,12 @@ class ReleaseKitConsumerTests(unittest.TestCase):
             work = Path(temporary)
             feed = work / "feed"
             feed.mkdir()
+            isolated_env = os.environ.copy()
+            isolated_env["NUGET_PACKAGES"] = str(work / "nuget-cache")
             subprocess.run(
                 ["dotnet", "pack", str(ROOT / "src/CodexApp.ReleaseKit/CodexApp.ReleaseKit.csproj"),
                  "-c", "Release", "-o", str(feed), "-p:NuGetAudit=false"],
-                check=True, cwd=work, capture_output=True, text=True, timeout=180,
+                check=True, cwd=work, env=isolated_env, capture_output=True, text=True, timeout=180,
             )
             app = work / "OtherCodexApp"
             app.mkdir()
@@ -29,7 +32,7 @@ class ReleaseKitConsumerTests(unittest.TestCase):
                 '<PropertyGroup><OutputType>Exe</OutputType><TargetFramework>net9.0</TargetFramework>'
                 '<ImplicitUsings>enable</ImplicitUsings></PropertyGroup>'
                 '<ItemGroup><PackageReference Include="CodexApp.ReleaseKit" '
-                'Version="0.1.0-preview.1" /></ItemGroup></Project>', encoding="utf-8")
+                'Version="0.1.0-preview.2" /></ItemGroup></Project>', encoding="utf-8")
             (app / "Program.cs").write_text(
                 'using CodexApp.ReleaseKit; '
                 'Console.WriteLine(AppReleaseClient.Summarize("- Shared updater works"));',
@@ -42,7 +45,7 @@ class ReleaseKitConsumerTests(unittest.TestCase):
             output = subprocess.run(
                 ["dotnet", "run", "--project", str(app / "OtherCodexApp.csproj"),
                  "-c", "Release", "-p:NuGetAudit=false"],
-                check=True, cwd=work, capture_output=True, text=True, timeout=180,
+                check=True, cwd=work, env=isolated_env, capture_output=True, text=True, timeout=180,
             )
             self.assertIn("Shared updater works", output.stdout)
             self.assertTrue((app / "bin/Release/net9.0/Apply-CodexAppUpdate.ps1").is_file())

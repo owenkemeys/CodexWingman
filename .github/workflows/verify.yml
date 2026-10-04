@@ -14,6 +14,8 @@ jobs:
   verify:
     runs-on: windows-latest
     timeout-minutes: 20
+    env:
+      NUGET_PACKAGES: ${{ runner.temp }}/wingman-nuget
     steps:
       - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262
         with:
@@ -36,6 +38,21 @@ jobs:
         run: python tools/release_provenance.py verify-source
       - name: Verify About identity
         run: python tools/release_identity.py
+      - name: Pack pinned shared release kit
+        shell: pwsh
+        run: |
+          New-Item -ItemType Directory -Force .packages | Out-Null
+          dotnet pack src/CodexApp.ReleaseKit/CodexApp.ReleaseKit.csproj -c Release -o .packages -p:NuGetAudit=false
+      - name: Verify Wingman consumes the packed kit
+        shell: pwsh
+        run: |
+          dotnet build src/CodexWingman/CodexWingman.csproj -c Release -p:NuGetAudit=false
+          if ($LASTEXITCODE -ne 0) { throw 'Wingman build failed' }
+          if (-not (Test-Path src/CodexWingman/bin/Release/net9.0-windows/Apply-CodexAppUpdate.ps1)) {
+            throw 'Packed ReleaseKit updater script is missing from Wingman output'
+          }
+      - name: Verify a separate app consumes the packed kit
+        run: python -m unittest -v tests.release.test_releasekit_consumer
       - name: Build sealed main package
         if: github.event_name == 'push' && github.ref == 'refs/heads/main'
         shell: pwsh
