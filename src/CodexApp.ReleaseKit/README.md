@@ -1,3 +1,5 @@
 # CodexApp.ReleaseKit
 
 Shared .NET release discovery, package verification, and Windows update transaction for Codex desktop apps. The library and updater are in preview and have not passed Windows PowerShell 5.1 or installed-app acceptance. Consumers must supply their repository, executable, package schema, stable directory, and shutdown/relaunch behavior. See the [release contract](../../docs/codex-app-release-contract.md).
+
+The `releasekit-vVERSION` tag on this repository's public main builds a versioned `CodexApp.ReleaseKit.VERSION.nupkg` GitHub Release asset and SHA-256 file. An app can download its pinned version into a local NuGet feed, then reference that exact package version. A new kit version does not silently alter an installed app; update the app's pin and pass its build and Windows update tests before releasing it. Wingman currently packs the same source into its local feed during CI so a Wingman release remains reproducible before the first independent kit tag is published.
