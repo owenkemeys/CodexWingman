@@ -68,6 +68,20 @@ public interface ICodexTargetSource
     Task<IReadOnlyList<CodexTarget>> ListAsync(CancellationToken cancellationToken = default);
 }
 
+/// <summary>Reads only T3 desktop pages from an explicitly recorded CDP endpoint.</summary>
+public sealed class T3CodeTargetSource(HttpClient httpClient, Func<int?> portProvider) : ICodexTargetSource
+{
+    public Task<IReadOnlyList<CodexTarget>> ListAsync(CancellationToken cancellationToken = default)
+    {
+        var port = portProvider();
+        if (port is null) return Task.FromResult<IReadOnlyList<CodexTarget>>([]);
+        if (port is < 1 or > 65535) throw new InvalidOperationException("Invalid T3 Code debugging port.");
+        return new HttpCodexTargetSource(
+            httpClient, () => port.Value, () => new ClientWebSocketCdpSocket(),
+            T3CodeTargetCatalog.SelectPages).ListAsync(cancellationToken);
+    }
+}
+
 public sealed class HttpCodexTargetSource : ICodexTargetSource
 {
     private static readonly TimeSpan BrowserCommandTimeout = TimeSpan.FromSeconds(3);

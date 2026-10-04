@@ -2097,6 +2097,32 @@ static async Task TestTargetAppIsolation()
         "Codex discovery selects only the official Codex page");
     Equal("t3", T3CodeTargetCatalog.SelectPages(targets).Single().Id,
         "T3 discovery selects only the production T3 desktop page");
+    Equal("T3 Code: Not ready", T3CodeMenuPolicy.Evaluate(false, null, false).Label,
+        "T3 menu stays honest before a renderer trial");
+    Equal(true, T3CodeMenuPolicy.Evaluate(false, null, false).Details.Contains("left alone", StringComparison.Ordinal),
+        "T3 details explain untouched existing windows");
+    Equal(true, T3CodeMenuPolicy.Evaluate(true, new HelperHostReport(1, 1, 1, 0, []), false)
+            .Details.Contains("dedicated window trial", StringComparison.Ordinal),
+        "a discovered T3 page is not reported as a verified hook");
+    var requests = 0;
+    using (var t3Http = new HttpClient(new StaticHttpMessageHandler(_ =>
+    {
+        requests++;
+        return new HttpResponseMessage(HttpStatusCode.OK)
+        {
+            Content = new StringContent(JsonSerializer.Serialize(targets)),
+        };
+    })))
+    {
+        int? port = null;
+        var t3Source = new T3CodeTargetSource(t3Http, () => port);
+        Equal(0, (await t3Source.ListAsync()).Count, "T3 source has no targets without its own endpoint");
+        Equal(0, requests, "T3 source does not probe an unconfigured port");
+        port = 9237;
+        Equal("t3", (await t3Source.ListAsync()).Single().Id,
+            "T3 source selects only its renderer from a mixed CDP response");
+        Equal(1, requests, "T3 source probes only its configured endpoint");
+    }
 
     var root = Path.Combine(Path.GetTempPath(), $"wingman-target-isolation-{Guid.NewGuid():N}");
     var settingsPath = Path.Combine(root, "settings", "settings.json");
@@ -2175,6 +2201,13 @@ static async Task TestTargetAppIsolation()
             "T3 cleanup remains in T3 window");
         await ThrowsAsync<NotSupportedException>(() => t3Host.OpenNativeNewWindowAsync(),
             "unverified Codex new-window action is unavailable to T3 host");
+        await codexHost.SetEnabledAsync("legacy-codex-helper", false);
+        await t3Host.SetEnabledAsync("t3-only-helper", false);
+        var sharedSettings = HelperSettingsStore.Load(settingsPath);
+        Equal(false, sharedSettings.IsHelperEnabled("legacy-codex-helper"),
+            "a later T3 setting does not erase Codex's saved Helper choice");
+        Equal(false, sharedSettings.IsHelperEnabled("t3-only-helper"),
+            "T3 Helper choice persists beside Codex's choice");
     }
     finally { Directory.Delete(root, recursive: true); }
 }

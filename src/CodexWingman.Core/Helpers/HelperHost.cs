@@ -153,7 +153,7 @@ public sealed class HelperHost
         {
             var package = catalogReport.Packages.FirstOrDefault(candidate => candidate.Manifest.Id.Equals(helperId, StringComparison.Ordinal))
                 ?? throw new KeyNotFoundException($"Unknown Helper '{helperId}'");
-            var nextSettings = settings.WithHelperEnabled(helperId, enabled);
+            var nextSettings = HelperSettingsStore.Load(settingsPath).WithHelperEnabled(helperId, enabled);
             HelperSettingsStore.Save(settingsPath, nextSettings);
             settings = nextSettings;
             if (enabled) suspended = false;
