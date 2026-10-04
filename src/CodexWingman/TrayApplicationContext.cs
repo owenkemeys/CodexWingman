@@ -31,6 +31,7 @@ internal sealed class TrayApplicationContext : ApplicationContext
     private readonly System.Windows.Forms.Timer trayRecoveryTimer;
     private readonly HelperHost helperHost;
     private readonly HelperHost t3HelperHost;
+    private readonly T3CodeConnectionProbe t3ConnectionProbe;
     private readonly HttpClient targetHttp = new() { Timeout = TimeSpan.FromSeconds(3) };
     private readonly HttpClient releaseHttp = new() { Timeout = TimeSpan.FromSeconds(20) };
     private readonly string userHelpersRoot;
@@ -52,6 +53,7 @@ internal sealed class TrayApplicationContext : ApplicationContext
     private bool checkingRelease;
     private HelperHostReport? lastReport;
     private HelperHostReport? lastT3Report;
+    private T3CodeConnectionReport? lastT3Connections;
     private string? lastOperationError;
     private bool t3CheckFailed;
     private TrayStatus currentStatus = new(
@@ -75,6 +77,7 @@ internal sealed class TrayApplicationContext : ApplicationContext
         var targetSource = new HttpCodexTargetSource(targetHttp, () => activePort);
         var t3TargetSource = new T3CodeTargetSource(targetHttp, GetT3Port);
         var evaluator = new WebSocketCdpEvaluator();
+        t3ConnectionProbe = new T3CodeConnectionProbe(t3TargetSource, evaluator);
         userHelpersRoot = WingmanIdentity.ResolveHelpersRoot(Application.ExecutablePath);
         Directory.CreateDirectory(userHelpersRoot);
         helperHost = new HelperHost(
@@ -543,7 +546,7 @@ internal sealed class TrayApplicationContext : ApplicationContext
                     await T3CodeLauncher.RestartWithDebuggingAsync(t3RuntimeStatePath, deadline.Token);
                 }
             }
-            await ReconcileT3Async(() => t3HelperHost.ResumeAndReconcileAsync(deadline.Token));
+            await ReconcileT3Async(() => t3HelperHost.ResumeAndReconcileAsync(deadline.Token), deadline.Token);
             if (t3CheckFailed)
                 throw new InvalidOperationException("T3 Code started, but its Helpers could not be checked.");
             SynchronizeHelpersMenu();
@@ -589,10 +592,25 @@ internal sealed class TrayApplicationContext : ApplicationContext
             ? port : null;
     }
 
-    private T3CodeMenuStatus CurrentT3MenuStatus() => T3CodeMenuPolicy.Evaluate(
-        GetT3Port() is not null,
-        lastT3Report,
-        t3CheckFailed);
+    private T3CodeMenuStatus CurrentT3MenuStatus()
+    {
+        try
+        {
+            return T3CodeMenuPolicy.Evaluate(
+                T3CodeLauncher.GetOpenWindowCount(),
+                GetT3Port() is not null,
+                lastT3Report,
+                lastT3Connections,
+                t3CheckFailed,
+                t3HelperHost.IsSuspended);
+        }
+        catch (Exception error)
+        {
+            Debug.WriteLine($"[T3 Code window discovery] {error}");
+            return T3CodeMenuPolicy.Evaluate(null, GetT3Port() is not null,
+                lastT3Report, lastT3Connections, true);
+        }
+    }
 
     private void SetT3MenuStatus()
     {
@@ -601,12 +619,15 @@ internal sealed class TrayApplicationContext : ApplicationContext
         t3CodeMenuItem.ToolTipText = status.Details;
     }
 
-    private async Task ReconcileT3Async(Func<Task<HelperHostReport>>? operation = null)
+    private async Task ReconcileT3Async(
+        Func<Task<HelperHostReport>>? operation = null,
+        CancellationToken cancellationToken = default)
     {
         // Without a saved, app-isolated endpoint, leave existing T3 windows untouched.
         if (operation is null && GetT3Port() is null)
         {
             lastT3Report = null;
+            lastT3Connections = null;
             t3CheckFailed = false;
             SetT3MenuStatus();
             return;
@@ -614,11 +635,13 @@ internal sealed class TrayApplicationContext : ApplicationContext
         try
         {
             lastT3Report = await (operation?.Invoke() ?? t3HelperHost.ReconcileAsync());
+            lastT3Connections = await t3ConnectionProbe.ProbeAsync(cancellationToken);
             t3CheckFailed = false;
         }
         catch (Exception error)
         {
             Debug.WriteLine($"[T3 Code Helper] {error}");
+            lastT3Connections = null;
             t3CheckFailed = true;
         }
         SetT3MenuStatus();

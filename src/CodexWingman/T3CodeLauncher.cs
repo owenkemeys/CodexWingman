@@ -1,4 +1,5 @@
 using System.Diagnostics;
+using System.Runtime.InteropServices;
 using CodexWingman.Core;
 
 namespace CodexWingman;
@@ -8,6 +9,38 @@ internal static class T3CodeLauncher
     private static readonly TimeSpan EndpointTimeout = TimeSpan.FromSeconds(30);
 
     public static bool IsInstalled() => FindExecutable() is not null;
+
+    public static int GetOpenWindowCount()
+    {
+        var local = Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData);
+        var programs = Environment.GetFolderPath(Environment.SpecialFolder.ProgramFiles);
+        var candidates = T3CodeLaunchPolicy.CandidateExecutables(local, programs);
+        using var current = Process.GetCurrentProcess();
+        var count = 0;
+        if (!EnumWindows((window, _) =>
+            {
+                GetWindowThreadProcessId(window, out var processId);
+                if (processId == 0 || !IsWindowVisible(window)
+                    || GetWindow(window, GetWindowCommand.Owner) != IntPtr.Zero
+                    || GetWindowTextLength(window) <= 0)
+                    return true;
+                try
+                {
+                    using var process = Process.GetProcessById((int)processId);
+                    if (T3CodeLaunchPolicy.MatchesVisibleWindow(
+                        candidates, current.SessionId, process.MainModule?.FileName,
+                        process.SessionId, visible: true, owned: false, titled: true))
+                        count++;
+                }
+                catch (ArgumentException) { }
+                catch (InvalidOperationException) { }
+                catch (System.ComponentModel.Win32Exception) { }
+                return true;
+            }, IntPtr.Zero))
+            throw new System.ComponentModel.Win32Exception(Marshal.GetLastWin32Error(),
+                "Wingman could not enumerate visible T3 Code windows.");
+        return count;
+    }
 
     public static async Task<CodexHookState> GetHookStatusAsync(
         string runtimeStatePath, int? codexPort = null, CancellationToken cancellationToken = default)
@@ -181,4 +214,24 @@ internal static class T3CodeLauncher
         catch (HttpRequestException) { return 0; }
         catch (TaskCanceledException) when (!cancellationToken.IsCancellationRequested) { return 0; }
     }
+
+    private delegate bool EnumWindowsCallback(IntPtr window, IntPtr parameter);
+    private enum GetWindowCommand : uint { Owner = 4 }
+
+    [DllImport("user32.dll", SetLastError = true)]
+    [return: MarshalAs(UnmanagedType.Bool)]
+    private static extern bool EnumWindows(EnumWindowsCallback callback, IntPtr parameter);
+
+    [DllImport("user32.dll")]
+    [return: MarshalAs(UnmanagedType.Bool)]
+    private static extern bool IsWindowVisible(IntPtr window);
+
+    [DllImport("user32.dll")]
+    private static extern IntPtr GetWindow(IntPtr window, GetWindowCommand command);
+
+    [DllImport("user32.dll", CharSet = CharSet.Unicode)]
+    private static extern int GetWindowTextLength(IntPtr window);
+
+    [DllImport("user32.dll")]
+    private static extern uint GetWindowThreadProcessId(IntPtr window, out uint processId);
 }
