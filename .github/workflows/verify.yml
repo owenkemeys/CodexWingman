@@ -15,7 +15,7 @@ jobs:
     runs-on: windows-latest
     timeout-minutes: 20
     env:
-      NUGET_PACKAGES: ${{ runner.temp }}/wingman-nuget
+      NUGET_PACKAGES: ${{ github.workspace }}/.packages/nuget-cache
     steps:
       - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262
         with:
