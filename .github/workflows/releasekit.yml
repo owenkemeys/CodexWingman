@@ -8,6 +8,9 @@ jobs:
   package:
     runs-on: windows-latest
     timeout-minutes: 20
+    env:
+      RELEASE_TAG: ${{ github.ref_name }}
+      RELEASE_SHA: ${{ github.sha }}
     steps:
       - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262
         with:
@@ -21,12 +24,13 @@ jobs:
       - name: Require exact package version on public main
         shell: pwsh
         run: |
-          $tag = '${{ github.ref_name }}'
+          $tag = $env:RELEASE_TAG
+          if ($tag -cnotmatch '^releasekit-v[0-9]+\.[0-9]+\.[0-9]+(?:-[0-9A-Za-z.-]+)?$') { throw 'Invalid ReleaseKit tag' }
           $version = $tag.Substring('releasekit-v'.Length)
           [xml]$project = Get-Content src/CodexApp.ReleaseKit/CodexApp.ReleaseKit.csproj -Raw
           if ($project.Project.PropertyGroup.Version -cne $version) { throw 'ReleaseKit tag and package version differ' }
           $main = (git ls-remote origin refs/heads/main).Split("`t")[0]
-          if ($main -cne '${{ github.sha }}') { throw 'ReleaseKit tags must point to public main' }
+          if ($main -cne $env:RELEASE_SHA) { throw 'ReleaseKit tags must point to public main' }
       - name: Verify kit and second app consumer
         shell: pwsh
         run: |
@@ -38,7 +42,7 @@ jobs:
       - name: Publish versioned NuGet download
         shell: pwsh
         run: |
-          $tag = '${{ github.ref_name }}'
+          $tag = $env:RELEASE_TAG
           $version = $tag.Substring('releasekit-v'.Length)
           $package = ".packages/CodexApp.ReleaseKit.$version.nupkg"
           if (-not (Test-Path -LiteralPath $package -PathType Leaf)) { throw 'Versioned NuGet package is missing' }
