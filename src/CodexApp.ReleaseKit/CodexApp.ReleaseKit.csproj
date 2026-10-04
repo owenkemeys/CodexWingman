@@ -5,7 +5,7 @@
     <Nullable>enable</Nullable>
     <RootNamespace>CodexApp.ReleaseKit</RootNamespace>
     <PackageId>CodexApp.ReleaseKit</PackageId>
-    <Version>0.1.0-preview.1</Version>
+    <Version>0.1.0-preview.2</Version>
     <Description>Shared GitHub release discovery and package verification for Codex desktop apps.</Description>
     <PackageLicenseExpression>MIT</PackageLicenseExpression>
     <RepositoryUrl>https://github.com/owenkemeys/CodexWingman</RepositoryUrl>

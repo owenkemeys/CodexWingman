@@ -68,7 +68,7 @@ try {
     & dotnet @publishArguments
     if ($LASTEXITCODE -ne 0) { throw "dotnet publish failed with exit code $LASTEXITCODE" }
 
-    foreach ($requiredPath in @('CodexWingman.exe', 'Helpers')) {
+    foreach ($requiredPath in @('CodexWingman.exe', 'Helpers', 'Apply-CodexAppUpdate.ps1')) {
         if (-not (Test-Path -LiteralPath (Join-Path $stagingRoot $requiredPath))) {
             throw "Staged package is missing $requiredPath"
         }
