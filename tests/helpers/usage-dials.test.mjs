@@ -16,6 +16,10 @@ function makeT3Composer(fixture, providers, instanceId = 'codex-personal') {
   const controls = fixture.document.createElement('div')
   controls.setAttribute('data-chat-composer-controls', 'left')
   controls._rect = { left: 100, top: 650, width: 200, height: 28 }
+  const picker = fixture.document.createElement('button')
+  picker.setAttribute('data-chat-provider-model-picker', 'true')
+  picker._rect = { left: 100, top: 650, width: 120, height: 28 }
+  controls.appendChild(picker)
   surface.append(editor, controls)
   form.appendChild(surface)
   fixture.document.body.appendChild(form)
@@ -25,7 +29,7 @@ function makeT3Composer(fixture, providers, instanceId = 'codex-personal') {
   root.stateNode.current = root
   const composer = { memoizedProps: props, return: root }
   surface.__reactFiber$trial = { return: composer }
-  return { form, surface, controls, editor, props, root }
+  return { form, surface, controls, picker, editor, props, root }
 }
 
 const t3Provider = (instanceId = 'codex-personal', used = 42) => ({
@@ -56,10 +60,11 @@ test('T3 composer dials use the exact committed provider, update on provider swi
     assert.match(primary.getAttribute('aria-label'), /42%/)
     primary.dispatchEvent(new fixture.PointerEvent('pointerover', { bubbles: true, pointerType: 'mouse' }))
     assert.match(fixture.document.querySelector('[role="tooltip"]').textContent, /42% used/)
-    composer.props.activeThread.runtime.providerInstanceId = 'other-account'
-    composer.props.activeThreadModelSelection.instanceId = 'other-account'
+        composer.props.activeThreadModelSelection.instanceId = 'other-account'
     controller.update({ primary: { usedPercent: 1 } })
     assert.equal(controller.status().primary.usedPercent, 99)
+    assert.equal(composer.props.activeThread.runtime.providerInstanceId, 'codex-personal')
+    assert.equal(composer.picker.previousElementSibling.getAttribute('data-codex-helper'), 'usage-dials')
     assert.equal(composer.controls.querySelectorAll('[data-codex-helper="usage-dials"]').length, 1)
     executeRenderer(remove, fixture)
     assert.equal(fixture.document.querySelectorAll('[data-codex-helper="usage-dials"]').length, 0)
@@ -87,7 +92,7 @@ test('T3 miniature and hover dials preserve the Codex neutral palette instead of
   } finally { fixture.dispose() }
 })
 
-test('T3 quotas fail closed for stale, ambiguous, conflicting or uncommitted data', async () => {
+test('T3 quotas fail closed for stale, ambiguous, missing selected-provider or uncommitted data', async () => {
   const apply = await requiredFile('apply.js')
   for (const invalid of ['missing', 'duplicate', 'stale', 'expired', 'conflict', 'uncommitted']) {
     const fixture = createBrowserFixture()
@@ -110,7 +115,54 @@ test('T3 quotas fail closed for stale, ambiguous, conflicting or uncommitted dat
   }
 })
 
-test('T3 usage dials sit beside the native context button without replacing its action', async () => {
+test('T3 Grok calendar allowances retain the provider label and reset without inventing pacing', async () => {
+  const apply = await requiredFile('apply.js')
+  const fixture = createBrowserFixture()
+  const provider = t3Provider('grok', 13)
+  provider.usageLimits.windows = [{ id: 'subscription', kind: 'monthly', label: 'Monthly',
+    usedPercent: 13, resetsAt: new Date(Date.now() + 86400000).toISOString() }]
+  const composer = makeT3Composer(fixture, [provider], 'grok')
+  try {
+    executeRenderer(apply, fixture, { state: {} })
+    const status = fixture.window.__codexHelperUsageDials.status()
+    assert.equal(status.primary.usedPercent, 13)
+    assert.equal(status.primary.label, 'Monthly')
+    assert.equal(status.primary.windowMinutes, undefined)
+    assert.ok(status.primary.resetLabel)
+    const dial = composer.controls.querySelector('[data-codex-helper-dial="primary"]')
+    assert.equal(dial.dataset.presentation, 'conventional')
+    assert.match(dial.getAttribute('aria-label'), /Monthly: 13%.*Resets/)
+    assert.equal(composer.picker.previousElementSibling.getAttribute('aria-label'), 'Grok usage')
+  } finally { fixture.dispose() }
+})
+
+test('T3 distinguishes a successful quota read without metering from stale data and recovers', async () => {
+  const apply = await requiredFile('apply.js')
+  const fixture = createBrowserFixture()
+  const provider = t3Provider('grok')
+  provider.usageLimits.windows = []
+  const composer = makeT3Composer(fixture, [provider], 'grok')
+  try {
+    executeRenderer(apply, fixture, { state: {} })
+    const controller = fixture.window.__codexHelperUsageDials
+    const dial = composer.controls.querySelector('[data-codex-helper-dial="primary"]')
+    composer.controls.querySelector('[data-codex-helper="usage-dials"]')._rect = { left: 80, top: 650, width: 16, height: 24 }
+    assert.equal(controller.status().primary, null)
+    assert.equal(dial.querySelector('text').textContent, '–')
+    assert.match(dial.getAttribute('aria-label'), /Grok has not reported a usage percentage yet/)
+    provider.usageLimits.checkedAt = new Date(Date.now() - 3600000).toISOString()
+    controller.update({})
+    assert.equal(dial.querySelector('text').textContent, '?')
+    assert.match(dial.getAttribute('aria-label'), /out of date/)
+    provider.usageLimits.checkedAt = new Date().toISOString()
+    provider.usageLimits.windows = [{ id: 'subscription', kind: 'weekly', label: 'Weekly', usedPercent: 24 }]
+    controller.update({})
+    assert.equal(controller.status().secondary.usedPercent, 24)
+    assert.equal(controller.status().renderHealth.state, 'ready')
+  } finally { fixture.dispose() }
+})
+
+test('T3 usage dials precede the model picker and preserve native context actions', async () => {
   const apply = await requiredFile('apply.js')
   const fixture = createBrowserFixture()
   const composer = makeT3Composer(fixture, [t3Provider()])
@@ -122,7 +174,8 @@ test('T3 usage dials sit beside the native context button without replacing its 
   context.addEventListener('click', () => opened++)
   try {
     executeRenderer(apply, fixture, { state: {} })
-    assert.equal(context.nextElementSibling.getAttribute('aria-label'), 'T3 provider usage')
+    assert.equal(composer.picker.previousElementSibling.getAttribute('data-codex-helper'), 'usage-dials')
+    assert.equal(context.nextElementSibling, null)
     assert.equal(composer.controls.querySelectorAll('[data-codex-helper-context-slot]').length, 0)
     context.click()
     assert.equal(opened, 1)
@@ -145,8 +198,8 @@ test('Usage Dials package declares explicit Codex and T3 targets', async () => {
     schemaVersion: 2,
     id: 'usage-dials',
     name: 'Usage dials',
-    version: '1.4.3',
-    description: 'Shows five-hour and weekly usage beside every context dial.',
+    version: '1.5.0',
+    description: 'Shows provider usage limits beside the composer model picker or context dial.',
     refreshSeconds: 60,
     capabilities: [],
     targets: { codex: { apply: 'apply.js', remove: 'remove.js' }, 't3-code': { apply: 'apply.js', remove: 'remove.js' } },
@@ -500,8 +553,8 @@ test('renderer replaces a stale Usage Dials controller during a Helper upgrade',
     executeRenderer(apply, fixture, { state: {} })
     await fixture.flush()
     assert.equal(cleaned, 1)
-    assert.equal(fixture.window.__codexHelperUsageDials?.version, 'native-slot-v20')
-    assert.equal(fixture.window.__codexHelperUsageDials?.status().fallbackStrategy, 'native-slot-v20')
+    assert.equal(fixture.window.__codexHelperUsageDials?.version, 'native-slot-v21')
+    assert.equal(fixture.window.__codexHelperUsageDials?.status().fallbackStrategy, 'native-slot-v21')
     assert.equal(native.wrapper.nextElementSibling?.getAttribute('data-codex-helper'), 'usage-dials')
   } finally {
     fixture.window.__codexHelperUsageDials?.cleanup()
@@ -733,7 +786,7 @@ test('T3 usage stays explicit through data loss and composer replacement, then r
     assert.equal(controller.status().primary, null)
     assert.equal(controller.status().renderHealth.state, 'waiting')
     unavailable.dispatchEvent(new fixture.PointerEvent('pointerover', { bubbles: true, pointerType: 'mouse' }))
-    assert.match(fixture.document.querySelector('[role="tooltip"]').textContent, /Usage unavailable/)
+    assert.match(fixture.document.querySelector('[role="tooltip"]').textContent, /usage is unavailable/)
     assert.doesNotMatch(fixture.document.querySelector('[role="tooltip"]').textContent, /0%|5-hour|Weekly/)
     composer.form.remove()
     composer = makeT3Composer(fixture, [t3Provider('new-account', 63)], 'new-account')

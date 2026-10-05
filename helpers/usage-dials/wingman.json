@@ -2,8 +2,8 @@
   "schemaVersion": 2,
   "id": "usage-dials",
   "name": "Usage dials",
-  "version": "1.4.3",
-  "description": "Shows five-hour and weekly usage beside every context dial.",
+  "version": "1.5.0",
+  "description": "Shows provider usage limits beside the composer model picker or context dial.",
   "refreshSeconds": 60,
   "capabilities": [],
   "targets": {
