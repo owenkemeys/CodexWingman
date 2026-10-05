@@ -2,7 +2,7 @@
   "schemaVersion": 2,
   "id": "usage-dials",
   "name": "Usage dials",
-  "version": "1.4.1",
+  "version": "1.4.2",
   "description": "Shows five-hour and weekly usage beside every context dial.",
   "refreshSeconds": 60,
   "capabilities": [],
