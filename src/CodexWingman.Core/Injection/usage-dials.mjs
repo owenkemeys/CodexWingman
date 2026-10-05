@@ -1,5 +1,5 @@
 (() => {
-  const controllerVersion = 'native-slot-v22';
+  const controllerVersion = 'native-slot-v23';
   const t3Renderer = window.location?.protocol === 't3code:';
   const initialSnapshot = __CODEX_HELPER_SNAPSHOT__;
   const existing = window.__codexHelperUsageDials;
@@ -198,6 +198,31 @@
     });
   };
 
+  const readT3PickerInstanceId = () => {
+    const pickers = [...document.querySelectorAll('[data-chat-provider-model-picker="true"]')]
+      .filter(picker => picker.closest?.('[data-chat-composer-main-surface="true"]'));
+    if (pickers.length !== 1) return null;
+    const key = Object.keys(pickers[0]).find(key => key.startsWith('__reactFiber$'));
+    let fiber = key ? pickers[0][key] : null;
+    if (!fiber) return null;
+    let root = fiber;
+    for (let depth = 0; root.return && depth < 128; depth++) root = root.return;
+    if (root.return || !root.stateNode?.current) return null;
+    if (root.stateNode.current !== root) {
+      fiber = fiber.alternate;
+      if (!fiber) return null;
+      root = fiber;
+      for (let depth = 0; root.return && depth < 128; depth++) root = root.return;
+      if (root.return || root.stateNode?.current !== root) return null;
+    }
+    for (let depth = 0; fiber && depth < 64; depth++, fiber = fiber.return) {
+      const props = fiber.memoizedProps;
+      if (props?.isComposerOwned === true && typeof props.activeInstanceId === 'string'
+        && props.activeInstanceId) return props.activeInstanceId;
+    }
+    return null;
+  };
+
   const refreshT3AccountState = () => {
     snapshot = { primary: null, secondary: null };
     availableResets = null;
@@ -206,8 +231,9 @@
     quotaUnavailableReason = 'Waiting for committed composer provider data.';
     const props = readT3ComposerProps();
     if (!props) return;
-    const instanceId = props.activeThreadModelSelection?.instanceId
-      || props.activeThread?.runtime?.providerInstanceId;
+    // The picker includes the unsent composer draft selection. The owning
+    // thread's saved model can still name the previously selected provider.
+    const instanceId = readT3PickerInstanceId();
     if (typeof instanceId !== 'string' || !instanceId) return;
     const matches = props.providerStatuses.filter((provider) => provider?.instanceId === instanceId);
     if (matches.length !== 1) return;

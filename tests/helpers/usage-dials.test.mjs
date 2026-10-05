@@ -29,7 +29,9 @@ function makeT3Composer(fixture, providers, instanceId = 'codex-personal') {
   root.stateNode.current = root
   const composer = { memoizedProps: props, return: root }
   surface.__reactFiber$trial = { return: composer }
-  return { form, surface, controls, picker, editor, props, root }
+  const pickerProps = { isComposerOwned: true, get activeInstanceId() { return props.activeThreadModelSelection?.instanceId } }
+  picker.__reactFiber$trial = { return: { memoizedProps: pickerProps, return: composer } }
+  return { form, surface, controls, picker, pickerProps, editor, props, root }
 }
 
 const t3Provider = (instanceId = 'codex-personal', used = 42) => ({
@@ -107,6 +109,20 @@ test('T3 composer dials use the exact committed provider, update on provider swi
     assert.equal(fixture.document.querySelectorAll('[data-codex-helper="usage-dials"]').length, 0)
     assert.equal(fixture.document.querySelectorAll('[data-codex-helper-context-slot]').length, 0)
     assert.equal(composer.editor.isConnected, true)
+  } finally { fixture.dispose() }
+})
+
+test('T3 follows the actual picker draft when the saved thread still names Codex', async () => {
+  const fixture = createBrowserFixture()
+  const composer = makeT3Composer(fixture, [t3Provider(), t3Provider('claudeAgent', 8)])
+  Object.defineProperty(composer.pickerProps, 'activeInstanceId', { value: 'claudeAgent', writable: true })
+  try {
+    executeRenderer(await requiredFile('apply.js'), fixture, { state: {} })
+    assert.equal(composer.props.activeThreadModelSelection.instanceId, 'codex-personal')
+    assert.equal(fixture.window.__codexHelperUsageDials.status().primary.usedPercent, 8)
+    composer.pickerProps.activeInstanceId = 'grok'
+    fixture.window.__codexHelperUsageDials.update({})
+    assert.equal(fixture.window.__codexHelperUsageDials.status().primary, null)
   } finally { fixture.dispose() }
 })
 
@@ -235,7 +251,7 @@ test('Usage Dials package declares explicit Codex and T3 targets', async () => {
     schemaVersion: 2,
     id: 'usage-dials',
     name: 'Usage dials',
-    version: '1.5.1',
+    version: '1.5.2',
     description: 'Shows provider usage limits beside the composer model picker or context dial.',
     refreshSeconds: 60,
     capabilities: [],
@@ -590,8 +606,8 @@ test('renderer replaces a stale Usage Dials controller during a Helper upgrade',
     executeRenderer(apply, fixture, { state: {} })
     await fixture.flush()
     assert.equal(cleaned, 1)
-    assert.equal(fixture.window.__codexHelperUsageDials?.version, 'native-slot-v22')
-    assert.equal(fixture.window.__codexHelperUsageDials?.status().fallbackStrategy, 'native-slot-v22')
+    assert.equal(fixture.window.__codexHelperUsageDials?.version, 'native-slot-v23')
+    assert.equal(fixture.window.__codexHelperUsageDials?.status().fallbackStrategy, 'native-slot-v23')
     assert.equal(native.wrapper.nextElementSibling?.getAttribute('data-codex-helper'), 'usage-dials')
   } finally {
     fixture.window.__codexHelperUsageDials?.cleanup()
