@@ -40,7 +40,7 @@ The `wingman.json` manifest and apply/remove lifecycle stay recognizable. Schema
 
 Before treating the T3 menu's repair or hook claims as verified, identify one installed T3 Code executable on Windows and launch one dedicated test window with a loopback CDP endpoint. Verify exact process/window ownership, the `t3code://app` renderer URL, injected Helper behavior, removal, reload, and survival after an ordinary upstream T3 update. Keep the owner's other T3 windows and foreground focus untouched. T3's remote server does not make the Windows renderer's local paths or Codex session files available; any Hook Trace or Turn Metadata port must prove an exact authorized server-side thread mapping separately.
 
-The first T3 renderer loadout is **Obsidian links** and **Clickable file links**. Obsidian links scans only rendered timeline messages and uses the same validated Wingman action as Codex. Clickable file links adds an Open in Windows control beside T3's file chips without replacing their native click or context menu. Both were applied and removed on one hidden fixture in the live PersonalOS Nightly renderer. The Codex scripts and settings behavior remain separate. The other bundled Helpers stay Codex-only: their data comes from Codex sessions, their UI behavior has no matching T3 surface, or T3 already owns the feature. A T3-specific replacement requires its own observed behavior and tests before enabling it.
+The first T3 renderer loadout is **Usage dials**, **Obsidian links**, and **Clickable file links**. The T3 Usage dials adapter reads the exact selected provider from committed composer props and shows its session and weekly quota windows using the existing dial appearance. Ambiguous, stale, expired, or malformed data remains unavailable. Its source tests are development evidence; the real composer still requires live verification. Obsidian links scans only rendered timeline messages and uses the same validated Wingman action as Codex. Clickable file links adds an Open in Windows control beside T3's file chips without replacing their native click or context menu. Both were applied and removed on one hidden fixture in the live PersonalOS Nightly renderer. The Codex scripts and settings behavior remain separate. The remaining bundled Helpers stay Codex-only: their data comes from Codex sessions, their UI behavior has no matching T3 surface, or T3 already owns the feature. A T3-specific replacement requires its own observed behavior and tests before enabling it.
 
 | Helper | T3 decision |
 | --- | --- |
@@ -50,10 +50,12 @@ The first T3 renderer loadout is **Obsidian links** and **Clickable file links**
 | Turn render recovery | Codex render workaround; no matching T3 failure has been observed. |
 | Sidebar on demand | Codex floating-panel behavior does not match T3's sidebar. |
 | New chat window | Needs a T3-specific window action rather than Codex's native action. |
-| Usage Dials | Requires T3 usage data and a T3-specific display. |
+| Usage Dials | T3 source adapter implemented; real composer and quota display still require live verification. |
 | JSON Debug | Codex-specific diagnostics; a T3 version needs its own evidence and design. |
 
 ## Acceptance
+
+The acceptance bar is visible, working composer dials, file links, and Obsidian links on real T3 messages. About version and a healthy tray row are insufficient. Hidden fixtures and fake action launchers establish development stages only.
 
 Automated tests cover each app's discovery isolation, menu counts, repair scope, Helper selection, and global toggle. A Windows trial then verifies two Codex windows plus two T3 windows, one deliberately unhooked window in each app, the per-app submenu wording and counts, startup checkbox persistence, repair that touches only the chosen app, and cleanup on Wingman exit. Report source/package evidence separately from installed and rendered behavior.
 

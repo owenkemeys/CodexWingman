@@ -1,5 +1,6 @@
 (() => {
-  const controllerVersion = 'native-slot-v16';
+  const controllerVersion = 'native-slot-v17';
+  const t3Renderer = window.location?.protocol === 't3code:';
   const initialSnapshot = __CODEX_HELPER_SNAPSHOT__;
   const existing = window.__codexHelperUsageDials;
   if (existing?.version === controllerVersion) {
@@ -58,6 +59,7 @@
   };
 
   const refreshAccountState = () => {
+    if (t3Renderer) { refreshT3AccountState(); return; }
     const query = readAccountState();
     const count = query?.status === 'success'
       ? query.data?.rate_limit_reset_credits?.available_count : null;
@@ -81,6 +83,7 @@
   };
 
   const connectAccountCache = () => {
+    if (t3Renderer) return;
     if (accountClient) return;
     const queue = [window.__codexRoot?._internalRoot?.current];
     const seen = new Set();
@@ -105,6 +108,73 @@
       }
       if (fiber.child) queue.push(fiber.child);
       if (fiber.sibling) queue.push(fiber.sibling);
+    }
+  };
+
+  // T3's committed composer props identify the exact provider instance. Never
+  // borrow another provider's quota, infer account identity, or invoke an action.
+  const readT3ComposerProps = () => {
+    const editors = [...document.querySelectorAll('[data-testid="composer-editor"]')]
+      .filter((editor) => editor.closest?.('[data-chat-composer-main-surface="true"]'));
+    if (editors.length !== 1) return null;
+    const surface = editors[0];
+    const fiberKey = Object.keys(surface).find((key) => key.startsWith('__reactFiber$'));
+    let fiber = fiberKey ? surface[fiberKey] : null;
+    if (!fiber) return null;
+    let root = fiber;
+    let steps = 0;
+    while (root.return && steps++ < 128) root = root.return;
+    if (root.return || !root.stateNode?.current) return null;
+    if (root.stateNode.current !== root) {
+      fiber = fiber.alternate;
+      if (!fiber) return null;
+      root = fiber;
+      steps = 0;
+      while (root.return && steps++ < 128) root = root.return;
+      if (root.return || root.stateNode?.current !== root) return null;
+    }
+    for (let depth = 0; fiber && depth < 128; depth++, fiber = fiber.return) {
+      const props = fiber.memoizedProps;
+      if (Array.isArray(props?.providerStatuses) && typeof props.activeThreadId === 'string'
+        && props.activeThread?.id === props.activeThreadId) return props;
+    }
+    return null;
+  };
+  const refreshT3AccountState = () => {
+    snapshot = { primary: null, secondary: null };
+    availableResets = null;
+    const props = readT3ComposerProps();
+    if (!props) return;
+    const runtimeId = props.activeThread?.runtime?.providerInstanceId;
+    const selectionId = props.activeThreadModelSelection?.instanceId;
+    if (runtimeId && selectionId && runtimeId !== selectionId) return;
+    const instanceId = runtimeId || selectionId;
+    if (typeof instanceId !== 'string' || !instanceId) return;
+    const matches = props.providerStatuses.filter((provider) => provider?.instanceId === instanceId);
+    if (matches.length !== 1) return;
+    const provider = matches[0];
+    const limits = provider.usageLimits;
+    const checkedAt = Date.parse(limits?.checkedAt);
+    if (!provider.enabled || !provider.installed || limits?.unavailable
+      || !Number.isFinite(checkedAt) || checkedAt > Date.now() + 60000
+      || Date.now() - checkedAt > 15 * 60000 || !Array.isArray(limits.windows)) return;
+    const resetCount = limits.resetCredits?.availableCount;
+    availableResets = Number.isSafeInteger(resetCount) && resetCount >= 0 ? resetCount : null;
+    for (const kind of ['session', 'weekly']) {
+      const windows = limits.windows.filter((value) => value?.kind === kind);
+      if (windows.length !== 1) continue;
+      const value = windows[0];
+      if (!Number.isFinite(value.usedPercent) || value.usedPercent < 0 || value.usedPercent > 100) continue;
+      const minutes = value.windowDurationMins;
+      const reset = Date.parse(value.resetsAt);
+      if (value.resetsAt !== undefined && (!Number.isFinite(reset) || reset <= Date.now())) continue;
+      let normalized = Number.isSafeInteger(minutes) && minutes > 0 && Number.isFinite(reset)
+        ? normalizeAccountWindow({ used_percent: value.usedPercent, limit_window_seconds: minutes * 60,
+          reset_at: Math.floor(reset / 1000) }) : null;
+      normalized ||= { usedPercent: value.usedPercent, state: value.usedPercent >= 95 ? 'danger' : 'neutral' };
+      normalized.label = typeof value.label === 'string' && value.label.trim() && value.label.length <= 80
+        ? value.label.trim() : (kind === 'session' ? 'Session usage' : 'Weekly usage');
+      snapshot[kind === 'session' ? 'primary' : 'secondary'] = normalized;
     }
   };
 
@@ -214,6 +284,23 @@
   };
 
   const findAnchors = () => {
+    if (t3Renderer) {
+      const native = [...document.querySelectorAll('button[aria-label^="Context window "]')]
+        .filter((dial) => dial.closest?.('[data-chat-composer-main-surface="true"]') && isVisible(dial))
+        .map((dial) => ({ mode: 'native', dial, wrapper: dial }));
+      if (native.length) return native;
+      return [...document.querySelectorAll('[data-chat-composer-controls="left"]')]
+        .filter((group) => group.closest?.('[data-chat-composer-main-surface="true"]') && isVisible(group))
+        .map((group) => {
+          let wrapper = group.querySelector('[data-codex-helper-context-slot="usage-dials"]');
+          if (!wrapper) {
+            wrapper = document.createElement('span');
+            wrapper.dataset.codexHelperContextSlot = owner;
+            group.appendChild(wrapper);
+          }
+          return { mode: 'fallback', wrapper };
+        });
+    }
     const native = [...document.querySelectorAll('[aria-label^="Context usage:"]')]
       .filter(isVerifiedAnchor)
       .map((dial) => ({ mode: 'native', dial, wrapper: dial.parentElement }));
@@ -318,6 +405,7 @@
   };
 
   const formatWindowLabel = (value, fallback) => {
+    if (t3Renderer && value?.label) return value.label;
     const minutes = value?.windowMinutes;
     if (!Number.isFinite(minutes) || minutes <= 0) return fallback;
     if (minutes === 300) return '5-hour usage';
@@ -330,7 +418,8 @@
   const createInstance = (anchor) => {
     const bank = document.createElement('span');
     bank.dataset.codexHelper = owner;
-    bank.setAttribute('aria-label', 'Codex account usage');
+    bank.setAttribute('aria-label', t3Renderer ? 'T3 provider usage' : 'Codex account usage');
+    if (t3Renderer) bank.style.color = 'var(--color-muted-foreground, currentColor)';
     const primary = makeDial('primary', '5-hour usage');
     const secondary = makeDial('secondary', 'Weekly usage');
     bank.append(primary, secondary);
@@ -452,6 +541,13 @@
       tooltip.style.position = 'fixed';
       tooltip.style.zIndex = '2147483647';
       tooltip.style.pointerEvents = 'none';
+      if (t3Renderer) {
+        tooltip.style.background = 'var(--color-popover, #1b1b1b)';
+        tooltip.style.color = 'var(--color-popover-foreground, #eee)';
+        tooltip.style.border = '1px solid var(--color-border, #444)';
+        tooltip.style.borderRadius = '8px';
+        tooltip.style.padding = '8px';
+      }
       instance.tooltip = tooltip;
       instance.bank.setAttribute('aria-describedby', tooltip.id);
       document.body.appendChild(tooltip);

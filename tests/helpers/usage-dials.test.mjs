@@ -5,6 +5,108 @@ import { createBrowserFixture, executeRenderer, makeComposer, makeNativeTooltip 
 
 const helperRoot = new URL('../../helpers/usage-dials/', import.meta.url)
 
+function makeT3Composer(fixture, providers, instanceId = 'codex-personal') {
+  fixture.window.location = { protocol: 't3code:' }
+  const surface = fixture.document.createElement('div')
+  surface.setAttribute('data-chat-composer-main-surface', 'true')
+  const editor = fixture.document.createElement('div')
+  editor.setAttribute('data-testid', 'composer-editor')
+  const controls = fixture.document.createElement('div')
+  controls.setAttribute('data-chat-composer-controls', 'left')
+  controls._rect = { left: 100, top: 650, width: 200, height: 28 }
+  surface.append(editor, controls)
+  fixture.document.body.appendChild(surface)
+  const props = { activeThreadId: 'thread-one', activeThread: { id: 'thread-one', runtime: { providerInstanceId: instanceId } },
+    activeThreadModelSelection: { instanceId }, providerStatuses: providers }
+  const root = { stateNode: {} }
+  root.stateNode.current = root
+  const composer = { memoizedProps: props, return: root }
+  editor.__reactFiber$trial = { return: composer }
+  return { surface, controls, editor, props, root }
+}
+
+const t3Provider = (instanceId = 'codex-personal', used = 42) => ({
+  instanceId, enabled: true, installed: true,
+  usageLimits: { checkedAt: new Date().toISOString(),
+    windows: [
+      { id: 'session', kind: 'session', label: '5-hour usage', usedPercent: used, windowDurationMins: 300,
+        resetsAt: new Date(Date.now() + 2 * 3600000).toISOString() },
+      { id: 'weekly', kind: 'weekly', label: 'Weekly usage', usedPercent: 20, windowDurationMins: 10080,
+        resetsAt: new Date(Date.now() + 4 * 86400000).toISOString() },
+    ], resetCredits: { availableCount: 3 } },
+})
+
+test('T3 composer dials use the exact committed provider, update on provider switch, and clean up', async () => {
+  const [apply, remove] = await Promise.all([requiredFile('apply.js'), requiredFile('remove.js')])
+  const fixture = createBrowserFixture()
+  const composer = makeT3Composer(fixture, [t3Provider(), t3Provider('other-account', 99)])
+  try {
+    executeRenderer(apply, fixture, { state: {} })
+    const controller = fixture.window.__codexHelperUsageDials
+    assert.equal(controller.status().attachedCount, 1)
+    assert.equal(controller.status().primary.usedPercent, 42)
+    assert.equal(controller.status().secondary.usedPercent, 20)
+    assert.equal(controller.status().availableResets, 3)
+    const primary = composer.controls.querySelector('[data-codex-helper-dial="primary"]')
+    assert.equal(primary.style.display, 'inline-flex')
+    assert.match(primary.getAttribute('aria-label'), /42%/)
+    primary.dispatchEvent(new fixture.PointerEvent('pointerover', { bubbles: true, pointerType: 'mouse' }))
+    assert.match(fixture.document.querySelector('[role="tooltip"]').textContent, /42% used/)
+    composer.props.activeThread.runtime.providerInstanceId = 'other-account'
+    composer.props.activeThreadModelSelection.instanceId = 'other-account'
+    controller.update({ primary: { usedPercent: 1 } })
+    assert.equal(controller.status().primary.usedPercent, 99)
+    assert.equal(composer.controls.querySelectorAll('[data-codex-helper="usage-dials"]').length, 1)
+    executeRenderer(remove, fixture)
+    assert.equal(fixture.document.querySelectorAll('[data-codex-helper="usage-dials"]').length, 0)
+    assert.equal(fixture.document.querySelectorAll('[data-codex-helper-context-slot]').length, 0)
+    assert.equal(composer.editor.isConnected, true)
+  } finally { fixture.dispose() }
+})
+
+test('T3 quotas fail closed for stale, ambiguous, conflicting or uncommitted data', async () => {
+  const apply = await requiredFile('apply.js')
+  for (const invalid of ['missing', 'duplicate', 'stale', 'expired', 'conflict', 'uncommitted']) {
+    const fixture = createBrowserFixture()
+    const provider = t3Provider()
+    const composer = makeT3Composer(fixture, [provider])
+    if (invalid === 'missing') composer.props.providerStatuses = [t3Provider('other-account', 99)]
+    if (invalid === 'duplicate') composer.props.providerStatuses.push(t3Provider())
+    if (invalid === 'stale') provider.usageLimits.checkedAt = new Date(Date.now() - 3600000).toISOString()
+    if (invalid === 'expired') provider.usageLimits.windows.forEach((value) => { value.resetsAt = new Date(Date.now() - 10000).toISOString() })
+    if (invalid === 'conflict') composer.props.activeThreadModelSelection.instanceId = 'other-account'
+    if (invalid === 'uncommitted') composer.root.stateNode.current = {}
+    try {
+      executeRenderer(apply, fixture, { state: { primary: { usedPercent: 99 } } })
+      assert.equal(fixture.window.__codexHelperUsageDials.status().primary, null, invalid)
+      assert.equal(fixture.window.__codexHelperUsageDials.status().secondary, null, invalid)
+      assert.equal(composer.controls.querySelector('[data-codex-helper-dial="primary"]').style.display, 'none', invalid)
+    } finally { fixture.dispose() }
+  }
+})
+
+test('T3 usage dials sit beside the native context button without replacing its action', async () => {
+  const apply = await requiredFile('apply.js')
+  const fixture = createBrowserFixture()
+  const composer = makeT3Composer(fixture, [t3Provider()])
+  const context = fixture.document.createElement('button')
+  context.setAttribute('aria-label', 'Context window 35% used')
+  context._rect = { left: 300, top: 650, width: 28, height: 28 }
+  composer.controls.appendChild(context)
+  let opened = 0
+  context.addEventListener('click', () => opened++)
+  try {
+    executeRenderer(apply, fixture, { state: {} })
+    assert.equal(context.nextElementSibling.getAttribute('aria-label'), 'T3 provider usage')
+    assert.equal(composer.controls.querySelectorAll('[data-codex-helper-context-slot]').length, 0)
+    context.click()
+    assert.equal(opened, 1)
+    fixture.window.__codexHelperUsageDials.cleanup()
+    assert.equal(context.isConnected, true)
+    assert.equal(context.nextElementSibling, null)
+  } finally { fixture.dispose() }
+})
+
 async function requiredFile(name) {
   const file = new URL(name, helperRoot)
   const exists = await fs.access(file).then(() => true, () => false)
@@ -12,17 +114,17 @@ async function requiredFile(name) {
   return fs.readFile(file, 'utf8')
 }
 
-test('Usage Dials package declares the readable v1 package contract', async () => {
+test('Usage Dials package declares explicit Codex and T3 targets', async () => {
   const manifest = JSON.parse(await requiredFile('wingman.json'))
   assert.deepEqual(manifest, {
-    schemaVersion: 1,
+    schemaVersion: 2,
     id: 'usage-dials',
     name: 'Usage dials',
-    version: '1.3.3',
+    version: '1.4.0',
     description: 'Shows five-hour and weekly usage beside every context dial.',
     refreshSeconds: 60,
     capabilities: [],
-    entrypoints: { apply: 'apply.js', remove: 'remove.js' },
+    targets: { codex: { apply: 'apply.js', remove: 'remove.js' }, 't3-code': { apply: 'apply.js', remove: 'remove.js' } },
   })
 })
 
@@ -373,8 +475,8 @@ test('renderer replaces a stale Usage Dials controller during a Helper upgrade',
     executeRenderer(apply, fixture, { state: {} })
     await fixture.flush()
     assert.equal(cleaned, 1)
-    assert.equal(fixture.window.__codexHelperUsageDials?.version, 'native-slot-v16')
-    assert.equal(fixture.window.__codexHelperUsageDials?.status().fallbackStrategy, 'native-slot-v16')
+    assert.equal(fixture.window.__codexHelperUsageDials?.version, 'native-slot-v17')
+    assert.equal(fixture.window.__codexHelperUsageDials?.status().fallbackStrategy, 'native-slot-v17')
     assert.equal(native.wrapper.nextElementSibling?.getAttribute('data-codex-helper'), 'usage-dials')
   } finally {
     fixture.window.__codexHelperUsageDials?.cleanup()
@@ -448,7 +550,8 @@ function installAccountCache(fixture, initialState) {
 
 test('native account quota renders without any session backend and updates when reset count is unchanged', async () => {
   const manifest = JSON.parse(await requiredFile('wingman.json'))
-  assert.equal(manifest.entrypoints.backend, undefined, 'session reads must not gate renderer activation')
+  assert.equal(manifest.targets.codex.backend, undefined, 'session reads must not gate renderer activation')
+  assert.equal(manifest.targets['t3-code'].backend, undefined, 'T3 quota uses renderer provider data')
   assert.deepEqual(manifest.capabilities, [])
   const fixture = createBrowserFixture()
   const composer = makeComposer(fixture.document, 'account-usage', 30)
