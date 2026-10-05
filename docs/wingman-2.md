@@ -60,3 +60,7 @@ The acceptance bar is visible, working composer dials, file links, and Obsidian 
 Automated tests cover each app's discovery isolation, menu counts, repair scope, Helper selection, and global toggle. A Windows trial then verifies two Codex windows plus two T3 windows, one deliberately unhooked window in each app, the per-app submenu wording and counts, startup checkbox persistence, repair that touches only the chosen app, and cleanup on Wingman exit. Report source/package evidence separately from installed and rendered behavior.
 
 The release and update path is specified in [Codex app release contract](codex-app-release-contract.md).
+
+### Live T3 composer compatibility
+
+The Lexical editable DOM node has no React fiber. Usage Dials resolves the nearest React-owned DOM ancestor within the same main composer surface, then validates the committed root and exact selected provider before reading quota. The regression fixture preserves that observed separation.
