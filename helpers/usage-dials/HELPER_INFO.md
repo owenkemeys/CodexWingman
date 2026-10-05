@@ -1,7 +1,7 @@
 # Usage dials
 
-- Helper generation: native-slot-v23
-- Manifest version: 1.5.2
+- Helper generation: native-slot-v24
+- Manifest version: 1.5.3
 - Helper ID: `usage-dials`
 
 ## Purpose and behavior
@@ -55,3 +55,5 @@ Missing, ambiguous, stale, expired or malformed quota displays a question mark w
 T3 refresh discovers the native provider command across up to eight preloaded server modules, including unrelated modules loaded by lazy routes. It selects one unambiguous command by contract and retains the per-provider refresh cooldown.
 
 The composer-owned picker supplies its committed `activeInstanceId`, including unsent draft changes. The saved conversation model does not override that choice.
+
+Resolve the refresh registry over the full committed editor ancestry; it can be nested inside the owning composer. Multiple distinct registries leave refresh unavailable.

@@ -54,7 +54,9 @@ test('T3 refresh finds the native command when lazy routes preload two server mo
   const composer = makeT3Composer(fixture, [provider], 'grok')
   composer.props.activeThread.environmentId = 'environment-one'
   const registry = { '~effect/reactivity/AtomRegistry': true, get() {}, set() {} }
-  composer.root.memoizedProps = { value: registry }
+  composer.surface.__reactFiber$trial.return = {
+    memoizedProps: { value: registry }, return: composer.surface.__reactFiber$trial.return,
+  }
   const urls = ['t3code://app/assets/server-native.js', 't3code://app/assets/server-unrelated.js']
   for (const url of urls) {
     const link = fixture.document.createElement('link')
@@ -251,7 +253,7 @@ test('Usage Dials package declares explicit Codex and T3 targets', async () => {
     schemaVersion: 2,
     id: 'usage-dials',
     name: 'Usage dials',
-    version: '1.5.2',
+    version: '1.5.3',
     description: 'Shows provider usage limits beside the composer model picker or context dial.',
     refreshSeconds: 60,
     capabilities: [],
@@ -606,8 +608,8 @@ test('renderer replaces a stale Usage Dials controller during a Helper upgrade',
     executeRenderer(apply, fixture, { state: {} })
     await fixture.flush()
     assert.equal(cleaned, 1)
-    assert.equal(fixture.window.__codexHelperUsageDials?.version, 'native-slot-v23')
-    assert.equal(fixture.window.__codexHelperUsageDials?.status().fallbackStrategy, 'native-slot-v23')
+    assert.equal(fixture.window.__codexHelperUsageDials?.version, 'native-slot-v24')
+    assert.equal(fixture.window.__codexHelperUsageDials?.status().fallbackStrategy, 'native-slot-v24')
     assert.equal(native.wrapper.nextElementSibling?.getAttribute('data-codex-helper'), 'usage-dials')
   } finally {
     fixture.window.__codexHelperUsageDials?.cleanup()

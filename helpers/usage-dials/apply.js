@@ -1,5 +1,5 @@
 (() => {
-  const controllerVersion = 'native-slot-v23';
+  const controllerVersion = 'native-slot-v24';
   const t3Renderer = window.location?.protocol === 't3code:';
   const initialSnapshot = state || {};
   const existing = window.__codexHelperUsageDials;
@@ -149,15 +149,19 @@
       while (root.return && steps++ < 128) root = root.return;
       if (root.return || root.stateNode?.current !== root) return null;
     }
+    // T3 can nest its registry provider inside ChatComposer. Search from the
+    // committed DOM fiber, before climbing past the owning composer props.
+    const registries = new Set();
+    for (let ancestor = fiber, depth = 0; ancestor && depth < 128; depth++, ancestor = ancestor.return) {
+      const value = ancestor.memoizedProps?.value;
+      if (value?.['~effect/reactivity/AtomRegistry'] && typeof value.get === 'function'
+        && typeof value.set === 'function') registries.add(value);
+    }
+    t3Registry = registries.size === 1 ? [...registries][0] : null;
     for (let depth = 0; fiber && depth < 128; depth++, fiber = fiber.return) {
       const props = fiber.memoizedProps;
       if (Array.isArray(props?.providerStatuses) && typeof props.activeThreadId === 'string'
         && props.activeThread?.id === props.activeThreadId) {
-        for (let ancestor = fiber; ancestor; ancestor = ancestor.return) {
-          const value = ancestor.memoizedProps?.value;
-          if (value?.['~effect/reactivity/AtomRegistry'] && typeof value.get === 'function'
-            && typeof value.set === 'function') { t3Registry = value; break; }
-        }
         return props;
       }
     }
