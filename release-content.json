@@ -5,6 +5,6 @@
     "Choose whether each app opens when Wingman starts.",
     "Keep Helpers scoped to the right app, with a shared on/off control.",
     "Check GitHub Releases for updates at startup and install only after you agree.",
-    "Use Obsidian note links and Windows file controls in T3 Code messages; other Helpers remain Codex-specific."
+    "Add composer usage dials, Obsidian note links, and Windows file controls to T3 Code."
   ]
 }

@@ -1,7 +1,7 @@
 # Usage dials
 
-- Helper generation: native-slot-v16
-- Manifest version: 1.3.3
+- Helper generation: native-slot-v17
+- Manifest version: 1.4.0
 - Helper ID: `usage-dials`
 
 ## Purpose and behavior
@@ -39,3 +39,7 @@ Usage hover is independent of the native context-window tooltip. Each usage dial
 Available reset credits are separated by a divider and shown count-first, for example "2 resets available". Unknown balances display "Resets unavailable".
 
 Plan names never create or suppress a quota window. Use the durations and reset timestamps reported by the native account cache, including weekly-only and five-hour-only accounts. Reset credits are account-level and distinct from each window's scheduled reset time. See `docs/USAGE_LIMITS.md` for the dated policy research and its limitations.
+
+## T3 Code
+
+The T3 target reads only the selected thread provider instance from committed composer props and its structured usage limits. It never selects another account or performs network or quota actions. Session and weekly windows share the existing dial geometry and pace rules. Missing, ambiguous, stale, expired, or malformed data remains unavailable; no zero usage is invented. Dials sit beside the native context button, or in the explicit left composer controls when there is no native context button. Source tests do not establish live T3 rendering or owner acceptance.
