@@ -2,7 +2,7 @@
   "schemaVersion": 2,
   "id": "usage-dials",
   "name": "Usage dials",
-  "version": "1.5.2",
+  "version": "1.5.3",
   "description": "Shows provider usage limits beside the composer model picker or context dial.",
   "refreshSeconds": 60,
   "capabilities": [],
