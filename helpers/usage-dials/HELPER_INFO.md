@@ -1,7 +1,7 @@
 # Usage dials
 
-- Helper generation: native-slot-v22
-- Manifest version: 1.5.1
+- Helper generation: native-slot-v23
+- Manifest version: 1.5.2
 - Helper ID: `usage-dials`
 
 ## Purpose and behavior
@@ -53,3 +53,5 @@ T3 dials retain Codex’s black/white neutral palette in light/dark themes. Mute
 Missing, ambiguous, stale, expired or malformed quota displays a question mark with a provider-specific explanation. A successful quota read containing no percentages displays a dash and explains that the provider has not reported usage yet. Neither state invents zero usage or borrows another provider's quota. Renderer readiness reports waiting to the Host; valid data restores the dials automatically.
 
 T3 refresh discovers the native provider command across up to eight preloaded server modules, including unrelated modules loaded by lazy routes. It selects one unambiguous command by contract and retains the per-provider refresh cooldown.
+
+The composer-owned picker supplies its committed `activeInstanceId`, including unsent draft changes. The saved conversation model does not override that choice.
