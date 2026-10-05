@@ -1,5 +1,5 @@
 (() => {
-  const controllerVersion = 'native-slot-v18';
+  const controllerVersion = 'native-slot-v19';
   const t3Renderer = window.location?.protocol === 't3code:';
   const initialSnapshot = state || {};
   const existing = window.__codexHelperUsageDials;
@@ -221,6 +221,10 @@
     [data-codex-helper-dial] .codex-helper-unused { stroke: var(--codex-helper-usage-neutral); opacity: .4; }
     [data-codex-helper-dial] .codex-helper-within { stroke: var(--codex-helper-usage-neutral); }
     [data-codex-helper-dial] .codex-helper-ahead { stroke: var(--codex-helper-usage-alert); }
+    /* Match Codex's neutral dial paint, independent of T3's muted controls.
+       Scope the palette to both the miniature and its separate hover preview. */
+    [data-codex-helper-dial][data-wingman-app="t3-code"] { color: #000; }
+    .dark [data-codex-helper-dial][data-wingman-app="t3-code"] { color: #fff; }
     /* Keep the original composer circle; only the enlarged popup uses an outline. */
     .codex-helper-usage-preview [data-codex-helper-dial] .codex-helper-unused { stroke-width: 2px; vector-effect: non-scaling-stroke; }
     .codex-helper-usage-shared { opacity: .6; }
@@ -375,6 +379,7 @@
   const makeDial = (key, windowLabel, preview = false) => {
     const dial = document.createElement('span');
     dial.className = 'text-token-description-foreground';
+    if (t3Renderer) dial.dataset.wingmanApp = 't3-code';
     dial.dataset.codexHelperDial = key;
     dial.dataset.state = 'unavailable';
     dial.setAttribute('role', 'img');
@@ -426,7 +431,6 @@
     const bank = document.createElement('span');
     bank.dataset.codexHelper = owner;
     bank.setAttribute('aria-label', t3Renderer ? 'T3 provider usage' : 'Codex account usage');
-    if (t3Renderer) bank.style.color = 'var(--color-muted-foreground, currentColor)';
     const primary = makeDial('primary', '5-hour usage');
     const secondary = makeDial('secondary', 'Weekly usage');
     bank.append(primary, secondary);

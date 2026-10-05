@@ -68,6 +68,25 @@ test('T3 composer dials use the exact committed provider, update on provider swi
   } finally { fixture.dispose() }
 })
 
+test('T3 miniature and hover dials preserve the Codex neutral palette instead of muted controls', async () => {
+  const apply = await requiredFile('apply.js')
+  const fixture = createBrowserFixture()
+  const composer = makeT3Composer(fixture, [t3Provider()])
+  try {
+    executeRenderer(apply, fixture, { state: {} })
+    const dial = composer.controls.querySelector('[data-codex-helper-dial="primary"]')
+    assert.equal(dial.getAttribute('data-wingman-app'), 't3-code')
+    assert.equal(composer.controls.querySelector('[data-codex-helper="usage-dials"]').style.color || '', '')
+    const css = fixture.document.querySelector('[data-codex-helper-style="usage-dials"]').textContent
+    assert.match(css, /\[data-codex-helper-dial\]\[data-wingman-app="t3-code"\]\s*\{\s*color: #000;/)
+    assert.match(css, /\.dark \[data-codex-helper-dial\]\[data-wingman-app="t3-code"\]\s*\{\s*color: #fff;/)
+    dial.dispatchEvent(new fixture.PointerEvent('pointerover', { bubbles: true, pointerType: 'mouse' }))
+    const preview = fixture.document.querySelector('[role="tooltip"]').querySelector('[data-codex-helper-dial]')
+    assert.equal(preview.getAttribute('data-wingman-app'), 't3-code')
+    assert.equal(preview.querySelector('svg').getAttribute('viewBox'), '2 2 16 16')
+  } finally { fixture.dispose() }
+})
+
 test('T3 quotas fail closed for stale, ambiguous, conflicting or uncommitted data', async () => {
   const apply = await requiredFile('apply.js')
   for (const invalid of ['missing', 'duplicate', 'stale', 'expired', 'conflict', 'uncommitted']) {
@@ -124,7 +143,7 @@ test('Usage Dials package declares explicit Codex and T3 targets', async () => {
     schemaVersion: 2,
     id: 'usage-dials',
     name: 'Usage dials',
-    version: '1.4.1',
+    version: '1.4.2',
     description: 'Shows five-hour and weekly usage beside every context dial.',
     refreshSeconds: 60,
     capabilities: [],
@@ -479,8 +498,8 @@ test('renderer replaces a stale Usage Dials controller during a Helper upgrade',
     executeRenderer(apply, fixture, { state: {} })
     await fixture.flush()
     assert.equal(cleaned, 1)
-    assert.equal(fixture.window.__codexHelperUsageDials?.version, 'native-slot-v18')
-    assert.equal(fixture.window.__codexHelperUsageDials?.status().fallbackStrategy, 'native-slot-v18')
+    assert.equal(fixture.window.__codexHelperUsageDials?.version, 'native-slot-v19')
+    assert.equal(fixture.window.__codexHelperUsageDials?.status().fallbackStrategy, 'native-slot-v19')
     assert.equal(native.wrapper.nextElementSibling?.getAttribute('data-codex-helper'), 'usage-dials')
   } finally {
     fixture.window.__codexHelperUsageDials?.cleanup()
