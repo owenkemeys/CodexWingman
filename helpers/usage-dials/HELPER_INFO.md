@@ -1,7 +1,7 @@
 # Usage dials
 
-- Helper generation: native-slot-v20
-- Manifest version: 1.4.3
+- Helper generation: native-slot-v21
+- Manifest version: 1.5.0
 - Helper ID: `usage-dials`
 
 ## Purpose and behavior
@@ -42,10 +42,12 @@ Plan names never create or suppress a quota window. Use the durations and reset 
 
 ## T3 Code
 
-The T3 target reads only the selected thread provider instance from committed composer props and its structured usage limits. It never selects another account or performs network or quota actions. Session and weekly windows share the existing dial geometry and pace rules. Missing, ambiguous, stale, expired, or malformed data remains unavailable; no zero usage is invented. Dials sit beside the native context button, or in the explicit left composer controls when there is no native context button. Source tests do not establish live T3 rendering or owner acceptance.
+The T3 target follows the provider instance selected in the model picker, including before that provider runs a turn. Dials sit immediately to the picker's left and preserve native context actions. Session, weekly, monthly and other subscription allowances retain their reported labels and reset times. Calendar allowances without a duration use conventional arcs instead of guessed pacing.
+
+The helper invokes T3's existing instance-scoped provider refresh at most once per minute, through the current app's native command and registry. Authentication and account requests remain on the owning T3 server. It does not copy credentials, activate providers, rediscover models or send prompts. Hashed asset names are discovered per release; a missing native interface leaves usage explicitly unavailable. Source tests do not establish live T3 rendering or owner acceptance.
 
 T3 compatibility: reads committed composer quota through the nearest React-owned ancestor of Lexical’s editable node, bounded to the same composer surface.
 
 T3 dials retain Codex’s black/white neutral palette in light/dark themes. Muted composer text colours must not dim either the miniature or its separate hover preview; geometry, warning colours, and segment opacity remain shared.
 
-T3 displays a question mark with an explicit unavailable explanation when all current provider usage is missing, invalid, stale, or switching. It never displays a guessed quota. Renderer readiness reports this waiting state to the Host, so a successful connection alone cannot mark Usage Dials healthy. Valid provider data restores the dials automatically.
+Missing, ambiguous, stale, expired or malformed quota displays a question mark with a provider-specific explanation. A successful quota read containing no percentages displays a dash and explains that the provider has not reported usage yet. Neither state invents zero usage or borrows another provider's quota. Renderer readiness reports waiting to the Host; valid data restores the dials automatically.

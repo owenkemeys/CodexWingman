@@ -1,5 +1,5 @@
 (() => {
-  const controllerVersion = 'native-slot-v20';
+  const controllerVersion = 'native-slot-v21';
   const t3Renderer = window.location?.protocol === 't3code:';
   const initialSnapshot = state || {};
   const existing = window.__codexHelperUsageDials;
@@ -22,6 +22,13 @@
   let unsubscribeAccount = null;
   let availableResets = null;
   let quotaUnavailableReason = 'Waiting for current provider usage.';
+  let providerLabel = 'Provider';
+  let quotaNotReported = false;
+  let t3Registry = null;
+  let t3RefreshCommand = null;
+  let t3RefreshLoading = false;
+  let disposed = false;
+  const t3RefreshAttempts = new Map();
 
   // Read Codex's account cache; session usage does not establish a reset balance.
   const hasAccountFields = (data) => data && !Array.isArray(data)
@@ -145,37 +152,83 @@
     for (let depth = 0; fiber && depth < 128; depth++, fiber = fiber.return) {
       const props = fiber.memoizedProps;
       if (Array.isArray(props?.providerStatuses) && typeof props.activeThreadId === 'string'
-        && props.activeThread?.id === props.activeThreadId) return props;
+        && props.activeThread?.id === props.activeThreadId) {
+        for (let ancestor = fiber; ancestor; ancestor = ancestor.return) {
+          const value = ancestor.memoizedProps?.value;
+          if (value?.['~effect/reactivity/AtomRegistry'] && typeof value.get === 'function'
+            && typeof value.set === 'function') { t3Registry = value; break; }
+        }
+        return props;
+      }
     }
     return null;
   };
+  // Use T3's existing read-only refresh in the owning environment. Discover
+  // this release's module by its command contract, without copying credentials
+  // or pinning a hashed asset name. This never requests model rediscovery.
+  const refreshT3Provider = (props, provider) => {
+    const instanceId = provider.instanceId;
+    const environmentId = props.activeThread?.environmentId;
+    const now = Date.now();
+    const checked = Date.parse(provider.usageLimits?.checkedAt);
+    if (!provider.enabled || !provider.installed || !environmentId || !t3Registry || disposed
+      || (Number.isFinite(checked) && now - checked < 60000)
+      || now - (t3RefreshAttempts.get(instanceId) || 0) < 60000 || t3RefreshLoading) return;
+    const urls = [...document.querySelectorAll('link[rel="modulepreload"]')]
+      .map(element => element.href).filter(url => typeof url === 'string'
+        && /^t3code:\/\/app\/assets\/server-[^/]+\.js$/.test(url));
+    if (!t3RefreshCommand && urls.length !== 1) return;
+    t3RefreshAttempts.set(instanceId, now);
+    t3RefreshLoading = true;
+    const registry = t3Registry;
+    Promise.resolve(t3RefreshCommand || import(urls[0]).then(exports => {
+      const commands = Object.values(exports).map(value => value?.refreshProviders)
+        .filter(command => command?.label === 'environment-data:server:refresh-providers'
+          && typeof command.run === 'function');
+      if (commands.length !== 1) throw new Error('Provider refresh interface unavailable');
+      return t3RefreshCommand = commands[0];
+    })).then(command => {
+      if (!disposed) return command.run(registry, { environmentId, input: { instanceId } });
+    }).catch(() => {}).finally(() => {
+      t3RefreshLoading = false;
+      if (!disposed) queueReconcile();
+    });
+  };
+
   const refreshT3AccountState = () => {
     snapshot = { primary: null, secondary: null };
     availableResets = null;
+    quotaNotReported = false;
+    providerLabel = 'Provider';
     quotaUnavailableReason = 'Waiting for committed composer provider data.';
     const props = readT3ComposerProps();
     if (!props) return;
-    const runtimeId = props.activeThread?.runtime?.providerInstanceId;
-    const selectionId = props.activeThreadModelSelection?.instanceId;
-    if (runtimeId && selectionId && runtimeId !== selectionId) {
-      quotaUnavailableReason = 'Waiting for the provider switch to finish.';
-      return;
-    }
-    const instanceId = runtimeId || selectionId;
+    const instanceId = props.activeThreadModelSelection?.instanceId
+      || props.activeThread?.runtime?.providerInstanceId;
     if (typeof instanceId !== 'string' || !instanceId) return;
     const matches = props.providerStatuses.filter((provider) => provider?.instanceId === instanceId);
     if (matches.length !== 1) return;
     const provider = matches[0];
+    const name = provider.displayName || provider.name;
+    providerLabel = typeof name === 'string' && name.trim() && name.length <= 80 ? name.trim()
+      : ({ codex: 'Codex', claudeAgent: 'Claude', grok: 'Grok' }[provider.driver || instanceId] || 'Provider');
+    refreshT3Provider(props, provider);
     const limits = provider.usageLimits;
     const checkedAt = Date.parse(limits?.checkedAt);
-    quotaUnavailableReason = 'Current provider usage is unavailable or out of date.';
+    quotaUnavailableReason = `${providerLabel} usage is unavailable or out of date.`;
     if (!provider.enabled || !provider.installed || limits?.unavailable
       || !Number.isFinite(checkedAt) || checkedAt > Date.now() + 60000
-      || Date.now() - checkedAt > 15 * 60000 || !Array.isArray(limits.windows)) return;
+      || Date.now() - checkedAt > 15 * 60000 || !Array.isArray(limits.windows)) {
+      if (limits?.unavailable?.reason === 'unsupported') quotaUnavailableReason = `${providerLabel} does not report subscription limits for this account.`;
+      else if (provider.auth?.status === 'unauthenticated') quotaUnavailableReason = `${providerLabel} needs to sign in before usage can be read.`;
+      return;
+    }
     const resetCount = limits.resetCredits?.availableCount;
-    quotaUnavailableReason = 'The provider has no valid current usage windows.';
+    quotaNotReported = limits.windows.length === 0;
+    quotaUnavailableReason = quotaNotReported ? `${providerLabel} has not reported a usage percentage yet.`
+      : `${providerLabel} has no valid current usage windows.`;
     availableResets = Number.isSafeInteger(resetCount) && resetCount >= 0 ? resetCount : null;
-    for (const kind of ['session', 'weekly']) {
+    for (const kind of ['session', 'weekly', 'monthly', 'other']) {
       const windows = limits.windows.filter((value) => value?.kind === kind);
       if (windows.length !== 1) continue;
       const value = windows[0];
@@ -187,9 +240,17 @@
         ? normalizeAccountWindow({ used_percent: value.usedPercent, limit_window_seconds: minutes * 60,
           reset_at: Math.floor(reset / 1000) }) : null;
       normalized ||= { usedPercent: value.usedPercent, state: value.usedPercent >= 95 ? 'danger' : 'neutral' };
+      // Calendar allowances can report a reset without a fixed duration.
+      // Preserve that reset, without inventing a pacing arc.
+      if (Number.isFinite(reset) && !normalized.resetLabel) {
+        normalized.resetsAtUnixSeconds = Math.floor(reset / 1000);
+        normalized.resetLabel = new Date(reset).toLocaleString([], { weekday: 'short', hour: 'numeric', minute: '2-digit' });
+      }
       normalized.label = typeof value.label === 'string' && value.label.trim() && value.label.length <= 80
-        ? value.label.trim() : (kind === 'session' ? 'Session usage' : 'Weekly usage');
-      snapshot[kind === 'session' ? 'primary' : 'secondary'] = normalized;
+        ? value.label.trim() : ({ session: 'Session', weekly: 'Weekly', monthly: 'Monthly' }[kind] || 'Subscription');
+      const slot = kind === 'session' ? 'primary' : kind === 'weekly' ? 'secondary'
+        : !snapshot.primary ? 'primary' : !snapshot.secondary ? 'secondary' : null;
+      if (slot) snapshot[slot] = normalized;
     }
     if (snapshot.primary || snapshot.secondary) quotaUnavailableReason = null;
   };
@@ -305,21 +366,9 @@
 
   const findAnchors = () => {
     if (t3Renderer) {
-      const native = [...document.querySelectorAll('button[aria-label^="Context window "]')]
-        .filter((dial) => dial.closest?.('[data-chat-composer-main-surface="true"]') && isVisible(dial))
-        .map((dial) => ({ mode: 'native', dial, wrapper: dial }));
-      if (native.length) return native;
-      return [...document.querySelectorAll('[data-chat-composer-controls="left"]')]
-        .filter((group) => group.closest?.('[data-chat-composer-main-surface="true"]') && isVisible(group))
-        .map((group) => {
-          let wrapper = group.querySelector('[data-codex-helper-context-slot="usage-dials"]');
-          if (!wrapper) {
-            wrapper = document.createElement('span');
-            wrapper.dataset.codexHelperContextSlot = owner;
-            group.appendChild(wrapper);
-          }
-          return { mode: 'fallback', wrapper };
-        });
+      return [...document.querySelectorAll('[data-chat-provider-model-picker="true"]')]
+        .filter(picker => picker.closest?.('[data-chat-composer-main-surface="true"]') && isVisible(picker))
+        .map(picker => ({ mode: 'model-picker', wrapper: picker }));
     }
     const native = [...document.querySelectorAll('[aria-label^="Context usage:"]')]
       .filter(isVerifiedAnchor)
@@ -424,7 +473,11 @@
       dial.querySelector('svg').appendChild(unknown);
       dial.__codexHelper.unknown = unknown;
     }
-    if (dial.__codexHelper.unknown) dial.__codexHelper.unknown.style.display = showUnavailable ? '' : 'none';
+    if (dial.__codexHelper.unknown) {
+      const text = quotaNotReported ? '–' : '?';
+      if (dial.__codexHelper.unknown.textContent !== text) dial.__codexHelper.unknown.textContent = text;
+      dial.__codexHelper.unknown.style.display = showUnavailable ? '' : 'none';
+    }
     dial.dataset.state = usage === null ? 'unavailable' : (hardDanger ? 'danger' : (value.state || 'neutral'));
     dial.dataset.presentation = hardDanger ? 'danger' : (conventional ? 'conventional' : 'paced');
     setSegment(dial.__codexHelper.background, 0, usage === null ? 0 : 100);
@@ -499,10 +552,14 @@
   };
 
   const updateInstance = (instance) => {
+    if (t3Renderer) setAttributeIfChanged(instance.bank, 'aria-label', `${providerLabel} usage`);
     renderDial(instance.primary, snapshot.primary, t3Renderer && !snapshot.primary && !snapshot.secondary);
     renderDial(instance.secondary, snapshot.secondary);
     if (!instance.wrapper?.parentElement) return;
-    if (instance.bank.parentElement !== instance.wrapper.parentElement || instance.bank.previousElementSibling !== instance.wrapper)
+    if (t3Renderer) {
+      if (instance.bank.parentElement !== instance.wrapper.parentElement || instance.bank.nextElementSibling !== instance.wrapper)
+        insertBefore(instance.wrapper.parentElement, instance.bank, instance.wrapper);
+    } else if (instance.bank.parentElement !== instance.wrapper.parentElement || instance.bank.previousElementSibling !== instance.wrapper)
       instance.wrapper.insertAdjacentElement('afterend', instance.bank);
   };
 
@@ -603,7 +660,7 @@
       preview.appendChild(dial);
     }
     if (unavailable) {
-      stack.appendChild(makeText('Usage unavailable'));
+      stack.appendChild(makeText(`${providerLabel} usage`));
       stack.appendChild(makeText(quotaUnavailableReason));
     } else {
       stack.appendChild(preview);
@@ -643,7 +700,8 @@
       state: !document.querySelector('[data-testid="composer-editor"]') ? 'not-applicable'
         : [...instances.values()].some(instance => instance.bank.isConnected && instance.bank.getBoundingClientRect().width > 0)
           && (snapshot.primary || snapshot.secondary) ? 'ready' : 'waiting',
-      detail: quotaUnavailableReason || 'Usage Dials could not attach to the visible composer.',
+      detail: quotaUnavailableReason || ([...instances.values()].some(instance => instance.bank.isConnected)
+        ? `${providerLabel} usage is visible.` : 'Usage Dials could not attach to the visible composer.'),
     } } : {}),
   });
 
@@ -669,6 +727,7 @@
   const interval = setInterval(reconcile, 2000);
 
   const cleanup = () => {
+    disposed = true;
     observer.disconnect();
     unsubscribeAccount?.();
     accountClient = null;
