@@ -43,6 +43,43 @@ const t3Provider = (instanceId = 'codex-personal', used = 42) => ({
     ], resetCredits: { availableCount: 3 } },
 })
 
+test('T3 refresh finds the native command when lazy routes preload two server modules', async () => {
+  const apply = await requiredFile('apply.js')
+  const fixture = createBrowserFixture()
+  const provider = t3Provider('grok')
+  provider.usageLimits.checkedAt = new Date(Date.now() - 20 * 60000).toISOString()
+  provider.usageLimits.windows = []
+  const composer = makeT3Composer(fixture, [provider], 'grok')
+  composer.props.activeThread.environmentId = 'environment-one'
+  const registry = { '~effect/reactivity/AtomRegistry': true, get() {}, set() {} }
+  composer.root.memoizedProps = { value: registry }
+  const urls = ['t3code://app/assets/server-native.js', 't3code://app/assets/server-unrelated.js']
+  for (const url of urls) {
+    const link = fixture.document.createElement('link')
+    link.setAttribute('rel', 'modulepreload')
+    link.href = url
+    fixture.document.body.appendChild(link)
+  }
+  const calls = []
+  fixture.context.importNativeModule = async url => url === urls[0] ? {
+    native: { refreshProviders: { label: 'environment-data:server:refresh-providers', run: async (actualRegistry, request) => {
+      assert.equal(actualRegistry, registry)
+      calls.push(JSON.parse(JSON.stringify(request)))
+      provider.usageLimits.checkedAt = new Date().toISOString()
+    } } },
+  } : { unrelated: {} }
+  try {
+    // Only the browser's module loader is stubbed; run the real discovery,
+    // provider refresh, cooldown and subsequent rendering against two assets.
+    executeRenderer(apply.replace('import(url)', 'importNativeModule(url)'), fixture, { state: {} })
+    await fixture.flush()
+    assert.deepEqual(calls, [{ environmentId: 'environment-one', input: { instanceId: 'grok' } }])
+    fixture.window.__codexHelperUsageDials.update({})
+    assert.equal(calls.length, 1)
+    assert.match(composer.controls.querySelector('[data-codex-helper-dial="primary"]').getAttribute('aria-label'), /Grok has not reported/)
+  } finally { fixture.dispose() }
+})
+
 test('T3 composer dials use the exact committed provider, update on provider switch, and clean up', async () => {
   const [apply, remove] = await Promise.all([requiredFile('apply.js'), requiredFile('remove.js')])
   const fixture = createBrowserFixture()
@@ -198,7 +235,7 @@ test('Usage Dials package declares explicit Codex and T3 targets', async () => {
     schemaVersion: 2,
     id: 'usage-dials',
     name: 'Usage dials',
-    version: '1.5.0',
+    version: '1.5.1',
     description: 'Shows provider usage limits beside the composer model picker or context dial.',
     refreshSeconds: 60,
     capabilities: [],
@@ -553,8 +590,8 @@ test('renderer replaces a stale Usage Dials controller during a Helper upgrade',
     executeRenderer(apply, fixture, { state: {} })
     await fixture.flush()
     assert.equal(cleaned, 1)
-    assert.equal(fixture.window.__codexHelperUsageDials?.version, 'native-slot-v21')
-    assert.equal(fixture.window.__codexHelperUsageDials?.status().fallbackStrategy, 'native-slot-v21')
+    assert.equal(fixture.window.__codexHelperUsageDials?.version, 'native-slot-v22')
+    assert.equal(fixture.window.__codexHelperUsageDials?.status().fallbackStrategy, 'native-slot-v22')
     assert.equal(native.wrapper.nextElementSibling?.getAttribute('data-codex-helper'), 'usage-dials')
   } finally {
     fixture.window.__codexHelperUsageDials?.cleanup()

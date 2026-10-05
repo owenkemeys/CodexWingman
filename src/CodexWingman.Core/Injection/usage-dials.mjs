@@ -1,5 +1,5 @@
 (() => {
-  const controllerVersion = 'native-slot-v21';
+  const controllerVersion = 'native-slot-v22';
   const t3Renderer = window.location?.protocol === 't3code:';
   const initialSnapshot = __CODEX_HELPER_SNAPSHOT__;
   const existing = window.__codexHelperUsageDials;
@@ -177,14 +177,17 @@
     const urls = [...document.querySelectorAll('link[rel="modulepreload"]')]
       .map(element => element.href).filter(url => typeof url === 'string'
         && /^t3code:\/\/app\/assets\/server-[^/]+\.js$/.test(url));
-    if (!t3RefreshCommand && urls.length !== 1) return;
+    if (!t3RefreshCommand && (urls.length === 0 || urls.length > 8)) return;
     t3RefreshAttempts.set(instanceId, now);
     t3RefreshLoading = true;
     const registry = t3Registry;
-    Promise.resolve(t3RefreshCommand || import(urls[0]).then(exports => {
-      const commands = Object.values(exports).map(value => value?.refreshProviders)
+    Promise.resolve(t3RefreshCommand || Promise.all(urls.map(url => import(url).catch(() => null))).then(modules => {
+      // Lazy routes can preload an unrelated second server module. Resolve
+      // the command contract across the bounded set instead of counting names.
+      const commands = [...new Set(modules.flatMap(exports => Object.values(exports || {})
+        .map(value => value?.refreshProviders)
         .filter(command => command?.label === 'environment-data:server:refresh-providers'
-          && typeof command.run === 'function');
+          && typeof command.run === 'function')))];
       if (commands.length !== 1) throw new Error('Provider refresh interface unavailable');
       return t3RefreshCommand = commands[0];
     })).then(command => {
