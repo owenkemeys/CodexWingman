@@ -7,6 +7,8 @@ const helperRoot = new URL('../../helpers/usage-dials/', import.meta.url)
 
 function makeT3Composer(fixture, providers, instanceId = 'codex-personal') {
   fixture.window.location = { protocol: 't3code:' }
+  const form = fixture.document.createElement('form')
+  form.setAttribute('data-chat-composer-form', 'true')
   const surface = fixture.document.createElement('div')
   surface.setAttribute('data-chat-composer-main-surface', 'true')
   const editor = fixture.document.createElement('div')
@@ -15,14 +17,15 @@ function makeT3Composer(fixture, providers, instanceId = 'codex-personal') {
   controls.setAttribute('data-chat-composer-controls', 'left')
   controls._rect = { left: 100, top: 650, width: 200, height: 28 }
   surface.append(editor, controls)
-  fixture.document.body.appendChild(surface)
+  form.appendChild(surface)
+  fixture.document.body.appendChild(form)
   const props = { activeThreadId: 'thread-one', activeThread: { id: 'thread-one', runtime: { providerInstanceId: instanceId } },
     activeThreadModelSelection: { instanceId }, providerStatuses: providers }
   const root = { stateNode: {} }
   root.stateNode.current = root
   const composer = { memoizedProps: props, return: root }
-  editor.__reactFiber$trial = { return: composer }
-  return { surface, controls, editor, props, root }
+  surface.__reactFiber$trial = { return: composer }
+  return { form, surface, controls, editor, props, root }
 }
 
 const t3Provider = (instanceId = 'codex-personal', used = 42) => ({
@@ -41,6 +44,7 @@ test('T3 composer dials use the exact committed provider, update on provider swi
   const fixture = createBrowserFixture()
   const composer = makeT3Composer(fixture, [t3Provider(), t3Provider('other-account', 99)])
   try {
+    assert.equal(Object.keys(composer.editor).some(key => key.startsWith('__reactFiber$')), false, 'real Lexical editor has no React fiber')
     executeRenderer(apply, fixture, { state: {} })
     const controller = fixture.window.__codexHelperUsageDials
     assert.equal(controller.status().attachedCount, 1)
@@ -120,7 +124,7 @@ test('Usage Dials package declares explicit Codex and T3 targets', async () => {
     schemaVersion: 2,
     id: 'usage-dials',
     name: 'Usage dials',
-    version: '1.4.0',
+    version: '1.4.1',
     description: 'Shows five-hour and weekly usage beside every context dial.',
     refreshSeconds: 60,
     capabilities: [],
@@ -475,8 +479,8 @@ test('renderer replaces a stale Usage Dials controller during a Helper upgrade',
     executeRenderer(apply, fixture, { state: {} })
     await fixture.flush()
     assert.equal(cleaned, 1)
-    assert.equal(fixture.window.__codexHelperUsageDials?.version, 'native-slot-v17')
-    assert.equal(fixture.window.__codexHelperUsageDials?.status().fallbackStrategy, 'native-slot-v17')
+    assert.equal(fixture.window.__codexHelperUsageDials?.version, 'native-slot-v18')
+    assert.equal(fixture.window.__codexHelperUsageDials?.status().fallbackStrategy, 'native-slot-v18')
     assert.equal(native.wrapper.nextElementSibling?.getAttribute('data-codex-helper'), 'usage-dials')
   } finally {
     fixture.window.__codexHelperUsageDials?.cleanup()

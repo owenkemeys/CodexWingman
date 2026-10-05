@@ -1,7 +1,7 @@
 # Usage dials
 
-- Helper generation: native-slot-v17
-- Manifest version: 1.4.0
+- Helper generation: native-slot-v18
+- Manifest version: 1.4.1
 - Helper ID: `usage-dials`
 
 ## Purpose and behavior
@@ -43,3 +43,5 @@ Plan names never create or suppress a quota window. Use the durations and reset 
 ## T3 Code
 
 The T3 target reads only the selected thread provider instance from committed composer props and its structured usage limits. It never selects another account or performs network or quota actions. Session and weekly windows share the existing dial geometry and pace rules. Missing, ambiguous, stale, expired, or malformed data remains unavailable; no zero usage is invented. Dials sit beside the native context button, or in the explicit left composer controls when there is no native context button. Source tests do not establish live T3 rendering or owner acceptance.
+
+T3 compatibility: reads committed composer quota through the nearest React-owned ancestor of Lexical’s editable node, bounded to the same composer surface.

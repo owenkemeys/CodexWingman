@@ -1,5 +1,5 @@
 (() => {
-  const controllerVersion = 'native-slot-v17';
+  const controllerVersion = 'native-slot-v18';
   const t3Renderer = window.location?.protocol === 't3code:';
   const initialSnapshot = __CODEX_HELPER_SNAPSHOT__;
   const existing = window.__codexHelperUsageDials;
@@ -117,8 +117,15 @@
     const editors = [...document.querySelectorAll('[data-testid="composer-editor"]')]
       .filter((editor) => editor.closest?.('[data-chat-composer-main-surface="true"]'));
     if (editors.length !== 1) return null;
-    const surface = editors[0];
-    const fiberKey = Object.keys(surface).find((key) => key.startsWith('__reactFiber$'));
+    // Lexical creates the editable node itself. Find its nearest React-owned
+    // DOM ancestor, bounded to this composer surface, before resolving commit.
+    let surface = editors[0];
+    const boundary = surface.closest('[data-chat-composer-main-surface="true"]');
+    let fiberKey = null;
+    for (let depth = 0; surface && depth < 16; depth++, surface = surface.parentElement) {
+      fiberKey = Object.keys(surface).find((key) => key.startsWith('__reactFiber$'));
+      if (fiberKey || surface === boundary) break;
+    }
     let fiber = fiberKey ? surface[fiberKey] : null;
     if (!fiber) return null;
     let root = fiber;
