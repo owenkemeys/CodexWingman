@@ -1124,6 +1124,13 @@ try
         true,
         targetEngine.Evaluate("window.__rendererInjected").IsUndefined(),
         "renderer target ID JavaScript syntax cannot escape its serialized string");
+    await File.WriteAllTextAsync(Path.Combine(targetCapturePackageRoot, "apply.js"),
+        "wingman.reportRenderHealth({state:'waiting',detail:'Usage unavailable'});");
+    var healthPackage = new HelperCatalog().Discover(bundledRoot, userRoot).Packages.Single(package => package.Manifest.Id == "target-id-capture");
+    var healthValue = targetEngine.Evaluate(renderer.BuildApply(healthPackage, rendererState.RootElement, "health-target"));
+    targetEngine.SetValue("__healthResult", healthValue);
+    Equal("waiting", targetEngine.Evaluate("__healthResult.renderHealth.state").AsString(),
+        "real wrapper returns renderer readiness to CDP instead of discarding the helper result");
     var applyExpression = renderer.BuildApply(backendPackage, rendererState.RootElement, "renderer-target");
     Equal(true, applyExpression.Contains("const state={\"enabled\":true}", StringComparison.Ordinal), "renderer receives serialized backend state");
     WritePackage(
@@ -2298,6 +2305,25 @@ static async Task TestTargetAppIsolation()
             "T3 cleanup remains in T3 window");
         await ThrowsAsync<NotSupportedException>(() => t3Host.OpenNativeNewWindowAsync(),
             "unverified Codex new-window action is unavailable to T3 host");
+        var readinessEvaluator = new HostFakeEvaluator();
+        var readinessRoot = Path.Combine(root, "readiness-fixture");
+        WriteAppTargetPackage(readinessRoot, "usage", "usage-dials", [HelperAppIds.T3Code]);
+        using var waitingJson = JsonDocument.Parse("{\"renderHealth\":{\"state\":\"waiting\",\"detail\":\"Current provider usage is out of date.\"}}");
+        readinessEvaluator.ValueResultFactory = (_, expression) => expression.Contains("t3-code-script", StringComparison.Ordinal)
+            ? waitingJson.RootElement.Clone() : null;
+        var readinessHost = new HelperHost(readinessRoot, settingsPath, source, readinessEvaluator,
+            new HostActionDispatcher(readinessEvaluator), [], appId: HelperAppIds.T3Code);
+        var waitingReport = await readinessHost.ReconcileAsync();
+        var waitingMenu = T3CodeMenuPolicy.Evaluate(1, true, waitingReport, new(1, 1, 0), false);
+        Equal(0, waitingReport.Failed, "successful evaluation can still report unavailable usage");
+        Equal("T3 Code: Problem (1/1)", waitingMenu.Label, "connection does not conceal renderer waiting state");
+        Equal(true, waitingMenu.Details.Contains("out of date", StringComparison.Ordinal), "tray explains data readiness without a restart recommendation");
+        using var readyJson = JsonDocument.Parse("{\"renderHealth\":{\"state\":\"ready\"}}");
+        readinessEvaluator.ValueResultFactory = (_, expression) => expression.Contains("t3-code-script", StringComparison.Ordinal)
+            ? readyJson.RootElement.Clone() : null;
+        var readyReport = await readinessHost.ReconcileAsync();
+        Equal("T3 Code: OK (1/1)", T3CodeMenuPolicy.Evaluate(1, true, readyReport, new(1, 1, 0), false).Label,
+            "fresh renderer readiness clears waiting diagnostics on the next reconciliation");
         await codexHost.SetEnabledAsync("legacy-codex-helper", false);
         await t3Host.SetEnabledAsync("t3-only-helper", false);
         var sharedSettings = HelperSettingsStore.Load(settingsPath);

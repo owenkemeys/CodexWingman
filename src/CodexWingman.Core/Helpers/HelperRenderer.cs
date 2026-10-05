@@ -29,10 +29,10 @@ public sealed class HelperRenderer
             + "const helperConfig=Object.freeze(" + helperConfig + ");\n"
             + "const childOperationToken=" + operationToken + ";let childCompletionSent=false;\n"
             + "const queue=Array.isArray(window." + QueueName + ")?window." + QueueName + ":(window." + QueueName + "=[]);\n"
-            + "const wingman=Object.freeze({helperId,target:Object.freeze(" + target + "),completeChild(){if(childCompletionSent||childOperationToken===null)return false;childCompletionSent=true;queue.push({helperId,action:'wingman.completeChild',payload:{token:childOperationToken}});return true;},openChild(path,bootstrap=null){queue.push({helperId,action:'wingman.openChild',payload:{path,bootstrap}});},request(action,payload=null){queue.push({helperId:"
+            + "let renderHealth=null;const wingman=Object.freeze({reportRenderHealth(value){renderHealth=value;},helperId,target:Object.freeze(" + target + "),completeChild(){if(childCompletionSent||childOperationToken===null)return false;childCompletionSent=true;queue.push({helperId,action:'wingman.completeChild',payload:{token:childOperationToken}});return true;},openChild(path,bootstrap=null){queue.push({helperId,action:'wingman.openChild',payload:{path,bootstrap}});},request(action,payload=null){queue.push({helperId:"
             + helperId + ",action,payload});}});\n"
             + livenessLeaseRefresh + source + "\n"
-            + "})()";
+            + "return renderHealth===null?null:{renderHealth};})()";
     }
 
     public string BuildRemove(HelperPackage package)
