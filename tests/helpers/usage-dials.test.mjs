@@ -103,7 +103,9 @@ test('T3 quotas fail closed for stale, ambiguous, conflicting or uncommitted dat
       executeRenderer(apply, fixture, { state: { primary: { usedPercent: 99 } } })
       assert.equal(fixture.window.__codexHelperUsageDials.status().primary, null, invalid)
       assert.equal(fixture.window.__codexHelperUsageDials.status().secondary, null, invalid)
-      assert.equal(composer.controls.querySelector('[data-codex-helper-dial="primary"]').style.display, 'none', invalid)
+      assert.equal(composer.controls.querySelector('[data-codex-helper-dial="primary"]').style.display, 'inline-flex', invalid)
+      assert.equal(fixture.window.__codexHelperUsageDials.status().renderHealth.state, 'waiting', invalid)
+      assert.match(composer.controls.querySelector('[data-codex-helper-dial="primary"]').getAttribute('aria-label'), /Usage unavailable/, invalid)
     } finally { fixture.dispose() }
   }
 })
@@ -143,7 +145,7 @@ test('Usage Dials package declares explicit Codex and T3 targets', async () => {
     schemaVersion: 2,
     id: 'usage-dials',
     name: 'Usage dials',
-    version: '1.4.2',
+    version: '1.4.3',
     description: 'Shows five-hour and weekly usage beside every context dial.',
     refreshSeconds: 60,
     capabilities: [],
@@ -498,8 +500,8 @@ test('renderer replaces a stale Usage Dials controller during a Helper upgrade',
     executeRenderer(apply, fixture, { state: {} })
     await fixture.flush()
     assert.equal(cleaned, 1)
-    assert.equal(fixture.window.__codexHelperUsageDials?.version, 'native-slot-v19')
-    assert.equal(fixture.window.__codexHelperUsageDials?.status().fallbackStrategy, 'native-slot-v19')
+    assert.equal(fixture.window.__codexHelperUsageDials?.version, 'native-slot-v20')
+    assert.equal(fixture.window.__codexHelperUsageDials?.status().fallbackStrategy, 'native-slot-v20')
     assert.equal(native.wrapper.nextElementSibling?.getAttribute('data-codex-helper'), 'usage-dials')
   } finally {
     fixture.window.__codexHelperUsageDials?.cleanup()
@@ -711,5 +713,34 @@ test('missing native account cache shows unavailable instead of zero', async () 
     const tooltip = fixture.document.querySelector('[data-codex-helper-tooltip="usage-fallback"]')
     await fixture.flush()
     assert.match(tooltip.textContent, /Resets unavailable/)
+  } finally { fixture.dispose() }
+})
+
+
+test('T3 usage stays explicit through data loss and composer replacement, then recovers', async () => {
+  const apply = await requiredFile('apply.js')
+  const fixture = createBrowserFixture()
+  let composer = makeT3Composer(fixture, [t3Provider()])
+  fixture.document._rectResolver = element => element.getAttribute('data-codex-helper') === 'usage-dials' ? { width: 36, height: 24 } : {}
+  try {
+    executeRenderer(apply, fixture, { state: {} })
+    const controller = fixture.window.__codexHelperUsageDials
+    assert.equal(controller.status().renderHealth.state, 'ready')
+    composer.props.providerStatuses[0].usageLimits.checkedAt = new Date(Date.now() - 3600000).toISOString()
+    controller.update({})
+    const unavailable = composer.controls.querySelector('[data-codex-helper-dial="primary"]')
+    assert.equal(unavailable.style.display, 'inline-flex')
+    assert.equal(controller.status().primary, null)
+    assert.equal(controller.status().renderHealth.state, 'waiting')
+    unavailable.dispatchEvent(new fixture.PointerEvent('pointerover', { bubbles: true, pointerType: 'mouse' }))
+    assert.match(fixture.document.querySelector('[role="tooltip"]').textContent, /Usage unavailable/)
+    assert.doesNotMatch(fixture.document.querySelector('[role="tooltip"]').textContent, /0%|5-hour|Weekly/)
+    composer.form.remove()
+    composer = makeT3Composer(fixture, [t3Provider('new-account', 63)], 'new-account')
+    controller.update({})
+    assert.equal(controller.status().renderHealth.state, 'ready')
+    assert.equal(controller.status().primary.usedPercent, 63)
+    assert.equal(fixture.document.querySelectorAll('[data-codex-helper="usage-dials"]').length, 1)
+    assert.equal(composer.controls.querySelector('[data-codex-helper-dial="primary"]').style.display, 'inline-flex')
   } finally { fixture.dispose() }
 })

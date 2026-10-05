@@ -1,7 +1,7 @@
 # Usage dials
 
-- Helper generation: native-slot-v19
-- Manifest version: 1.4.2
+- Helper generation: native-slot-v20
+- Manifest version: 1.4.3
 - Helper ID: `usage-dials`
 
 ## Purpose and behavior
@@ -47,3 +47,5 @@ The T3 target reads only the selected thread provider instance from committed co
 T3 compatibility: reads committed composer quota through the nearest React-owned ancestor of Lexical’s editable node, bounded to the same composer surface.
 
 T3 dials retain Codex’s black/white neutral palette in light/dark themes. Muted composer text colours must not dim either the miniature or its separate hover preview; geometry, warning colours, and segment opacity remain shared.
+
+T3 displays a question mark with an explicit unavailable explanation when all current provider usage is missing, invalid, stale, or switching. It never displays a guessed quota. Renderer readiness reports this waiting state to the Host, so a successful connection alone cannot mark Usage Dials healthy. Valid provider data restores the dials automatically.

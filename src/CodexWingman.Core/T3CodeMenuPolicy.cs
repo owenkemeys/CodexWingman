@@ -31,10 +31,13 @@ public static class T3CodeMenuPolicy
             Math.Max(report.TargetsDiscovered, 0)), visibleWindows.Value);
         if (hooked < visibleWindows)
             return new($"T3 Code: Problem ({hooked}/{visibleWindows})", $"Wingman has a Helper connection for {hooked} of {visibleWindows} visible T3 Code windows. Choose Repair T3 Code after saving work.");
-        if (connections.Failed > 0 || report.Failed > 0 || report.Diagnostics.Count > 0)
+        if (connections.Failed > 0 || report.Failed > 0)
             return new($"T3 Code: Problem ({hooked}/{visibleWindows})", "T3 Code windows are connected, but one or more Helpers failed. Choose Reload helpers, then Repair T3 Code if the problem remains.");
+        if (report.Diagnostics.Count > 0)
+            return new($"T3 Code: Problem ({hooked}/{visibleWindows})",
+                "T3 Code windows are connected, but a Helper needs attention. " + string.Join(" ", report.Diagnostics.Select(item => item.Message)));
         if (!hasEnabledHelpers)
             return new($"T3 Code: No Helpers (0/{visibleWindows})", "Wingman can connect to T3 Code, but no T3 Code Helpers are enabled. Add or enable a T3 Code Helper to alter its windows.");
-        return new($"T3 Code: OK ({hooked}/{visibleWindows})", "Wingman has a Helper connection for each visible T3 Code window. Live window matching still needs verification.");
+        return new($"T3 Code: OK ({hooked}/{visibleWindows})", "Wingman is connected to each visible T3 Code window, and enabled Helpers report no problems.");
     }
 }

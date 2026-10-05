@@ -368,7 +368,7 @@ public sealed class HelperHost
                         var threadId = await GetTargetThreadIdAsync(target, cancellationToken);
                         using var state = await GetBackendStateAsync(package, target, threadId, cancellationToken);
                         var targetExpression = renderer.BuildApply(package, state.RootElement, target.Id);
-                        await evaluator.EvaluateAsync(target, targetExpression, cancellationToken);
+                        await ApplyAndCheckHealthAsync(package, target, targetExpression, diagnostics, cancellationToken);
                         succeeded++;
                     }
                     catch (Exception error) when (!cancellationToken.IsCancellationRequested)
@@ -399,7 +399,7 @@ public sealed class HelperHost
                     try
                     {
                         var expression = renderer.BuildApply(package, backendState.RootElement, target.Id);
-                        await evaluator.EvaluateAsync(target, expression, cancellationToken);
+                        await ApplyAndCheckHealthAsync(package, target, expression, diagnostics, cancellationToken);
                         succeeded++;
                     }
                     catch (Exception error) when (!cancellationToken.IsCancellationRequested)
@@ -417,6 +417,26 @@ public sealed class HelperHost
         diagnostics.AddRange(actionReport.Diagnostics);
 
         return new(attempted, targets.Count, succeeded, failed, diagnostics);
+    }
+
+    private async Task ApplyAndCheckHealthAsync(HelperPackage package, CodexTarget target,
+        string expression, List<HelperDiagnostic> diagnostics, CancellationToken cancellationToken)
+    {
+        if (appId != HelperAppIds.T3Code)
+        {
+            await evaluator.EvaluateAsync(target, expression, cancellationToken);
+            return;
+        }
+        var result = await evaluator.EvaluateValueAsync(target, expression, cancellationToken);
+        if (result is not { ValueKind: JsonValueKind.Object } value
+            || !value.TryGetProperty("renderHealth", out var health)
+            || health.ValueKind != JsonValueKind.Object) return;
+        if (health.TryGetProperty("state", out var state) && state.ValueKind == JsonValueKind.String
+            && state.GetString() is "ready" or "not-applicable") return;
+        var detail = health.TryGetProperty("detail", out var message) && message.ValueKind == JsonValueKind.String
+            ? message.GetString() : null;
+        if (string.IsNullOrWhiteSpace(detail)) detail = "Renderer readiness could not be confirmed.";
+        diagnostics.Add(new(package.Manifest.Id, $"{package.Manifest.Name}: {detail[..Math.Min(detail.Length, 240)]}"));
     }
 
     private async Task<HelperHostReport> DrainHostActionsCoreAsync(

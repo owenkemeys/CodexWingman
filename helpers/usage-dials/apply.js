@@ -1,10 +1,11 @@
 (() => {
-  const controllerVersion = 'native-slot-v19';
+  const controllerVersion = 'native-slot-v20';
   const t3Renderer = window.location?.protocol === 't3code:';
   const initialSnapshot = state || {};
   const existing = window.__codexHelperUsageDials;
   if (existing?.version === controllerVersion) {
     existing.update(initialSnapshot);
+    if (typeof wingman !== 'undefined') wingman.reportRenderHealth?.(existing.status().renderHealth);
     return existing.status();
   }
   existing?.cleanup?.();
@@ -20,6 +21,7 @@
   let accountQuery = null;
   let unsubscribeAccount = null;
   let availableResets = null;
+  let quotaUnavailableReason = 'Waiting for current provider usage.';
 
   // Read Codex's account cache; session usage does not establish a reset balance.
   const hasAccountFields = (data) => data && !Array.isArray(data)
@@ -150,11 +152,15 @@
   const refreshT3AccountState = () => {
     snapshot = { primary: null, secondary: null };
     availableResets = null;
+    quotaUnavailableReason = 'Waiting for committed composer provider data.';
     const props = readT3ComposerProps();
     if (!props) return;
     const runtimeId = props.activeThread?.runtime?.providerInstanceId;
     const selectionId = props.activeThreadModelSelection?.instanceId;
-    if (runtimeId && selectionId && runtimeId !== selectionId) return;
+    if (runtimeId && selectionId && runtimeId !== selectionId) {
+      quotaUnavailableReason = 'Waiting for the provider switch to finish.';
+      return;
+    }
     const instanceId = runtimeId || selectionId;
     if (typeof instanceId !== 'string' || !instanceId) return;
     const matches = props.providerStatuses.filter((provider) => provider?.instanceId === instanceId);
@@ -162,10 +168,12 @@
     const provider = matches[0];
     const limits = provider.usageLimits;
     const checkedAt = Date.parse(limits?.checkedAt);
+    quotaUnavailableReason = 'Current provider usage is unavailable or out of date.';
     if (!provider.enabled || !provider.installed || limits?.unavailable
       || !Number.isFinite(checkedAt) || checkedAt > Date.now() + 60000
       || Date.now() - checkedAt > 15 * 60000 || !Array.isArray(limits.windows)) return;
     const resetCount = limits.resetCredits?.availableCount;
+    quotaUnavailableReason = 'The provider has no valid current usage windows.';
     availableResets = Number.isSafeInteger(resetCount) && resetCount >= 0 ? resetCount : null;
     for (const kind of ['session', 'weekly']) {
       const windows = limits.windows.filter((value) => value?.kind === kind);
@@ -183,6 +191,7 @@
         ? value.label.trim() : (kind === 'session' ? 'Session usage' : 'Weekly usage');
       snapshot[kind === 'session' ? 'primary' : 'secondary'] = normalized;
     }
+    if (snapshot.primary || snapshot.secondary) quotaUnavailableReason = null;
   };
 
   const style = document.createElement('style');
@@ -398,12 +407,24 @@
     return dial;
   };
 
-  const renderDial = (dial, value) => {
+  const renderDial = (dial, value, showUnavailable = false) => {
     const usage = Number.isFinite(value?.usedPercent) ? Math.max(0, Math.min(100, value.usedPercent)) : null;
     const elapsed = elapsedPercent(value);
     const hardDanger = usage !== null && usage >= 95;
     const conventional = elapsed === null || hardDanger;
-    dial.style.display = usage === null ? 'none' : 'inline-flex';
+    dial.style.display = usage === null && !showUnavailable ? 'none' : 'inline-flex';
+    if (showUnavailable && !dial.__codexHelper.unknown) {
+      const unknown = document.createElementNS(svgNamespace, 'text');
+      unknown.setAttribute('x', '10');
+      unknown.setAttribute('y', '14');
+      unknown.setAttribute('text-anchor', 'middle');
+      unknown.setAttribute('fill', 'currentColor');
+      unknown.setAttribute('font-size', '12');
+      unknown.textContent = '?';
+      dial.querySelector('svg').appendChild(unknown);
+      dial.__codexHelper.unknown = unknown;
+    }
+    if (dial.__codexHelper.unknown) dial.__codexHelper.unknown.style.display = showUnavailable ? '' : 'none';
     dial.dataset.state = usage === null ? 'unavailable' : (hardDanger ? 'danger' : (value.state || 'neutral'));
     dial.dataset.presentation = hardDanger ? 'danger' : (conventional ? 'conventional' : 'paced');
     setSegment(dial.__codexHelper.background, 0, usage === null ? 0 : 100);
@@ -412,7 +433,8 @@
     setSegment(dial.__codexHelper.within, 0, conventional ? 0 : Math.min(usage ?? 0, elapsed));
     setSegment(dial.__codexHelper.ahead, conventional ? 0 : elapsed, conventional ? 0 : (usage ?? 0));
     const reset = value?.resetLabel ? ` Resets ${value.resetLabel}.` : '';
-    setAttributeIfChanged(dial, 'aria-label', `${formatWindowLabel(value, dial.__codexHelper.windowLabel)}: ${formatUsage(usage)}.${reset}`);
+    setAttributeIfChanged(dial, 'aria-label', showUnavailable ? `Usage unavailable. ${quotaUnavailableReason}`
+      : `${formatWindowLabel(value, dial.__codexHelper.windowLabel)}: ${formatUsage(usage)}.${reset}`);
     dial.removeAttribute('title');
   };
 
@@ -477,7 +499,7 @@
   };
 
   const updateInstance = (instance) => {
-    renderDial(instance.primary, snapshot.primary);
+    renderDial(instance.primary, snapshot.primary, t3Renderer && !snapshot.primary && !snapshot.secondary);
     renderDial(instance.secondary, snapshot.secondary);
     if (!instance.wrapper?.parentElement) return;
     if (instance.bank.parentElement !== instance.wrapper.parentElement || instance.bank.previousElementSibling !== instance.wrapper)
@@ -540,7 +562,8 @@
   };
 
   const showFallbackTooltip = (instance) => {
-    const key = snapshot[instance.activeWindow] ? instance.activeWindow : (snapshot.primary ? 'primary' : 'secondary');
+    const unavailable = t3Renderer && !snapshot.primary && !snapshot.secondary;
+    const key = unavailable ? 'primary' : snapshot[instance.activeWindow] ? instance.activeWindow : (snapshot.primary ? 'primary' : 'secondary');
     const label = key === 'primary' ? '5-hour usage' : 'Weekly usage';
     let tooltip = instance.tooltip;
     if (!tooltip) {
@@ -579,8 +602,13 @@
       renderDial(dial, snapshot[key]);
       preview.appendChild(dial);
     }
-    stack.appendChild(preview);
-    appendAvailableReadouts(stack, key);
+    if (unavailable) {
+      stack.appendChild(makeText('Usage unavailable'));
+      stack.appendChild(makeText(quotaUnavailableReason));
+    } else {
+      stack.appendChild(preview);
+      appendAvailableReadouts(stack, key);
+    }
     tooltip.appendChild(stack);
     const bankRect = instance[key].getBoundingClientRect();
     const tooltipRect = tooltip.getBoundingClientRect();
@@ -611,6 +639,12 @@
     primary: snapshot.primary || null,
     secondary: snapshot.secondary || null,
     availableResets,
+    ...(t3Renderer ? { renderHealth: {
+      state: !document.querySelector('[data-testid="composer-editor"]') ? 'not-applicable'
+        : [...instances.values()].some(instance => instance.bank.isConnected && instance.bank.getBoundingClientRect().width > 0)
+          && (snapshot.primary || snapshot.secondary) ? 'ready' : 'waiting',
+      detail: quotaUnavailableReason || 'Usage Dials could not attach to the visible composer.',
+    } } : {}),
   });
 
   const update = (nextSnapshot) => {
@@ -650,5 +684,7 @@
   };
 
   window.__codexHelperUsageDials = { version: controllerVersion, update, cleanup, status };
-  return update(initialSnapshot);
+  const result = update(initialSnapshot);
+  if (typeof wingman !== 'undefined') wingman.reportRenderHealth?.(result.renderHealth);
+  return result;
 })()
