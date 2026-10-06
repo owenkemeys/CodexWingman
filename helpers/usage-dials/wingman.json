@@ -2,16 +2,17 @@
   "schemaVersion": 2,
   "id": "usage-dials",
   "name": "Usage dials",
-  "version": "1.5.3",
+  "version": "1.5.4",
   "description": "Shows provider usage limits beside the composer model picker or context dial.",
   "refreshSeconds": 60,
-  "capabilities": [],
+  "capabilities": ["files.providerUsage"],
   "targets": {
     "codex": {
       "apply": "apply.js",
       "remove": "remove.js"
     },
     "t3-code": {
+      "backend": "backend.js",
       "apply": "apply.js",
       "remove": "remove.js"
     }

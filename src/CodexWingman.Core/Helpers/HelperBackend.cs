@@ -83,6 +83,9 @@ public sealed class HelperBackend
             capability => string.Equals(capability, "files.codexSessions", StringComparison.Ordinal));
         var hasTargetSessionCapability = package.Manifest.Capabilities.Any(
             capability => string.Equals(capability, "files.codexTargetSession", StringComparison.Ordinal));
+        var hasProviderUsageCapability = package.Manifest.Capabilities.Contains("files.providerUsage");
+        if (hasProviderUsageCapability)
+            engine.SetValue("__wingmanProviderUsage", new Func<string>(() => ProviderUsageSnapshotFile.Read(package.Manifest.Config)));
         if (hasSessionCapability)
         {
             engine.SetValue("__wingmanSessionRoots", new Func<string[]>(sessionFiles.Roots));
@@ -96,7 +99,7 @@ public sealed class HelperBackend
             engine.SetValue("__wingmanTargetHookTrace", new Func<string?>(() => sessionFiles.ReadHookTraceJson(targetThreadId, cancellationToken)));
         }
 
-        engine.Execute(BuildPrelude(hasSessionCapability, hasTargetSessionCapability));
+        engine.Execute(BuildPrelude(hasSessionCapability, hasTargetSessionCapability, hasProviderUsageCapability));
         engine.Execute(source);
         var result = engine.Evaluate("refresh(wingman)");
         engine.SetValue("__wingmanResult", result);
@@ -142,7 +145,7 @@ public sealed class HelperBackend
             TaskScheduler.Default);
     }
 
-    private static string BuildPrelude(bool hasSessionCapability, bool hasTargetSessionCapability)
+    private static string BuildPrelude(bool hasSessionCapability, bool hasTargetSessionCapability, bool hasProviderUsageCapability)
     {
         var sessionApi = hasSessionCapability
             ? "codexSessions:Object.freeze({roots:()=>sessionRoots(),listFiles:root=>listSessionFiles(String(root)),readText:path=>readSessionText(String(path)),snapshots:()=>JSON.parse(sessionSnapshots())})"
@@ -150,7 +153,8 @@ public sealed class HelperBackend
         var targetSessionApi = hasTargetSessionCapability
             ? "codexTargetSession:Object.freeze({snapshot:()=>{const value=targetSessionSnapshot();return value===null?null:JSON.parse(value)},turnMetadata:()=>{const value=targetTurnMetadata();return value===null?null:JSON.parse(value)},hookTrace:()=>{const value=targetHookTrace();return value===null?null:JSON.parse(value)}})"
             : string.Empty;
-        var apis = string.Join(",", new[] { sessionApi, targetSessionApi }.Where(value => !string.IsNullOrEmpty(value)));
+        var providerUsageApi = hasProviderUsageCapability ? "providerUsage:Object.freeze({read:()=>JSON.parse(providerUsage())})" : string.Empty;
+        var apis = string.Join(",", new[] { sessionApi, targetSessionApi, providerUsageApi }.Where(value => !string.IsNullOrEmpty(value)));
         return """
 const wingman=(()=>{
 const writeLog=__wingmanLog;
@@ -163,6 +167,7 @@ const sessionSnapshots=globalThis.__wingmanSessionSnapshots;
 const targetSessionSnapshot=globalThis.__wingmanTargetSessionSnapshot;
 const targetTurnMetadata=globalThis.__wingmanTargetTurnMetadata;
 const targetHookTrace=globalThis.__wingmanTargetHookTrace;
+const providerUsage=globalThis.__wingmanProviderUsage;
 delete globalThis.__wingmanLog;
 delete globalThis.__wingmanCurrentTime;
 delete globalThis.__wingmanExpandEnvironmentVariables;
@@ -173,6 +178,7 @@ delete globalThis.__wingmanSessionSnapshots;
 delete globalThis.__wingmanTargetSessionSnapshot;
 delete globalThis.__wingmanTargetTurnMetadata;
 delete globalThis.__wingmanTargetHookTrace;
+delete globalThis.__wingmanProviderUsage;
 return Object.freeze({
   log:message=>writeLog(message),
   currentTime:()=>currentTime(),
