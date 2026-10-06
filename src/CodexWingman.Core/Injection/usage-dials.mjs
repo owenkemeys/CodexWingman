@@ -1,5 +1,5 @@
 (() => {
-  const controllerVersion = 'native-slot-v24';
+  const controllerVersion = 'native-slot-v25';
   const t3Renderer = window.location?.protocol === 't3code:';
   const initialSnapshot = __CODEX_HELPER_SNAPSHOT__;
   const existing = window.__codexHelperUsageDials;
@@ -246,7 +246,23 @@
     providerLabel = typeof name === 'string' && name.trim() && name.length <= 80 ? name.trim()
       : ({ codex: 'Codex', claudeAgent: 'Claude', grok: 'Grok' }[provider.driver || instanceId] || 'Provider');
     refreshT3Provider(props, provider);
-    const limits = provider.usageLimits;
+    let limits = provider.usageLimits;
+    // T3 drops Grok's valid zero-valued billing config. A companion can retain
+    // its native interpretation and period. Never infer zero from an empty
+    // native list alone, or use another environment/instance/account's quota.
+    if (provider.driver === 'grok' && provider.auth?.status === 'authenticated'
+      && typeof provider.auth.email === 'string'
+      && (!Array.isArray(limits?.windows) || limits.windows.length === 0)) {
+      const candidates = (Array.isArray(fallbackSnapshot.providerUsage) ? fallbackSnapshot.providerUsage : [])
+        .filter(entry => entry?.environmentId === props.activeThread.environmentId
+          && entry.instanceId === instanceId && entry.driver === 'grok'
+          && typeof entry.accountEmail === 'string'
+          && entry.accountEmail.trim().toLowerCase() === provider.auth.email.trim().toLowerCase()
+          && Number.isFinite(Date.parse(entry.usageLimits?.checkedAt))
+          && Date.parse(entry.usageLimits.checkedAt) <= Date.now() + 60000
+          && Date.now() - Date.parse(entry.usageLimits.checkedAt) <= 3 * 60000);
+      if (candidates.length === 1) limits = candidates[0].usageLimits;
+    }
     const checkedAt = Date.parse(limits?.checkedAt);
     quotaUnavailableReason = `${providerLabel} usage is unavailable or out of date.`;
     if (!provider.enabled || !provider.installed || limits?.unavailable
@@ -257,7 +273,7 @@
       return;
     }
     const resetCount = limits.resetCredits?.availableCount;
-    quotaNotReported = limits.windows.length === 0;
+    quotaNotReported = limits.windows.length === 0 && !fallbackSnapshot.providerUsageConfigured;
     quotaUnavailableReason = quotaNotReported ? `${providerLabel} has not reported a usage percentage yet.`
       : `${providerLabel} has no valid current usage windows.`;
     availableResets = Number.isSafeInteger(resetCount) && resetCount >= 0 ? resetCount : null;

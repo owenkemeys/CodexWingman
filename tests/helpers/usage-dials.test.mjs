@@ -45,6 +45,37 @@ const t3Provider = (instanceId = 'codex-personal', used = 42) => ({
     ], resetCredits: { availableCount: 3 } },
 })
 
+test('T3 fills dropped Grok billing with a fresh matching account and environment only', async () => {
+  const fixture = createBrowserFixture()
+  const provider = { ...t3Provider('grok'), driver: 'grok', auth: { status: 'authenticated', email: 'account@example.test' } }
+  provider.usageLimits.windows = []
+  const composer = makeT3Composer(fixture, [provider], 'grok')
+  composer.props.activeThread.environmentId = 'environment-one'
+  const entry = { environmentId: 'environment-one', instanceId: 'grok', driver: 'grok', accountEmail: 'account@example.test',
+    usageLimits: { checkedAt: new Date().toISOString(), windows: [{ id: 'subscription', kind: 'weekly', label: 'Weekly',
+      usedPercent: 0, windowDurationMins: 10080, resetsAt: new Date(Date.now() + 86400000).toISOString() }] } }
+  try {
+    executeRenderer(await requiredFile('apply.js'), fixture, { state: { providerUsage: [entry] } })
+    const controller = fixture.window.__codexHelperUsageDials
+    assert.equal(controller.status().secondary?.usedPercent, 0)
+    assert.match(controller.status().secondary?.resetLabel, /./)
+    for (const mismatch of [
+      { ...entry, environmentId: 'another-environment' },
+      { ...entry, instanceId: 'another-instance' },
+      { ...entry, accountEmail: 'another@example.test' },
+      { ...entry, usageLimits: { ...entry.usageLimits, checkedAt: new Date(Date.now() - 4 * 60000).toISOString() } },
+    ]) {
+      controller.update({ providerUsage: [mismatch] })
+      assert.equal(controller.status().secondary, null)
+    }
+    controller.update({ providerUsage: [entry, entry] })
+    assert.equal(controller.status().secondary, null, 'ambiguous copies fail closed')
+    provider.usageLimits.windows = [{ ...entry.usageLimits.windows[0], usedPercent: 22 }]
+    controller.update({ providerUsage: [entry] })
+    assert.equal(controller.status().secondary.usedPercent, 22, 'native nonempty quota wins')
+  } finally { fixture.dispose() }
+})
+
 test('T3 refresh finds the native command when lazy routes preload two server modules', async () => {
   const apply = await requiredFile('apply.js')
   const fixture = createBrowserFixture()
@@ -253,11 +284,11 @@ test('Usage Dials package declares explicit Codex and T3 targets', async () => {
     schemaVersion: 2,
     id: 'usage-dials',
     name: 'Usage dials',
-    version: '1.5.3',
+    version: '1.5.4',
     description: 'Shows provider usage limits beside the composer model picker or context dial.',
     refreshSeconds: 60,
-    capabilities: [],
-    targets: { codex: { apply: 'apply.js', remove: 'remove.js' }, 't3-code': { apply: 'apply.js', remove: 'remove.js' } },
+    capabilities: ['files.providerUsage'],
+    targets: { codex: { apply: 'apply.js', remove: 'remove.js' }, 't3-code': { backend: 'backend.js', apply: 'apply.js', remove: 'remove.js' } },
   })
 })
 
@@ -608,8 +639,8 @@ test('renderer replaces a stale Usage Dials controller during a Helper upgrade',
     executeRenderer(apply, fixture, { state: {} })
     await fixture.flush()
     assert.equal(cleaned, 1)
-    assert.equal(fixture.window.__codexHelperUsageDials?.version, 'native-slot-v24')
-    assert.equal(fixture.window.__codexHelperUsageDials?.status().fallbackStrategy, 'native-slot-v24')
+    assert.equal(fixture.window.__codexHelperUsageDials?.version, 'native-slot-v25')
+    assert.equal(fixture.window.__codexHelperUsageDials?.status().fallbackStrategy, 'native-slot-v25')
     assert.equal(native.wrapper.nextElementSibling?.getAttribute('data-codex-helper'), 'usage-dials')
   } finally {
     fixture.window.__codexHelperUsageDials?.cleanup()
@@ -684,8 +715,8 @@ function installAccountCache(fixture, initialState) {
 test('native account quota renders without any session backend and updates when reset count is unchanged', async () => {
   const manifest = JSON.parse(await requiredFile('wingman.json'))
   assert.equal(manifest.targets.codex.backend, undefined, 'session reads must not gate renderer activation')
-  assert.equal(manifest.targets['t3-code'].backend, undefined, 'T3 quota uses renderer provider data')
-  assert.deepEqual(manifest.capabilities, [])
+  assert.equal(manifest.targets['t3-code'].backend, 'backend.js', 'T3 can read an optional scoped Grok snapshot')
+  assert.deepEqual(manifest.capabilities, ['files.providerUsage'])
   const fixture = createBrowserFixture()
   const composer = makeComposer(fixture.document, 'account-usage', 30)
   const response = (used) => ({ status: 'success', data: {

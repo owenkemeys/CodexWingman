@@ -1,7 +1,7 @@
 # Usage dials
 
-- Helper generation: native-slot-v24
-- Manifest version: 1.5.3
+- Helper generation: native-slot-v25
+- Manifest version: 1.5.4
 - Helper ID: `usage-dials`
 
 ## Purpose and behavior
@@ -16,7 +16,7 @@ This helper shows separate 5-hour and weekly account-usage dials beside Codex's 
 
 ## Capabilities
 
-No Host capabilities or session backend are required. The helper reads Codex's existing in-memory account cache without filesystem access or additional network requests. Shared-session latency cannot block its activation.
+Codex uses its existing in-memory account cache without a backend. The optional T3 backend declares `files.providerUsage` to read one explicitly configured, typed quota snapshot. It has no access to credentials or session files.
 
 ## Customization
 
@@ -44,7 +44,7 @@ Plan names never create or suppress a quota window. Use the durations and reset 
 
 The T3 target follows the provider instance selected in the model picker, including before that provider runs a turn. Dials sit immediately to the picker's left and preserve native context actions. Session, weekly, monthly and other subscription allowances retain their reported labels and reset times. Calendar allowances without a duration use conventional arcs instead of guessed pacing.
 
-The helper invokes T3's existing instance-scoped provider refresh at most once per minute, through the current app's native command and registry. Authentication and account requests remain on the owning T3 server. It does not copy credentials, activate providers, rediscover models or send prompts. Hashed asset names are discovered per release; a missing native interface leaves usage explicitly unavailable. Source tests do not establish live T3 rendering or owner acceptance.
+The helper invokes T3's existing instance-scoped provider refresh at most once per minute, through the current app's native command and registry. Native authentication and account requests remain on the owning T3 server. It does not copy credentials, activate providers, rediscover models or send prompts. Hashed asset names are discovered per release; a missing native interface leaves usage explicitly unavailable. Source tests do not establish live T3 rendering or owner acceptance.
 
 T3 compatibility: reads committed composer quota through the nearest React-owned ancestor of Lexical’s editable node, bounded to the same composer surface.
 
@@ -57,3 +57,5 @@ T3 refresh discovers the native provider command across up to eight preloaded se
 The composer-owned picker supplies its committed `activeInstanceId`, including unsent draft changes. The saved conversation model does not override that choice.
 
 Resolve the refresh registry over the full committed editor ancestry; it can be nested inside the owning composer. Multiple distinct registries leave refresh unavailable.
+
+An optional external Grok companion (`tools/provider_usage_bridge.py`) retains the valid billing config that T3 discards when its percentage field is absent. Grok's own `credit_balance_from_config` and real `/usage` screen interpret that config as 0%. The companion applies this interpretation only to a successful unified-billing response with a valid current weekly/monthly period. Missing configs, invalid percentages and failed requests remain unavailable. The renderer accepts a snapshot only for the exact environment, provider instance and signed-in account, at most three minutes old; native nonempty quota wins. The configured `providerUsageFile` contains quota and its account identity, never an authentication key. Removing the companion or configuration restores native-only behavior. This keeps the fallback outside T3's release files.

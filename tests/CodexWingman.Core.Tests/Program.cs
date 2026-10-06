@@ -956,6 +956,29 @@ try
     Equal("fixture-session-text", backendState.RootElement.GetProperty("text").GetString(), "backend reads text only through declared session capability");
     Equal(1, backendState.RootElement.GetProperty("count").GetInt32(), "backend lists files below configured session roots");
 
+    var providerUsagePath = Path.Combine(helperRoot, "provider-usage.json");
+    await File.WriteAllTextAsync(providerUsagePath, """
+{"schemaVersion":1,"secret":"must-not-reach-renderer","entries":[{"environmentId":"env","instanceId":"grok","driver":"grok","accountEmail":"account@example.test","secret":"must-not-reach-renderer","usageLimits":{"checkedAt":"2026-10-06T01:14:00Z","windows":[{"id":"subscription","kind":"weekly","label":"Weekly","usedPercent":0,"resetsAt":"2026-10-12T01:46:48Z","windowDurationMins":10080}]}}]}
+""");
+    WritePackage(bundledRoot, "provider-usage", "provider-usage", capabilities: ["files.providerUsage"],
+        backend: "backend.js", backendSource: "function refresh(wingman) { return wingman.files.providerUsage.read(); }");
+    var providerUsagePackage = new HelperCatalog().Discover(bundledRoot, userRoot).Packages.Single(package => package.Manifest.Id == "provider-usage");
+    providerUsagePackage = providerUsagePackage with { Manifest = providerUsagePackage.Manifest with { Config = JsonSerializer.SerializeToElement(new { providerUsageFile = providerUsagePath }) } };
+    using (var quotaState = await backend.RefreshAsync(providerUsagePackage))
+    {
+        Equal(1, quotaState.RootElement.GetProperty("providerUsage").GetArrayLength(), "dedicated backend reads configured quota snapshot");
+        Equal(false, quotaState.RootElement.GetRawText().Contains("must-not-reach-renderer", StringComparison.Ordinal), "quota projection strips unknown secret fields");
+    }
+    await File.WriteAllTextAsync(providerUsagePath, "{\"key\":\"must-not-reach-renderer\"}");
+    using (var quotaState = await backend.RefreshAsync(providerUsagePackage))
+        Equal(0, quotaState.RootElement.GetProperty("providerUsage").GetArrayLength(), "wrong snapshot schema fails closed");
+    await File.WriteAllTextAsync(providerUsagePath, new string(' ', 65537));
+    using (var quotaState = await backend.RefreshAsync(providerUsagePackage))
+        Equal(0, quotaState.RootElement.GetProperty("providerUsage").GetArrayLength(), "oversized quota snapshot fails closed");
+    File.Delete(providerUsagePath);
+    using (var quotaState = await backend.RefreshAsync(providerUsagePackage))
+        Equal(0, quotaState.RootElement.GetProperty("providerUsage").GetArrayLength(), "missing optional snapshot preserves native fallback");
+
     WritePackage(
         bundledRoot,
         "backend-no-capability",
