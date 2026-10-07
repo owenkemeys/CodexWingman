@@ -145,6 +145,25 @@ test('T3 composer dials use the exact committed provider, update on provider swi
   } finally { fixture.dispose() }
 })
 
+test('T3 high usage colors only its excess in the miniature and hover preview', async () => {
+  const fixture = createBrowserFixture()
+  const composer = makeT3Composer(fixture, [t3Provider('codex-personal', 98)])
+  try {
+    executeRenderer(await requiredFile('apply.js'), fixture, { state: {} })
+    const dial = composer.controls.querySelector('[data-codex-helper-dial="primary"]')
+    dial.dispatchEvent(new fixture.PointerEvent('pointerover', { bubbles: true, pointerType: 'mouse' }))
+    const preview = fixture.document.querySelector('[role="tooltip"]').querySelector('[data-codex-helper-dial]')
+    for (const rendered of [dial, preview]) {
+      assert.equal(rendered.dataset.presentation, 'paced')
+      for (const [name, expected] of [['within', ['0', '60']], ['ahead', ['60', '98']]]) {
+        const arc = rendered.querySelector(`[data-segment="${name}"]`)
+        assert.deepEqual([arc.getAttribute('data-start-percent'), arc.getAttribute('data-end-percent')], expected)
+      }
+      assert.equal(rendered.querySelector('[data-segment="conventional-value"]').style.display, 'none')
+    }
+  } finally { fixture.window.__codexHelperUsageDials?.cleanup(); fixture.dispose() }
+})
+
 test('T3 follows the actual picker draft when the saved thread still names Codex', async () => {
   const fixture = createBrowserFixture()
   const composer = makeT3Composer(fixture, [t3Provider(), t3Provider('claudeAgent', 8)])
@@ -284,7 +303,7 @@ test('Usage Dials package declares explicit Codex and T3 targets', async () => {
     schemaVersion: 2,
     id: 'usage-dials',
     name: 'Usage dials',
-    version: '1.5.4',
+    version: '1.5.5',
     description: 'Shows provider usage limits beside the composer model picker or context dial.',
     refreshSeconds: 60,
     capabilities: ['files.providerUsage'],
@@ -426,11 +445,35 @@ test('renderer keeps a native-style full background and divides timing into unus
     executeRenderer(apply, fixture, { state: stateFor(95, 94, 'danger') })
     await fixture.flush()
     assert.equal(segment('unused').style.display, 'none')
-    assert.equal(segment('within').style.display, 'none')
-    assert.equal(segment('ahead').style.display, 'none')
+    assert.deepEqual(range('within'), ['0', '94'])
+    assert.deepEqual(range('ahead'), ['94', '95'])
     assert.deepEqual(range('background'), ['0', '100'])
-    assert.deepEqual(range('conventional-value'), ['0', '95'])
+    assert.equal(segment('conventional-value').style.display, 'none')
     assert.equal(segment('background').style.display, '')
+
+    executeRenderer(apply, fixture, { state: stateFor(98, 60, 'danger') })
+    await fixture.flush()
+    assert.equal(fixture.document.querySelector('[data-codex-helper-dial="primary"]').dataset.presentation, 'paced')
+    assert.deepEqual(range('within'), ['0', '60'])
+    assert.deepEqual(range('ahead'), ['60', '98'])
+    assert.equal(segment('conventional-value').style.display, 'none')
+    assert.doesNotMatch(styleText, /\[data-presentation="danger"\][^{]*background\s*\{/)
+    assert.match(styleText, /\.codex-helper-background\s*\{[^}]*stroke: var\(--codex-helper-usage-neutral\)/)
+
+    fixture.document.querySelector('[data-codex-helper-dial="primary"]').dispatchEvent(new fixture.PointerEvent('pointerover', { bubbles: true, pointerType: 'mouse' }))
+    await fixture.flush()
+    const preview = fixture.document.querySelector('.codex-helper-usage-preview')?.querySelector('[data-codex-helper-dial="primary"]')
+    assert.ok(preview, 'hover preview exists')
+    for (const [name, expected] of [['within', ['0', '60']], ['ahead', ['60', '98']]]) {
+      const arc = preview.querySelector(`[data-segment="${name}"]`)
+      assert.deepEqual([arc.getAttribute('data-start-percent'), arc.getAttribute('data-end-percent')], expected,
+        'hover preview uses the same excess-only ranges')
+    }
+
+    executeRenderer(apply, fixture, { state: stateFor(98, 100, 'danger') })
+    await fixture.flush()
+    assert.deepEqual(range('within'), ['0', '98'])
+    assert.equal(segment('ahead').style.display, 'none', 'high usage within elapsed time stays neutral')
 
     executeRenderer(apply, fixture, {
       state: { primary: { usedPercent: 42, windowMinutes: null, resetsAtUnixSeconds: null, state: 'neutral', resetLabel: null }, secondary: null },
@@ -639,8 +682,8 @@ test('renderer replaces a stale Usage Dials controller during a Helper upgrade',
     executeRenderer(apply, fixture, { state: {} })
     await fixture.flush()
     assert.equal(cleaned, 1)
-    assert.equal(fixture.window.__codexHelperUsageDials?.version, 'native-slot-v25')
-    assert.equal(fixture.window.__codexHelperUsageDials?.status().fallbackStrategy, 'native-slot-v25')
+    assert.equal(fixture.window.__codexHelperUsageDials?.version, 'native-slot-v26')
+    assert.equal(fixture.window.__codexHelperUsageDials?.status().fallbackStrategy, 'native-slot-v26')
     assert.equal(native.wrapper.nextElementSibling?.getAttribute('data-codex-helper'), 'usage-dials')
   } finally {
     fixture.window.__codexHelperUsageDials?.cleanup()

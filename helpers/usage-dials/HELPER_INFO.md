@@ -1,12 +1,12 @@
 # Usage dials
 
-- Helper generation: native-slot-v25
-- Manifest version: 1.5.4
+- Helper generation: native-slot-v26
+- Manifest version: 1.5.5
 - Helper ID: `usage-dials`
 
 ## Purpose and behavior
 
-This helper shows separate 5-hour and weekly account-usage dials beside Codex's context control. It reads the signed-in account's native rate-limit cache and classifies limits by their duration, including accounts with only a weekly window. Each dial compares usage with elapsed time while retaining a complete background ring: native context-dial grey shows usage within pace, a middle-grey outline with the background showing through marks elapsed capacity not yet used, and usage ahead of pace is orange until usage reaches 1.5 times elapsed time, when it becomes red. At 95% usage the dial becomes fully red. The renderer uses Codex's native context slot when available, or creates a small temporary slot beside the model control until the native slot appears. Hover or keyboard focus exposes usage, time elapsed, reset details, and available reset credits.
+This helper shows separate 5-hour and weekly account-usage dials beside Codex's context control. It reads the signed-in account's native rate-limit cache and classifies limits by their duration, including accounts with only a weekly window. Each dial compares usage with elapsed time while retaining a complete neutral background ring: native context-dial grey shows usage within pace, a middle-grey outline with the background showing through marks elapsed capacity not yet used, and usage ahead of pace is orange until usage reaches 1.5 times elapsed time, when it becomes red. At 95% usage the excess arc is red; usage within elapsed time stays neutral. For 98% usage with 60% elapsed, 0–60% is neutral and 60–98% is red in both the composer and hover preview. Without an elapsed-time estimate, the used arc stays neutral rather than inventing overuse. The renderer uses Codex's native context slot when available, or creates a small temporary slot beside the model control until the native slot appears. Hover or keyboard focus exposes usage, time elapsed, reset details, and available reset credits.
 
 ## Files and entrypoints
 
