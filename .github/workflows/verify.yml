@@ -44,7 +44,11 @@ jobs:
       - name: Verify About identity
         run: python tools/release_identity.py
       - name: Verify native Windows launcher shortcuts
-        run: dotnet run --project tests/CodexWingman.Windows.Tests/CodexWingman.Windows.Tests.csproj -c Release
+        run: |
+          dotnet run --project tests/CodexWingman.Windows.Tests/CodexWingman.Windows.Tests.csproj -c Release
+          if ($LASTEXITCODE -ne 0) { throw 'Native launcher and updater contract failed' }
+          dotnet run --project tests/CodexWingman.Windows.Tests/CodexWingman.Windows.Tests.csproj -c Release --no-build -- --verify-brand src/CodexWingman/bin/Release/net9.0-windows/CodexWingman.exe
+          if ($LASTEXITCODE -ne 0) { throw 'Native Windows application branding failed' }
       - name: Preserve native Windows contract tests
         uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02
         with:
