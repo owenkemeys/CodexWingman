@@ -48,6 +48,8 @@ jobs:
           if (-not (Test-Path -LiteralPath $package -PathType Leaf)) { throw 'Versioned NuGet package is missing' }
           $hash = (Get-FileHash -LiteralPath $package -Algorithm SHA256).Hash.ToLowerInvariant()
           Set-Content -LiteralPath ($package + '.sha256') -Value "$hash  CodexApp.ReleaseKit.$version.nupkg" -Encoding ascii
-          gh release create $tag $package ($package + '.sha256') --verify-tag --title "ReleaseKit $version" --notes "Versioned Codex app release and update machinery. Pin this NuGet package in each app."
+          $releaseFlags = @('--latest=false')
+          if ($version.Contains('-')) { $releaseFlags += '--prerelease' }
+          gh release create $tag $package ($package + '.sha256') @releaseFlags --verify-tag --title "ReleaseKit $version" --notes "Versioned Codex app release and update machinery. Pin this NuGet package in each app."
         env:
           GH_TOKEN: ${{ github.token }}

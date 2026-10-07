@@ -9,6 +9,13 @@ using CodexWingman.Core.Helpers;
 using CodexApp.ReleaseKit;
 using Jint;
 
+if (args.Contains("--release-discovery", StringComparer.Ordinal))
+{
+    await TestReleaseDiscoveryAsync();
+    Console.WriteLine("Shared release discovery tests passed");
+    return;
+}
+
 if (args.Contains("--launcher-policy", StringComparer.Ordinal))
 {
     TestWingmanLaunchOptions();
@@ -37,6 +44,9 @@ static void TestWingmanLaunchOptions()
     var isolated = WingmanLaunchOptions.Parse(["--local-app-data=" + profile, "--register-launchers"]);
     Equal(Path.GetFullPath(profile), isolated.LocalAppData, "explicit settings profile is retained");
     Equal(true, isolated.RegisterOnly, "registration can run without launching apps");
+    Equal("\"--local-app-data=" + Path.GetFullPath(profile) + "\"",
+        WingmanLaunchOptions.RelaunchArguments(profile), "updates retain the profile without selecting a new app window");
+    Equal(string.Empty, WingmanLaunchOptions.RelaunchArguments(null), "normal updates omit empty native arguments");
     Equal("--launch=t3-code \"--local-app-data=" + Path.GetFullPath(profile) + "\"",
         WingmanLaunchOptions.ShortcutArguments(WingmanLaunchTarget.T3Code, profile), "shortcut quotes its settings profile");
     Throws<ArgumentException>(() => WingmanLaunchOptions.Parse(["--launch=other"]), "unknown app rejected");
@@ -131,7 +141,7 @@ static void TestTrayVisibilityRecovery()
         ?? throw new InvalidOperationException("tray visibility watchdog policy is missing");
     visibilityChanges.Clear();
     ensureVisible.Invoke(null, [false, (Action<bool>)visibilityChanges.Add]);
-    Equal("False,True", string.Join(',', visibilityChanges), "periodic tray watchdog re-registers a lost shell icon");
+    Equal("True", string.Join(',', visibilityChanges), "periodic tray watchdog preserves a registered shell icon");
 
     visibilityChanges.Clear();
     ensureVisible.Invoke(null, [true, (Action<bool>)visibilityChanges.Add]);
@@ -141,13 +151,14 @@ static void TestTrayVisibilityRecovery()
 try
 {
 TestWingmanLaunchOptions();
+TestTrayVisibilityRecovery();
 await TestReleaseDiscoveryAsync();
 TestSealedReleasePackage();
 await TestTargetAppIsolation();
 TestT3CodeLaunchPolicy();
 Equal("CodexWingman.Desktop.Singleton.v1", WingmanIdentity.SingleInstanceName, "stable single-instance identity");
 Equal("CodexWingman.Desktop.Activate.v1", WingmanIdentity.ActivationEventName, "stable activation identity");
-Equal("Codex Wingman", WingmanIdentity.RunningMenuText, "concise Wingman menu heading");
+Equal("Wingman", WingmanIdentity.RunningMenuText, "concise Wingman menu heading");
 Equal("Close Wingman", WingmanIdentity.CloseMenuText, "app-neutral close menu text");
 var verifiedDirectory = Path.Combine(Path.GetTempPath(), "CodexWingman-verified");
 Equal(
@@ -2101,6 +2112,20 @@ static async Task TestReleaseDiscoveryAsync()
     Equal(true, found?.Summary.Contains("Supports Codex and T3 Code.") == true, "release summary is user-facing");
     Equal(null, await client.CheckAsync("owenkemeys/CodexWingman", "Wingman", new Version(2, 0, 0)),
         "current release is not offered again");
+    using var emptyHttp = new HttpClient(new StaticHttpMessageHandler(request =>
+        new HttpResponseMessage(request.RequestUri!.AbsolutePath.EndsWith("/releases/latest", StringComparison.Ordinal)
+            ? HttpStatusCode.NotFound : HttpStatusCode.OK)));
+    Equal(null, await new AppReleaseClient(emptyHttp, "Wingman")
+        .CheckAsync("owenkemeys/CodexWingman", "Wingman", new Version(1, 0, 0)),
+        "an accessible repository with no stable release is an ordinary empty update check");
+    var empty = await new AppReleaseClient(emptyHttp, "Wingman")
+        .CheckLatestAsync("owenkemeys/CodexWingman", "Wingman", new Version(1, 0, 0));
+    Equal(AppReleaseCheckStatus.NoStableRelease, empty.Status, "no release is distinguished from up to date");
+    Equal("No stable release of Wingman has been published yet.", empty.Message, "manual update check explains an empty release feed");
+    using var unavailableHttp = new HttpClient(new StaticHttpMessageHandler(_ => new HttpResponseMessage(HttpStatusCode.NotFound)));
+    await ThrowsAsync<HttpRequestException>(() => new AppReleaseClient(unavailableHttp, "Wingman")
+        .CheckAsync("owner/unavailable", "Wingman", new Version(1, 0, 0)),
+        "a missing or inaccessible repository remains an access failure");
     async Task<AppRelease?> CheckFixtureAsync(string fixture)
     {
         using var fixtureHttp = new HttpClient(new StaticHttpMessageHandler(_ =>

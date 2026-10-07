@@ -45,6 +45,12 @@ jobs:
         run: python tools/release_identity.py
       - name: Verify native Windows launcher shortcuts
         run: dotnet run --project tests/CodexWingman.Windows.Tests/CodexWingman.Windows.Tests.csproj -c Release
+      - name: Preserve native Windows contract tests
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02
+        with:
+          name: Wingman-Windows-contract-tests
+          path: tests/CodexWingman.Windows.Tests/bin/Release/net9.0-windows/
+          retention-days: 14
       - name: Verify Wingman consumes the packed kit
         shell: pwsh
         run: |

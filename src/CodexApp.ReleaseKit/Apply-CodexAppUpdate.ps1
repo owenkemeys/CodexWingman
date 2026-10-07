@@ -9,9 +9,13 @@ param(
     [Parameter(Mandatory)][string]$ExecutableName,
     [Parameter(Mandatory)][string]$StableDirectoryName,
     [string]$ExtensionsDirectoryName = '',
+    [string]$RelaunchArguments = '',
     [switch]$PreflightOnly
 )
 $ErrorActionPreference = 'Stop'
+if ($RelaunchArguments.IndexOfAny([char[]]@([char]0, [char]10, [char]13)) -ge 0) {
+    throw 'Invalid app relaunch arguments'
+}
 foreach ($name in @($ExecutableName, $StableDirectoryName, $ExtensionsDirectoryName)) {
     if ($name -and $name -notmatch '^[A-Za-z0-9_.-]+$') { throw 'Invalid release path component' }
 }
@@ -49,6 +53,16 @@ function Assert-SealedPackage([string]$directory, [string]$version) {
         $actual[$name] = $true
     }
     if ($actual.Count -ne $expected.Count) { throw 'Downloaded release is missing a file' }
+}
+
+function Start-UpdatedApp([string]$executable) {
+    $start = New-Object Diagnostics.ProcessStartInfo
+    $start.FileName = $executable
+    $start.Arguments = $RelaunchArguments
+    $start.WorkingDirectory = $installedFull
+    $start.UseShellExecute = $false
+    $start.CreateNoWindow = $true
+    return [Diagnostics.Process]::Start($start)
 }
 
 $packageFull = [IO.Path]::GetFullPath($Package).TrimEnd('\', '/')
@@ -125,7 +139,7 @@ try {
     Move-Item -LiteralPath $staging -Destination $installedFull
     $newMoved = $true
     $exe = Join-Path $installedFull $ExecutableName
-    $started = Start-Process -FilePath $exe -WorkingDirectory $installedFull -PassThru -WindowStyle Hidden
+    $started = Start-UpdatedApp $exe
     Start-Sleep -Seconds 3
     if ($started.HasExited) { throw 'Updated app exited immediately' }
     # Keep the rollback for a deliberate later cleanup after live acceptance.
@@ -137,7 +151,8 @@ catch {
     }
     if ($oldMoved) {
         Move-Item -LiteralPath $rollback -Destination $installedFull
-        Start-Process -FilePath (Join-Path $installedFull $ExecutableName) -WorkingDirectory $installedFull -WindowStyle Hidden
+        $restored = Start-UpdatedApp (Join-Path $installedFull $ExecutableName)
+        $restored.Dispose()
     }
     throw
 }

@@ -36,7 +36,7 @@ if ([string]::IsNullOrWhiteSpace($programsFolder)) {
     throw 'Windows did not provide a per-user Start Menu Programs folder.'
 }
 
-$shortcutPath = Join-Path $programsFolder 'Codex Wingman.lnk'
+$shortcutPath = Join-Path $programsFolder 'Wingman.lnk'
 $shortcutTarget = $executable
 $shortcutArguments = ''
 $executingProfileRoot = [Environment]::GetFolderPath('UserProfile')
@@ -53,7 +53,7 @@ $shortcut.TargetPath = $shortcutTarget
 $shortcut.Arguments = $shortcutArguments
 $shortcut.WorkingDirectory = $executableDirectory
 $shortcut.IconLocation = "$executable,0"
-$shortcut.Description = 'Codex Wingman - Codex desktop companion'
+$shortcut.Description = 'Wingman - Codex and T3 Code companion'
 $shortcut.Save()
 
 Write-Output $shortcutPath
