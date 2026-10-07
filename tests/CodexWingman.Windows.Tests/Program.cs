@@ -42,7 +42,10 @@ internal static class Program
                     Equal(executable, (string)link.TargetPath, "direct executable target");
                     Equal(package, (string)link.WorkingDirectory, "package working directory");
                     var arguments = (string)link.Arguments;
-                    Equal(WingmanLaunchOptions.ShortcutArguments(target, profile), arguments, "app and profile arguments");
+                    var expectedArguments = target == WingmanLaunchTarget.Preferences
+                        ? WingmanLaunchOptions.RelaunchArguments(profile)
+                        : WingmanLaunchOptions.ShortcutArguments(target, profile);
+                    Equal(expectedArguments, arguments, "app and profile arguments");
                     var parsed = WingmanLaunchOptions.Parse(SplitCommandLine("Wingman.exe " + arguments).Skip(1));
                     Equal(target, parsed.Target, "Windows argument round trip selects app");
                     Equal(profile, parsed.LocalAppData, "Windows argument round trip preserves profile");
