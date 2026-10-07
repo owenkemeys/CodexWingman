@@ -85,8 +85,21 @@ internal static class NativeUpdaterTests
 
         void Child(string marker)
         {
-            if (!File.Exists(receipt)) throw new Exception("Updated app did not report its relaunch");
-            using var json = JsonDocument.Parse(File.ReadAllText(receipt));
+            // Rollback starts the restored child asynchronously before reporting the
+            // original failure. Wait for its own receipt, rather than racing startup.
+            JsonDocument? received = null;
+            var deadline = DateTime.UtcNow.AddSeconds(10);
+            while (received is null && DateTime.UtcNow < deadline)
+            {
+                try
+                {
+                    if (File.Exists(receipt)) received = JsonDocument.Parse(File.ReadAllText(receipt));
+                }
+                catch (IOException) { }
+                catch (JsonException) { }
+                if (received is null) Thread.Sleep(50);
+            }
+            using var json = received ?? throw new Exception("Updated app did not report its relaunch");
             var value = json.RootElement;
             Equal(profile, value.GetProperty("profile").GetString(), "update and rollback retain the profile");
             Equal(Path.Combine(installed, exe), value.GetProperty("path").GetString(), "update relaunch uses the stable executable path");
