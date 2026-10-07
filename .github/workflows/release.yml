@@ -45,6 +45,8 @@ jobs:
       - name: Build sealed package
         shell: pwsh
         run: ./scripts/Publish-CodexWingman.ps1 -Destination '${{ runner.temp }}/package/CodexWingman-verified'
+      - name: Verify native Windows launcher shortcuts
+        run: dotnet run --project tests/CodexWingman.Windows.Tests/CodexWingman.Windows.Tests.csproj -c Release
       - name: Create verified download and notes
         shell: pwsh
         run: |

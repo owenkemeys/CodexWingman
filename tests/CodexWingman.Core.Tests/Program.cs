@@ -9,6 +9,42 @@ using CodexWingman.Core.Helpers;
 using CodexApp.ReleaseKit;
 using Jint;
 
+if (args.Contains("--launcher-policy", StringComparer.Ordinal))
+{
+    TestWingmanLaunchOptions();
+    Console.WriteLine("Wingman launcher policy tests passed");
+    return;
+}
+
+static void TestWingmanLaunchOptions()
+{
+    var selected = WingmanLaunchOptions.Parse(["--launch=t3-code"]);
+    Equal(WingmanLaunchTarget.T3Code, selected.Target, "T3 shortcut selects T3");
+    Equal(false, selected.OpenOnStartup(WingmanLaunchTarget.Codex, HelperSettings.Default),
+        "T3 shortcut does not open Codex through the default preference");
+    Equal(true, selected.OpenOnStartup(WingmanLaunchTarget.T3Code, HelperSettings.Default),
+        "T3 shortcut opens T3 even when its automatic preference is off");
+    var codex = WingmanLaunchOptions.Parse(["--launch=codex", "--cdp-port=9339"]);
+    Equal(true, codex.OpenOnStartup(WingmanLaunchTarget.Codex, HelperSettings.Default), "Codex shortcut selects Codex");
+    Equal(false, codex.OpenOnStartup(WingmanLaunchTarget.T3Code,
+        HelperSettings.Default with { OpenT3CodeOnLaunch = true }), "Codex shortcut does not open the other preferred app");
+    var preferences = WingmanLaunchOptions.Parse([]);
+    Equal(true, preferences.OpenOnStartup(WingmanLaunchTarget.Codex, HelperSettings.Default), "plain startup keeps preferences");
+    Equal(false, preferences.OpenOnStartup(WingmanLaunchTarget.T3Code, HelperSettings.Default), "plain startup keeps T3 preference");
+    Equal(false, codex.ActivationEventName == selected.ActivationEventName, "repeat launches select different app events");
+    Equal(WingmanIdentity.ActivationEventName, preferences.ActivationEventName, "legacy launch retains its event");
+    var profile = Path.Combine(Path.GetTempPath(), "Wingman profile with spaces");
+    var isolated = WingmanLaunchOptions.Parse(["--local-app-data=" + profile, "--register-launchers"]);
+    Equal(Path.GetFullPath(profile), isolated.LocalAppData, "explicit settings profile is retained");
+    Equal(true, isolated.RegisterOnly, "registration can run without launching apps");
+    Equal("--launch=t3-code \"--local-app-data=" + Path.GetFullPath(profile) + "\"",
+        WingmanLaunchOptions.ShortcutArguments(WingmanLaunchTarget.T3Code, profile), "shortcut quotes its settings profile");
+    Throws<ArgumentException>(() => WingmanLaunchOptions.Parse(["--launch=other"]), "unknown app rejected");
+    Throws<ArgumentException>(() => WingmanLaunchOptions.Parse(["--launch=codex", "--launch=t3-code"]), "ambiguous target rejected");
+    Throws<ArgumentException>(() => WingmanLaunchOptions.Parse(["--local-app-data=relative"]), "relative settings profile rejected");
+    Throws<ArgumentException>(() => WingmanLaunchOptions.Parse(["--local-app-data=" + profile + "\"extra"]), "quote injection rejected");
+}
+
 if (args.Contains("--live-quota", StringComparer.Ordinal))
 {
     try
@@ -104,6 +140,7 @@ static void TestTrayVisibilityRecovery()
 
 try
 {
+TestWingmanLaunchOptions();
 await TestReleaseDiscoveryAsync();
 TestSealedReleasePackage();
 await TestTargetAppIsolation();
