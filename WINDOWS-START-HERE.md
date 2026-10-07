@@ -1,8 +1,9 @@
 # Launch Wingman on Windows
 
 Extract the whole ZIP into a folder you intend to keep. Run `CodexWingman.exe` once.
-Wingman adds **Wingman Codex** and **Wingman T3 Code** to your Start menu.
-Right-click either entry to pin it to Start or the taskbar. Use the matching
+Wingman adds **Wingman**, **Wingman Codex** and **Wingman T3 Code** to your Start menu.
+The general Wingman entry follows your startup preferences.
+Right-click an entry to pin it to Start or the taskbar. Use the matching
 Wingman shortcut whenever you want to open that app with Helpers connected.
 
 The shortcut starts Wingman if needed. On repeat launches, Codex opens another

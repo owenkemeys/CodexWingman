@@ -1,14 +1,14 @@
 # Wingman
 
-**Wingman 2.0 is in development.** The user-facing name is becoming Wingman, with Codex and T3 Code as separate target apps. The current installed loadout remains Codex-specific. See [the 2.0 design](docs/wingman-2.md) and [the GitHub release contract](docs/codex-app-release-contract.md) for the implementation and acceptance boundaries.
+**Wingman 2.0 supports Codex and T3 Code.** It provides separate launch and repair controls for each app, with Helpers that declare which apps they support. See [the 2.0 design](docs/wingman-2.md) and [the GitHub release contract](docs/codex-app-release-contract.md).
 
-Wingman (formerly CodexWingman) is a Windows tray companion for the official Codex desktop app, to add small quality-of-life improvements by modifying the UI in realtime. It loads small, readable Helper packages and applies them to every connected Codex window. Wingman does not replace Codex or modify its chat history.
+Wingman (formerly CodexWingman) is a Windows tray companion that adds small quality-of-life improvements to Codex and T3 Code. It loads readable Helper packages and applies them to supported connected windows. Wingman does not replace either app or modify stored chat history.
 
 Start here: [Agent setup and customization](docs/AGENT_SETUP.md). Give this repository link to your agent and ask it to install Wingman, configure local integrations, and report unresolved choices. Windows only.
 
-**Launch through Wingman Codex or Wingman T3 Code.** Extract the whole Windows download into a folder you intend to keep, then run `CodexWingman.exe` once. It creates both Start menu shortcuts. Right-click either entry to pin it to Start or the taskbar. Each shortcut opens its selected app with the connection its Helpers need. See [the included Windows guide](WINDOWS-START-HERE.md).
+**Launch through Wingman Codex or Wingman T3 Code.** Extract the whole Windows download into a folder you intend to keep, then run `CodexWingman.exe` once. It creates those Start menu shortcuts plus a general Wingman entry that follows your startup preferences. Right-click an entry to pin it to Start or the taskbar. Each app shortcut opens its selected app with the connection its Helpers need. See [the included Windows guide](WINDOWS-START-HERE.md).
 
-> Unofficial community project. CodexWingman is not affiliated with, endorsed by, or sponsored by OpenAI. OpenAI, ChatGPT, and Codex are trademarks of OpenAI.
+> Unofficial community project. Wingman is not affiliated with, endorsed by, or sponsored by OpenAI. OpenAI, ChatGPT, and Codex are trademarks of OpenAI.
 
 MIT licensed. See [LICENSE](LICENSE) and [third-party notices](THIRD_PARTY_NOTICES.md).
 
@@ -39,8 +39,8 @@ The injected controls use semantic attributes and Codex's existing layout rather
 ## Requirements
 
 - Windows with the .NET 9 Desktop Runtime.
-- The official Codex desktop app.
-- A normal signed-in Codex installation. Wingman enables localhost debugging only when it launches or restarts Codex.
+- Codex and/or T3 Code, installed and signed in normally.
+- Wingman enables localhost debugging when it launches or restarts a supported app.
 
 After confirming a repair restart, Wingman first asks the identified app windows to close normally. If processes from that same registered package remain in the current Windows session, it stops them individually before selecting an available localhost port and relaunching the packaged app with:
 
@@ -68,7 +68,7 @@ Run `dist\CodexWingman-verified\CodexWingman.exe` when using the stable publishe
 .\scripts\Install-CodexWingmanStartMenu.ps1
 ```
 
-Running the executable creates `Wingman Codex.lnk` and `Wingman T3 Code.lnk` in the current user's Start menu. The source installer also retains its legacy Codex shortcut. Neither needs administrator access. Keep the extracted folder in place; after moving it, run the executable again to update the Start entries and recreate old taskbar pins.
+Running the executable creates `Wingman.lnk`, `Wingman Codex.lnk` and `Wingman T3 Code.lnk` in the current user's Start menu. The source installer creates a Wingman entry in the managed Codex Apps folder. Neither needs administrator access. Keep the extracted folder in place; after moving it, run the executable again to update the Start entries and recreate old taskbar pins. Verified updates retain the installed executable path and settings profile.
 
 Pull requests provide a **Wingman-development-win-x64** download in their GitHub verification run. These candidates are marked as development builds and remain separate from stable GitHub Releases and the stable updater.
 
