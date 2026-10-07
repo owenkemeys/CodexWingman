@@ -46,7 +46,11 @@ jobs:
         shell: pwsh
         run: ./scripts/Publish-CodexWingman.ps1 -Destination '${{ runner.temp }}/package/CodexWingman-verified'
       - name: Verify native Windows launcher shortcuts
-        run: dotnet run --project tests/CodexWingman.Windows.Tests/CodexWingman.Windows.Tests.csproj -c Release
+        run: |
+          dotnet run --project tests/CodexWingman.Windows.Tests/CodexWingman.Windows.Tests.csproj -c Release
+          if ($LASTEXITCODE -ne 0) { throw 'Native launcher and updater contract failed' }
+          dotnet run --project tests/CodexWingman.Windows.Tests/CodexWingman.Windows.Tests.csproj -c Release --no-build -- --verify-brand '${{ runner.temp }}/package/CodexWingman-verified/CodexWingman.exe'
+          if ($LASTEXITCODE -ne 0) { throw 'Native Windows application branding failed' }
       - name: Create verified download and notes
         shell: pwsh
         run: |

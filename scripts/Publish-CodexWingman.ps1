@@ -74,7 +74,11 @@ try {
         }
     }
     $declaredVersion = [version](Get-Content (Join-Path $projectRootFull 'release-content.json') -Raw | ConvertFrom-Json).version
-    $binaryVersion = [version](Get-Item -LiteralPath (Join-Path $stagingRoot 'CodexWingman.exe')).VersionInfo.FileVersion
+    $binaryIdentity = (Get-Item -LiteralPath (Join-Path $stagingRoot 'CodexWingman.exe')).VersionInfo
+    if ($binaryIdentity.ProductName -cne 'Wingman' -or $binaryIdentity.FileDescription -cne 'Wingman') {
+        throw 'Windows executable branding must be Wingman'
+    }
+    $binaryVersion = [version]$binaryIdentity.FileVersion
     if ($binaryVersion.Major -ne $declaredVersion.Major -or
         $binaryVersion.Minor -ne $declaredVersion.Minor -or
         $binaryVersion.Build -ne $declaredVersion.Build) {
