@@ -1,5 +1,5 @@
 (() => {
-  const controllerVersion = 'native-slot-v25';
+  const controllerVersion = 'native-slot-v26';
   const t3Renderer = window.location?.protocol === 't3code:';
   const initialSnapshot = __CODEX_HELPER_SNAPSHOT__;
   const existing = window.__codexHelperUsageDials;
@@ -335,8 +335,7 @@
     [data-codex-helper-dial] svg { display: block; width: 16px; height: 16px; overflow: visible; }
     [data-codex-helper-dial] .codex-helper-segment { fill: none; stroke-width: 2; }
     [data-codex-helper-dial] .codex-helper-background { stroke: var(--codex-helper-usage-neutral); opacity: .16; }
-    [data-codex-helper-dial][data-presentation="danger"] .codex-helper-background { stroke: var(--codex-helper-usage-alert); }
-    [data-codex-helper-dial] .codex-helper-value { stroke: var(--codex-helper-usage-alert); transition: stroke-dasharray 180ms ease, stroke-dashoffset 180ms ease; }
+    [data-codex-helper-dial] .codex-helper-value { stroke: var(--codex-helper-usage-neutral); transition: stroke-dasharray 180ms ease, stroke-dashoffset 180ms ease; }
     [data-codex-helper-dial] .codex-helper-unused { stroke: var(--codex-helper-usage-neutral); opacity: .4; }
     [data-codex-helper-dial] .codex-helper-within { stroke: var(--codex-helper-usage-neutral); }
     [data-codex-helper-dial] .codex-helper-ahead { stroke: var(--codex-helper-usage-alert); }
@@ -509,7 +508,7 @@
     const usage = Number.isFinite(value?.usedPercent) ? Math.max(0, Math.min(100, value.usedPercent)) : null;
     const elapsed = elapsedPercent(value);
     const hardDanger = usage !== null && usage >= 95;
-    const conventional = elapsed === null || hardDanger;
+    const conventional = elapsed === null;
     dial.style.display = usage === null && !showUnavailable ? 'none' : 'inline-flex';
     if (showUnavailable && !dial.__codexHelper.unknown) {
       const unknown = document.createElementNS(svgNamespace, 'text');
@@ -528,7 +527,7 @@
       dial.__codexHelper.unknown.style.display = showUnavailable ? '' : 'none';
     }
     dial.dataset.state = usage === null ? 'unavailable' : (hardDanger ? 'danger' : (value.state || 'neutral'));
-    dial.dataset.presentation = hardDanger ? 'danger' : (conventional ? 'conventional' : 'paced');
+    dial.dataset.presentation = conventional ? 'conventional' : 'paced';
     setSegment(dial.__codexHelper.background, 0, usage === null ? 0 : 100);
     setSegment(dial.__codexHelper.conventionalValue, 0, conventional ? (usage ?? 0) : 0);
     setSegment(dial.__codexHelper.unused, conventional ? 0 : (usage ?? 0), conventional ? 0 : elapsed);
