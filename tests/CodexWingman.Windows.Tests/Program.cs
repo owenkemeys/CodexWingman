@@ -9,6 +9,14 @@ internal static class Program
     private static void Main(string[] args)
     {
         if (NativeUpdaterTests.TryChild(args)) return;
+        if (args.FirstOrDefault() == "--verify-brand")
+        {
+            var identity = System.Diagnostics.FileVersionInfo.GetVersionInfo(Path.GetFullPath(args[1]));
+            Equal("Wingman", identity.ProductName, "released Windows product name");
+            Equal("Wingman", identity.FileDescription, "released Windows application description");
+            Console.WriteLine(JsonSerializer.Serialize(new { status = "pass", identity.ProductName, identity.FileDescription, identity.ProductVersion }));
+            return;
+        }
         var root = Path.Combine(Path.GetTempPath(), "Wingman launcher test " + Guid.NewGuid().ToString("N"));
         object? shell = null;
         object? explorer = null;

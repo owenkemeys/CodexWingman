@@ -1,10 +1,6 @@
 {
-  "version": "2.0.0",
+  "version": "2.0.1",
   "highlights": [
-    "Manage Codex and T3 Code from one Wingman tray menu, with separate open and repair controls.",
-    "Pin Wingman Codex or Wingman T3 Code from Start to open that app with Helpers.",
-    "Keep usage within elapsed time neutral; color only excess usage in composer and hover dials.",
-    "Check verified GitHub Releases for updates and preserve settings through installation and rollback.",
-    "Add composer usage dials, Obsidian note links, and Windows file controls to T3 Code."
+    "Show Wingman as the application name in Windows executable details and process descriptions."
   ]
 }
