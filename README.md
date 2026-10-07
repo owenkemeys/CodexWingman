@@ -1,12 +1,14 @@
-# CodexWingman
+# Wingman
 
-CodexWingman is a Windows tray companion for the official Codex desktop app, to add small quality-of-life improvements by modifying the UI in realtime. It loads small, readable Helper packages and applies them to every connected Codex window. Wingman does not replace Codex or modify its chat history.
+**Wingman 2.0 supports Codex and T3 Code.** It provides separate launch and repair controls for each app, with Helpers that declare which apps they support. See [the 2.0 design](docs/wingman-2.md) and [the GitHub release contract](docs/codex-app-release-contract.md).
+
+Wingman (formerly CodexWingman) is a Windows tray companion that adds small quality-of-life improvements to Codex and T3 Code. It loads readable Helper packages and applies them to supported connected windows. Wingman does not replace either app or modify stored chat history.
 
 Start here: [Agent setup and customization](docs/AGENT_SETUP.md). Give this repository link to your agent and ask it to install Wingman, configure local integrations, and report unresolved choices. Windows only.
 
-**Launch Codex through the Codex Wingman shortcut.** Wingman automatically launches Codex with the connection its helpers need. Installing agents must create that shortcut, launch it, verify that Codex opens through Wingman, and tell the user to use it for normal launches. Installing Wingman without launching it does not activate the helpers.
+**Launch through Wingman Codex or Wingman T3 Code.** Extract the whole Windows download into a folder you intend to keep, then run `CodexWingman.exe` once. It creates those Start menu shortcuts plus a general Wingman entry that follows your startup preferences. Right-click an entry to pin it to Start or the taskbar. Each app shortcut opens its selected app with the connection its Helpers need. See [the included Windows guide](WINDOWS-START-HERE.md).
 
-> Unofficial community project. CodexWingman is not affiliated with, endorsed by, or sponsored by OpenAI. OpenAI, ChatGPT, and Codex are trademarks of OpenAI.
+> Unofficial community project. Wingman is not affiliated with, endorsed by, or sponsored by OpenAI. OpenAI, ChatGPT, and Codex are trademarks of OpenAI.
 
 MIT licensed. See [LICENSE](LICENSE) and [third-party notices](THIRD_PARTY_NOTICES.md).
 
@@ -26,7 +28,7 @@ MIT licensed. See [LICENSE](LICENSE) and [third-party notices](THIRD_PARTY_NOTIC
 
 The checked `Helpers enabled` item is the master injection switch: uncheck it to remove Wingman-owned UI, and check it again to refresh or reinject. Individual Helpers can be enabled or disabled from the `Manage helpers` submenu. `Reload helpers` rescans package folders without restarting Wingman. Exit cleans up before Wingman closes.
 
-Use the Codex Wingman shortcut whenever you want to launch Codex through Codex Wingman. The first launch starts Wingman and a Helper-ready Codex process. Launching the same shortcut again asks the running Wingman instance to open Codex, repair it, or open another native window as needed.
+The first app shortcut launch starts Wingman and opens the selected app with Helpers. Repeating the Codex shortcut opens another native hooked window; repeating the T3 Code shortcut activates its existing hooked window. App-specific shortcuts select that app regardless of the automatic startup preferences. Running the executable directly still honors those preferences. Existing `Codex Wingman` shortcuts retain their Codex activation behavior.
 
 `Repair Codex and Helpers...` is always available. It checks the current Codex windows and reapplies Helpers without restarting Wingman. If Codex is already running without a usable connection, Wingman asks before closing and relaunching Codex with the normal profile; cancelling leaves every window untouched. After confirmation, Wingman may stop remaining processes verified as part of the registered Codex package in the current Windows session. `Open another Codex window` remains a separate action.
 
@@ -37,8 +39,8 @@ The injected controls use semantic attributes and Codex's existing layout rather
 ## Requirements
 
 - Windows with the .NET 9 Desktop Runtime.
-- The official Codex desktop app.
-- A normal signed-in Codex installation. Wingman enables localhost debugging only when it launches or restarts Codex.
+- Codex and/or T3 Code, installed and signed in normally.
+- Wingman enables localhost debugging when it launches or restarts a supported app.
 
 After confirming a repair restart, Wingman first asks the identified app windows to close normally. If processes from that same registered package remain in the current Windows session, it stops them individually before selecting an available localhost port and relaunching the packaged app with:
 
@@ -66,8 +68,9 @@ Run `dist\CodexWingman-verified\CodexWingman.exe` when using the stable publishe
 .\scripts\Install-CodexWingmanStartMenu.ps1
 ```
 
-The installer creates `Codex Wingman.lnk` in the current user's Start Menu. This is the primary Codex launcher while using Wingman. It does not install a service or request administrator access.
-When `dist\CodexWingman-verified` exists, the installer selects it automatically; use `-PackageDirectory` to choose another published folder explicitly.
+Running the executable creates `Wingman.lnk`, `Wingman Codex.lnk` and `Wingman T3 Code.lnk` in the current user's Start menu. The source installer creates a Wingman entry in the managed Codex Apps folder. Neither needs administrator access. Keep the extracted folder in place; after moving it, run the executable again to update the Start entries and recreate old taskbar pins. Verified updates retain the installed executable path and settings profile.
+
+Pull requests provide a **Wingman-development-win-x64** download in their GitHub verification run. These candidates are marked as development builds and remain separate from stable GitHub Releases and the stable updater.
 
 ## Helper packages
 
@@ -75,7 +78,7 @@ All Helpers live in `Helpers` beside `CodexWingman.exe`. This is the only folder
 
 Helpers are plain JavaScript, JSON, and Markdown. Each bundled package includes `HELPER_INFO.md` with its purpose, files, capabilities, customization guidance, and sharp edges. Wingman treats installed Helpers as trusted code. Read a Helper before installing it. See [Helper authoring](docs/helper-authoring.md) for the package format and the capabilities available to scripts.
 
-The tray menu includes an `About` command. Its dialog shows `CodexWingman v<installed version>`, taken from the executable version set once in the project file.
+The tray menu includes `About` and `Check for Updates`. About reads the executable version and packaged user-facing highlights; CI checks that both agree with the release tag. The update checker offers complete stable GitHub releases and asks before installation. This path remains a development candidate until the Windows updater and installed tray have passed target-machine acceptance.
 
 Settings live under `%LOCALAPPDATA%\CodexWingman\settings.json`. On first launch, Wingman imports an existing `%LOCALAPPDATA%\CodexHelper\settings.json` without deleting the old file. Optional remote or shared session roots are configuration, never compiled defaults. See [configuration](docs/configuration.md).
 

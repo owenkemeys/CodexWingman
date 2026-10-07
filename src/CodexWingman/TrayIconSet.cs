@@ -6,9 +6,7 @@ namespace CodexWingman;
 
 public static class TrayIconPresentation
 {
-    public static string TextFor(TrayIconState state) => state == TrayIconState.Attention
-        ? "Codex Wingman - Needs attention"
-        : "Codex Wingman";
+    public static string TextFor(TrayIconState state) => WingmanIdentity.RunningMenuText;
 }
 
 public sealed class TrayIconSet : IDisposable

@@ -90,6 +90,8 @@ def package_files(root):
 def seal(root, package):
     record = verified(root)
     require_remote_main(root, record['commit'])
+    from release_identity import load_identity
+    identity = load_identity(root)
     if not (package / 'CodexWingman.exe').is_file() or not (package / 'Helpers').is_dir():
         raise ValueError('Package is missing Wingman or its helpers')
     # Check every packaged helper against committed source, including overridden working copies.
@@ -106,6 +108,7 @@ def seal(root, package):
                 if not other.is_file() or not git(root, 'ls-files', '--error-unmatch', str(other.relative_to(root))) or digest(path) != digest(other):
                     raise ValueError('Packaged helper differs from committed source: ' + helper_id)
     result = {'schema': SCHEMA, 'repository': repository_url(root),
+              'version': identity['version'],
               'commit': record['commit'], 'tree': record['tree'], 'verification': record,
               'files': package_files(package)}
     write_json(package / 'release.json', result)
@@ -113,7 +116,7 @@ def seal(root, package):
 
 def verify_package(package):
     record = json.loads((package / 'release.json').read_text(encoding='utf-8'))
-    if record.get('schema') != SCHEMA or not record.get('commit') or not record.get('files'):
+    if record.get('schema') != SCHEMA or not record.get('version') or not record.get('commit') or not record.get('files'):
         raise ValueError('Missing or invalid package provenance')
     if package_files(package) != record['files']:
         raise ValueError('Package has missing, added, or modified files; do not install')

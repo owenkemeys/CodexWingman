@@ -1,9 +1,11 @@
 (() => {
-  const controllerVersion = 'native-slot-v16';
+  const controllerVersion = 'native-slot-v26';
+  const t3Renderer = window.location?.protocol === 't3code:';
   const initialSnapshot = state || {};
   const existing = window.__codexHelperUsageDials;
   if (existing?.version === controllerVersion) {
     existing.update(initialSnapshot);
+    if (typeof wingman !== 'undefined') wingman.reportRenderHealth?.(existing.status().renderHealth);
     return existing.status();
   }
   existing?.cleanup?.();
@@ -19,6 +21,14 @@
   let accountQuery = null;
   let unsubscribeAccount = null;
   let availableResets = null;
+  let quotaUnavailableReason = 'Waiting for current provider usage.';
+  let providerLabel = 'Provider';
+  let quotaNotReported = false;
+  let t3Registry = null;
+  let t3RefreshCommand = null;
+  let t3RefreshLoading = false;
+  let disposed = false;
+  const t3RefreshAttempts = new Map();
 
   // Read Codex's account cache; session usage does not establish a reset balance.
   const hasAccountFields = (data) => data && !Array.isArray(data)
@@ -58,6 +68,7 @@
   };
 
   const refreshAccountState = () => {
+    if (t3Renderer) { refreshT3AccountState(); return; }
     const query = readAccountState();
     const count = query?.status === 'success'
       ? query.data?.rate_limit_reset_credits?.available_count : null;
@@ -81,6 +92,7 @@
   };
 
   const connectAccountCache = () => {
+    if (t3Renderer) return;
     if (accountClient) return;
     const queue = [window.__codexRoot?._internalRoot?.current];
     const seen = new Set();
@@ -106,6 +118,190 @@
       if (fiber.child) queue.push(fiber.child);
       if (fiber.sibling) queue.push(fiber.sibling);
     }
+  };
+
+  // T3's committed composer props identify the exact provider instance. Never
+  // borrow another provider's quota, infer account identity, or invoke an action.
+  const readT3ComposerProps = () => {
+    const editors = [...document.querySelectorAll('[data-testid="composer-editor"]')]
+      .filter((editor) => editor.closest?.('[data-chat-composer-main-surface="true"]'));
+    if (editors.length !== 1) return null;
+    // Lexical creates the editable node itself. Find its nearest React-owned
+    // DOM ancestor, bounded to this composer surface, before resolving commit.
+    let surface = editors[0];
+    const boundary = surface.closest('[data-chat-composer-main-surface="true"]');
+    let fiberKey = null;
+    for (let depth = 0; surface && depth < 16; depth++, surface = surface.parentElement) {
+      fiberKey = Object.keys(surface).find((key) => key.startsWith('__reactFiber$'));
+      if (fiberKey || surface === boundary) break;
+    }
+    let fiber = fiberKey ? surface[fiberKey] : null;
+    if (!fiber) return null;
+    let root = fiber;
+    let steps = 0;
+    while (root.return && steps++ < 128) root = root.return;
+    if (root.return || !root.stateNode?.current) return null;
+    if (root.stateNode.current !== root) {
+      fiber = fiber.alternate;
+      if (!fiber) return null;
+      root = fiber;
+      steps = 0;
+      while (root.return && steps++ < 128) root = root.return;
+      if (root.return || root.stateNode?.current !== root) return null;
+    }
+    // T3 can nest its registry provider inside ChatComposer. Search from the
+    // committed DOM fiber, before climbing past the owning composer props.
+    const registries = new Set();
+    for (let ancestor = fiber, depth = 0; ancestor && depth < 128; depth++, ancestor = ancestor.return) {
+      const value = ancestor.memoizedProps?.value;
+      if (value?.['~effect/reactivity/AtomRegistry'] && typeof value.get === 'function'
+        && typeof value.set === 'function') registries.add(value);
+    }
+    t3Registry = registries.size === 1 ? [...registries][0] : null;
+    for (let depth = 0; fiber && depth < 128; depth++, fiber = fiber.return) {
+      const props = fiber.memoizedProps;
+      if (Array.isArray(props?.providerStatuses) && typeof props.activeThreadId === 'string'
+        && props.activeThread?.id === props.activeThreadId) {
+        return props;
+      }
+    }
+    return null;
+  };
+  // Use T3's existing read-only refresh in the owning environment. Discover
+  // this release's module by its command contract, without copying credentials
+  // or pinning a hashed asset name. This never requests model rediscovery.
+  const refreshT3Provider = (props, provider) => {
+    const instanceId = provider.instanceId;
+    const environmentId = props.activeThread?.environmentId;
+    const now = Date.now();
+    const checked = Date.parse(provider.usageLimits?.checkedAt);
+    if (!provider.enabled || !provider.installed || !environmentId || !t3Registry || disposed
+      || (Number.isFinite(checked) && now - checked < 60000)
+      || now - (t3RefreshAttempts.get(instanceId) || 0) < 60000 || t3RefreshLoading) return;
+    const urls = [...document.querySelectorAll('link[rel="modulepreload"]')]
+      .map(element => element.href).filter(url => typeof url === 'string'
+        && /^t3code:\/\/app\/assets\/server-[^/]+\.js$/.test(url));
+    if (!t3RefreshCommand && (urls.length === 0 || urls.length > 8)) return;
+    t3RefreshAttempts.set(instanceId, now);
+    t3RefreshLoading = true;
+    const registry = t3Registry;
+    Promise.resolve(t3RefreshCommand || Promise.all(urls.map(url => import(url).catch(() => null))).then(modules => {
+      // Lazy routes can preload an unrelated second server module. Resolve
+      // the command contract across the bounded set instead of counting names.
+      const commands = [...new Set(modules.flatMap(exports => Object.values(exports || {})
+        .map(value => value?.refreshProviders)
+        .filter(command => command?.label === 'environment-data:server:refresh-providers'
+          && typeof command.run === 'function')))];
+      if (commands.length !== 1) throw new Error('Provider refresh interface unavailable');
+      return t3RefreshCommand = commands[0];
+    })).then(command => {
+      if (!disposed) return command.run(registry, { environmentId, input: { instanceId } });
+    }).catch(() => {}).finally(() => {
+      t3RefreshLoading = false;
+      if (!disposed) queueReconcile();
+    });
+  };
+
+  const readT3PickerInstanceId = () => {
+    const pickers = [...document.querySelectorAll('[data-chat-provider-model-picker="true"]')]
+      .filter(picker => picker.closest?.('[data-chat-composer-main-surface="true"]'));
+    if (pickers.length !== 1) return null;
+    const key = Object.keys(pickers[0]).find(key => key.startsWith('__reactFiber$'));
+    let fiber = key ? pickers[0][key] : null;
+    if (!fiber) return null;
+    let root = fiber;
+    for (let depth = 0; root.return && depth < 128; depth++) root = root.return;
+    if (root.return || !root.stateNode?.current) return null;
+    if (root.stateNode.current !== root) {
+      fiber = fiber.alternate;
+      if (!fiber) return null;
+      root = fiber;
+      for (let depth = 0; root.return && depth < 128; depth++) root = root.return;
+      if (root.return || root.stateNode?.current !== root) return null;
+    }
+    for (let depth = 0; fiber && depth < 64; depth++, fiber = fiber.return) {
+      const props = fiber.memoizedProps;
+      if (props?.isComposerOwned === true && typeof props.activeInstanceId === 'string'
+        && props.activeInstanceId) return props.activeInstanceId;
+    }
+    return null;
+  };
+
+  const refreshT3AccountState = () => {
+    snapshot = { primary: null, secondary: null };
+    availableResets = null;
+    quotaNotReported = false;
+    providerLabel = 'Provider';
+    quotaUnavailableReason = 'Waiting for committed composer provider data.';
+    const props = readT3ComposerProps();
+    if (!props) return;
+    // The picker includes the unsent composer draft selection. The owning
+    // thread's saved model can still name the previously selected provider.
+    const instanceId = readT3PickerInstanceId();
+    if (typeof instanceId !== 'string' || !instanceId) return;
+    const matches = props.providerStatuses.filter((provider) => provider?.instanceId === instanceId);
+    if (matches.length !== 1) return;
+    const provider = matches[0];
+    const name = provider.displayName || provider.name;
+    providerLabel = typeof name === 'string' && name.trim() && name.length <= 80 ? name.trim()
+      : ({ codex: 'Codex', claudeAgent: 'Claude', grok: 'Grok' }[provider.driver || instanceId] || 'Provider');
+    refreshT3Provider(props, provider);
+    let limits = provider.usageLimits;
+    // T3 drops Grok's valid zero-valued billing config. A companion can retain
+    // its native interpretation and period. Never infer zero from an empty
+    // native list alone, or use another environment/instance/account's quota.
+    if (provider.driver === 'grok' && provider.auth?.status === 'authenticated'
+      && typeof provider.auth.email === 'string'
+      && (!Array.isArray(limits?.windows) || limits.windows.length === 0)) {
+      const candidates = (Array.isArray(fallbackSnapshot.providerUsage) ? fallbackSnapshot.providerUsage : [])
+        .filter(entry => entry?.environmentId === props.activeThread.environmentId
+          && entry.instanceId === instanceId && entry.driver === 'grok'
+          && typeof entry.accountEmail === 'string'
+          && entry.accountEmail.trim().toLowerCase() === provider.auth.email.trim().toLowerCase()
+          && Number.isFinite(Date.parse(entry.usageLimits?.checkedAt))
+          && Date.parse(entry.usageLimits.checkedAt) <= Date.now() + 60000
+          && Date.now() - Date.parse(entry.usageLimits.checkedAt) <= 3 * 60000);
+      if (candidates.length === 1) limits = candidates[0].usageLimits;
+    }
+    const checkedAt = Date.parse(limits?.checkedAt);
+    quotaUnavailableReason = `${providerLabel} usage is unavailable or out of date.`;
+    if (!provider.enabled || !provider.installed || limits?.unavailable
+      || !Number.isFinite(checkedAt) || checkedAt > Date.now() + 60000
+      || Date.now() - checkedAt > 15 * 60000 || !Array.isArray(limits.windows)) {
+      if (limits?.unavailable?.reason === 'unsupported') quotaUnavailableReason = `${providerLabel} does not report subscription limits for this account.`;
+      else if (provider.auth?.status === 'unauthenticated') quotaUnavailableReason = `${providerLabel} needs to sign in before usage can be read.`;
+      return;
+    }
+    const resetCount = limits.resetCredits?.availableCount;
+    quotaNotReported = limits.windows.length === 0 && !fallbackSnapshot.providerUsageConfigured;
+    quotaUnavailableReason = quotaNotReported ? `${providerLabel} has not reported a usage percentage yet.`
+      : `${providerLabel} has no valid current usage windows.`;
+    availableResets = Number.isSafeInteger(resetCount) && resetCount >= 0 ? resetCount : null;
+    for (const kind of ['session', 'weekly', 'monthly', 'other']) {
+      const windows = limits.windows.filter((value) => value?.kind === kind);
+      if (windows.length !== 1) continue;
+      const value = windows[0];
+      if (!Number.isFinite(value.usedPercent) || value.usedPercent < 0 || value.usedPercent > 100) continue;
+      const minutes = value.windowDurationMins;
+      const reset = Date.parse(value.resetsAt);
+      if (value.resetsAt !== undefined && (!Number.isFinite(reset) || reset <= Date.now())) continue;
+      let normalized = Number.isSafeInteger(minutes) && minutes > 0 && Number.isFinite(reset)
+        ? normalizeAccountWindow({ used_percent: value.usedPercent, limit_window_seconds: minutes * 60,
+          reset_at: Math.floor(reset / 1000) }) : null;
+      normalized ||= { usedPercent: value.usedPercent, state: value.usedPercent >= 95 ? 'danger' : 'neutral' };
+      // Calendar allowances can report a reset without a fixed duration.
+      // Preserve that reset, without inventing a pacing arc.
+      if (Number.isFinite(reset) && !normalized.resetLabel) {
+        normalized.resetsAtUnixSeconds = Math.floor(reset / 1000);
+        normalized.resetLabel = new Date(reset).toLocaleString([], { weekday: 'short', hour: 'numeric', minute: '2-digit' });
+      }
+      normalized.label = typeof value.label === 'string' && value.label.trim() && value.label.length <= 80
+        ? value.label.trim() : ({ session: 'Session', weekly: 'Weekly', monthly: 'Monthly' }[kind] || 'Subscription');
+      const slot = kind === 'session' ? 'primary' : kind === 'weekly' ? 'secondary'
+        : !snapshot.primary ? 'primary' : !snapshot.secondary ? 'secondary' : null;
+      if (slot) snapshot[slot] = normalized;
+    }
+    if (snapshot.primary || snapshot.secondary) quotaUnavailableReason = null;
   };
 
   const style = document.createElement('style');
@@ -139,11 +335,14 @@
     [data-codex-helper-dial] svg { display: block; width: 16px; height: 16px; overflow: visible; }
     [data-codex-helper-dial] .codex-helper-segment { fill: none; stroke-width: 2; }
     [data-codex-helper-dial] .codex-helper-background { stroke: var(--codex-helper-usage-neutral); opacity: .16; }
-    [data-codex-helper-dial][data-presentation="danger"] .codex-helper-background { stroke: var(--codex-helper-usage-alert); }
-    [data-codex-helper-dial] .codex-helper-value { stroke: var(--codex-helper-usage-alert); transition: stroke-dasharray 180ms ease, stroke-dashoffset 180ms ease; }
+    [data-codex-helper-dial] .codex-helper-value { stroke: var(--codex-helper-usage-neutral); transition: stroke-dasharray 180ms ease, stroke-dashoffset 180ms ease; }
     [data-codex-helper-dial] .codex-helper-unused { stroke: var(--codex-helper-usage-neutral); opacity: .4; }
     [data-codex-helper-dial] .codex-helper-within { stroke: var(--codex-helper-usage-neutral); }
     [data-codex-helper-dial] .codex-helper-ahead { stroke: var(--codex-helper-usage-alert); }
+    /* Match Codex's neutral dial paint, independent of T3's muted controls.
+       Scope the palette to both the miniature and its separate hover preview. */
+    [data-codex-helper-dial][data-wingman-app="t3-code"] { color: #000; }
+    .dark [data-codex-helper-dial][data-wingman-app="t3-code"] { color: #fff; }
     /* Keep the original composer circle; only the enlarged popup uses an outline. */
     .codex-helper-usage-preview [data-codex-helper-dial] .codex-helper-unused { stroke-width: 2px; vector-effect: non-scaling-stroke; }
     .codex-helper-usage-shared { opacity: .6; }
@@ -214,6 +413,11 @@
   };
 
   const findAnchors = () => {
+    if (t3Renderer) {
+      return [...document.querySelectorAll('[data-chat-provider-model-picker="true"]')]
+        .filter(picker => picker.closest?.('[data-chat-composer-main-surface="true"]') && isVisible(picker))
+        .map(picker => ({ mode: 'model-picker', wrapper: picker }));
+    }
     const native = [...document.querySelectorAll('[aria-label^="Context usage:"]')]
       .filter(isVerifiedAnchor)
       .map((dial) => ({ mode: 'native', dial, wrapper: dial.parentElement }));
@@ -281,6 +485,7 @@
   const makeDial = (key, windowLabel, preview = false) => {
     const dial = document.createElement('span');
     dial.className = 'text-token-description-foreground';
+    if (t3Renderer) dial.dataset.wingmanApp = 't3-code';
     dial.dataset.codexHelperDial = key;
     dial.dataset.state = 'unavailable';
     dial.setAttribute('role', 'img');
@@ -299,25 +504,43 @@
     return dial;
   };
 
-  const renderDial = (dial, value) => {
+  const renderDial = (dial, value, showUnavailable = false) => {
     const usage = Number.isFinite(value?.usedPercent) ? Math.max(0, Math.min(100, value.usedPercent)) : null;
     const elapsed = elapsedPercent(value);
     const hardDanger = usage !== null && usage >= 95;
-    const conventional = elapsed === null || hardDanger;
-    dial.style.display = usage === null ? 'none' : 'inline-flex';
+    const conventional = elapsed === null;
+    dial.style.display = usage === null && !showUnavailable ? 'none' : 'inline-flex';
+    if (showUnavailable && !dial.__codexHelper.unknown) {
+      const unknown = document.createElementNS(svgNamespace, 'text');
+      unknown.setAttribute('x', '10');
+      unknown.setAttribute('y', '14');
+      unknown.setAttribute('text-anchor', 'middle');
+      unknown.setAttribute('fill', 'currentColor');
+      unknown.setAttribute('font-size', '12');
+      unknown.textContent = '?';
+      dial.querySelector('svg').appendChild(unknown);
+      dial.__codexHelper.unknown = unknown;
+    }
+    if (dial.__codexHelper.unknown) {
+      const text = quotaNotReported ? '–' : '?';
+      if (dial.__codexHelper.unknown.textContent !== text) dial.__codexHelper.unknown.textContent = text;
+      dial.__codexHelper.unknown.style.display = showUnavailable ? '' : 'none';
+    }
     dial.dataset.state = usage === null ? 'unavailable' : (hardDanger ? 'danger' : (value.state || 'neutral'));
-    dial.dataset.presentation = hardDanger ? 'danger' : (conventional ? 'conventional' : 'paced');
+    dial.dataset.presentation = conventional ? 'conventional' : 'paced';
     setSegment(dial.__codexHelper.background, 0, usage === null ? 0 : 100);
     setSegment(dial.__codexHelper.conventionalValue, 0, conventional ? (usage ?? 0) : 0);
     setSegment(dial.__codexHelper.unused, conventional ? 0 : (usage ?? 0), conventional ? 0 : elapsed);
     setSegment(dial.__codexHelper.within, 0, conventional ? 0 : Math.min(usage ?? 0, elapsed));
     setSegment(dial.__codexHelper.ahead, conventional ? 0 : elapsed, conventional ? 0 : (usage ?? 0));
     const reset = value?.resetLabel ? ` Resets ${value.resetLabel}.` : '';
-    setAttributeIfChanged(dial, 'aria-label', `${formatWindowLabel(value, dial.__codexHelper.windowLabel)}: ${formatUsage(usage)}.${reset}`);
+    setAttributeIfChanged(dial, 'aria-label', showUnavailable ? `Usage unavailable. ${quotaUnavailableReason}`
+      : `${formatWindowLabel(value, dial.__codexHelper.windowLabel)}: ${formatUsage(usage)}.${reset}`);
     dial.removeAttribute('title');
   };
 
   const formatWindowLabel = (value, fallback) => {
+    if (t3Renderer && value?.label) return value.label;
     const minutes = value?.windowMinutes;
     if (!Number.isFinite(minutes) || minutes <= 0) return fallback;
     if (minutes === 300) return '5-hour usage';
@@ -330,7 +553,7 @@
   const createInstance = (anchor) => {
     const bank = document.createElement('span');
     bank.dataset.codexHelper = owner;
-    bank.setAttribute('aria-label', 'Codex account usage');
+    bank.setAttribute('aria-label', t3Renderer ? 'T3 provider usage' : 'Codex account usage');
     const primary = makeDial('primary', '5-hour usage');
     const secondary = makeDial('secondary', 'Weekly usage');
     bank.append(primary, secondary);
@@ -377,10 +600,14 @@
   };
 
   const updateInstance = (instance) => {
-    renderDial(instance.primary, snapshot.primary);
+    if (t3Renderer) setAttributeIfChanged(instance.bank, 'aria-label', `${providerLabel} usage`);
+    renderDial(instance.primary, snapshot.primary, t3Renderer && !snapshot.primary && !snapshot.secondary);
     renderDial(instance.secondary, snapshot.secondary);
     if (!instance.wrapper?.parentElement) return;
-    if (instance.bank.parentElement !== instance.wrapper.parentElement || instance.bank.previousElementSibling !== instance.wrapper)
+    if (t3Renderer) {
+      if (instance.bank.parentElement !== instance.wrapper.parentElement || instance.bank.nextElementSibling !== instance.wrapper)
+        insertBefore(instance.wrapper.parentElement, instance.bank, instance.wrapper);
+    } else if (instance.bank.parentElement !== instance.wrapper.parentElement || instance.bank.previousElementSibling !== instance.wrapper)
       instance.wrapper.insertAdjacentElement('afterend', instance.bank);
   };
 
@@ -440,7 +667,8 @@
   };
 
   const showFallbackTooltip = (instance) => {
-    const key = snapshot[instance.activeWindow] ? instance.activeWindow : (snapshot.primary ? 'primary' : 'secondary');
+    const unavailable = t3Renderer && !snapshot.primary && !snapshot.secondary;
+    const key = unavailable ? 'primary' : snapshot[instance.activeWindow] ? instance.activeWindow : (snapshot.primary ? 'primary' : 'secondary');
     const label = key === 'primary' ? '5-hour usage' : 'Weekly usage';
     let tooltip = instance.tooltip;
     if (!tooltip) {
@@ -452,6 +680,13 @@
       tooltip.style.position = 'fixed';
       tooltip.style.zIndex = '2147483647';
       tooltip.style.pointerEvents = 'none';
+      if (t3Renderer) {
+        tooltip.style.background = 'var(--color-popover, #1b1b1b)';
+        tooltip.style.color = 'var(--color-popover-foreground, #eee)';
+        tooltip.style.border = '1px solid var(--color-border, #444)';
+        tooltip.style.borderRadius = '8px';
+        tooltip.style.padding = '8px';
+      }
       instance.tooltip = tooltip;
       instance.bank.setAttribute('aria-describedby', tooltip.id);
       document.body.appendChild(tooltip);
@@ -472,8 +707,13 @@
       renderDial(dial, snapshot[key]);
       preview.appendChild(dial);
     }
-    stack.appendChild(preview);
-    appendAvailableReadouts(stack, key);
+    if (unavailable) {
+      stack.appendChild(makeText(`${providerLabel} usage`));
+      stack.appendChild(makeText(quotaUnavailableReason));
+    } else {
+      stack.appendChild(preview);
+      appendAvailableReadouts(stack, key);
+    }
     tooltip.appendChild(stack);
     const bankRect = instance[key].getBoundingClientRect();
     const tooltipRect = tooltip.getBoundingClientRect();
@@ -504,6 +744,13 @@
     primary: snapshot.primary || null,
     secondary: snapshot.secondary || null,
     availableResets,
+    ...(t3Renderer ? { renderHealth: {
+      state: !document.querySelector('[data-testid="composer-editor"]') ? 'not-applicable'
+        : [...instances.values()].some(instance => instance.bank.isConnected && instance.bank.getBoundingClientRect().width > 0)
+          && (snapshot.primary || snapshot.secondary) ? 'ready' : 'waiting',
+      detail: quotaUnavailableReason || ([...instances.values()].some(instance => instance.bank.isConnected)
+        ? `${providerLabel} usage is visible.` : 'Usage Dials could not attach to the visible composer.'),
+    } } : {}),
   });
 
   const update = (nextSnapshot) => {
@@ -528,6 +775,7 @@
   const interval = setInterval(reconcile, 2000);
 
   const cleanup = () => {
+    disposed = true;
     observer.disconnect();
     unsubscribeAccount?.();
     accountClient = null;
@@ -543,5 +791,7 @@
   };
 
   window.__codexHelperUsageDials = { version: controllerVersion, update, cleanup, status };
-  return update(initialSnapshot);
+  const result = update(initialSnapshot);
+  if (typeof wingman !== 'undefined') wingman.reportRenderHealth?.(result.renderHealth);
+  return result;
 })()

@@ -7,16 +7,21 @@
     <Nullable>enable</Nullable>
     <AssemblyName>CodexWingman</AssemblyName>
     <RootNamespace>CodexWingman</RootNamespace>
-    <Product>CodexWingman</Product>
-    <Version>1.0.0</Version>
-    <Description>Unofficial Windows tray companion for the Codex desktop app.</Description>
+    <Product>Wingman</Product>
+    <Title>Wingman</Title>
+    <Version>2.0.0</Version>
+    <Description>Unofficial Windows tray companion for Codex and T3 Code.</Description>
     <ApplicationIcon>Assets\CodexWingman.ico</ApplicationIcon>
   </PropertyGroup>
   <ItemGroup>
     <ProjectReference Include="..\CodexWingman.Core\CodexWingman.Core.csproj" />
+    <PackageReference Include="CodexApp.ReleaseKit" Version="[0.1.0-preview.3]" />
   </ItemGroup>
   <ItemGroup>
-    <Content Include="..\..\LICENSE;..\..\THIRD_PARTY_NOTICES.md">
+    <EmbeddedResource Include="..\..\release-content.json" LogicalName="Wingman.ReleaseContent.json" />
+  </ItemGroup>
+  <ItemGroup>
+    <Content Include="..\..\LICENSE;..\..\THIRD_PARTY_NOTICES.md;..\..\WINDOWS-START-HERE.md">
       <Link>%(Filename)%(Extension)</Link>
       <CopyToOutputDirectory>PreserveNewest</CopyToOutputDirectory>
       <CopyToPublishDirectory>PreserveNewest</CopyToPublishDirectory>

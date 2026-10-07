@@ -68,10 +68,17 @@ try {
     & dotnet @publishArguments
     if ($LASTEXITCODE -ne 0) { throw "dotnet publish failed with exit code $LASTEXITCODE" }
 
-    foreach ($requiredPath in @('CodexWingman.exe', 'Helpers')) {
+    foreach ($requiredPath in @('CodexWingman.exe', 'Helpers', 'Apply-CodexAppUpdate.ps1')) {
         if (-not (Test-Path -LiteralPath (Join-Path $stagingRoot $requiredPath))) {
             throw "Staged package is missing $requiredPath"
         }
+    }
+    $declaredVersion = [version](Get-Content (Join-Path $projectRootFull 'release-content.json') -Raw | ConvertFrom-Json).version
+    $binaryVersion = [version](Get-Item -LiteralPath (Join-Path $stagingRoot 'CodexWingman.exe')).VersionInfo.FileVersion
+    if ($binaryVersion.Major -ne $declaredVersion.Major -or
+        $binaryVersion.Minor -ne $declaredVersion.Minor -or
+        $binaryVersion.Build -ne $declaredVersion.Build) {
+        throw 'Published executable version does not match About content'
     }
     $stagedHelpersRoot = Join-Path $stagingRoot 'Helpers'
     if ((Get-Item -LiteralPath $stagedHelpersRoot).Attributes -band [IO.FileAttributes]::ReparsePoint) {

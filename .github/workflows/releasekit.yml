@@ -1,0 +1,55 @@
+name: ReleaseKit package
+on:
+  push:
+    tags: ['releasekit-v*']
+permissions:
+  contents: write
+jobs:
+  package:
+    runs-on: windows-latest
+    timeout-minutes: 20
+    env:
+      RELEASE_TAG: ${{ github.ref_name }}
+      RELEASE_SHA: ${{ github.sha }}
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262
+        with:
+          fetch-depth: 0
+      - uses: actions/setup-dotnet@67a3573c9a986a3f9c594539f4ab511d57bb3ce9
+        with:
+          dotnet-version: '9.0.x'
+      - uses: actions/setup-python@7f4fc3e22c37d6ff65e88745f38bd3157c663f7c
+        with:
+          python-version: '3.11'
+      - name: Require exact package version on public main
+        shell: pwsh
+        run: |
+          $tag = $env:RELEASE_TAG
+          if ($tag -cnotmatch '^releasekit-v[0-9]+\.[0-9]+\.[0-9]+(?:-[0-9A-Za-z.-]+)?$') { throw 'Invalid ReleaseKit tag' }
+          $version = $tag.Substring('releasekit-v'.Length)
+          [xml]$project = Get-Content src/CodexApp.ReleaseKit/CodexApp.ReleaseKit.csproj -Raw
+          if ($project.Project.PropertyGroup.Version -cne $version) { throw 'ReleaseKit tag and package version differ' }
+          $main = (git ls-remote origin refs/heads/main).Split("`t")[0]
+          if ($main -cne $env:RELEASE_SHA) { throw 'ReleaseKit tags must point to public main' }
+      - name: Verify kit and second app consumer
+        shell: pwsh
+        run: |
+          python -m unittest discover -s tests/release -p 'test_*.py'
+          if ($LASTEXITCODE -ne 0) { throw 'Release contract tests failed' }
+          New-Item -ItemType Directory -Force .packages | Out-Null
+          dotnet pack src/CodexApp.ReleaseKit/CodexApp.ReleaseKit.csproj -c Release -o .packages -p:NuGetAudit=false
+          if ($LASTEXITCODE -ne 0) { throw 'ReleaseKit pack failed' }
+      - name: Publish versioned NuGet download
+        shell: pwsh
+        run: |
+          $tag = $env:RELEASE_TAG
+          $version = $tag.Substring('releasekit-v'.Length)
+          $package = ".packages/CodexApp.ReleaseKit.$version.nupkg"
+          if (-not (Test-Path -LiteralPath $package -PathType Leaf)) { throw 'Versioned NuGet package is missing' }
+          $hash = (Get-FileHash -LiteralPath $package -Algorithm SHA256).Hash.ToLowerInvariant()
+          Set-Content -LiteralPath ($package + '.sha256') -Value "$hash  CodexApp.ReleaseKit.$version.nupkg" -Encoding ascii
+          $releaseFlags = @('--latest=false')
+          if ($version.Contains('-')) { $releaseFlags += '--prerelease' }
+          gh release create $tag $package ($package + '.sha256') @releaseFlags --verify-tag --title "ReleaseKit $version" --notes "Versioned Codex app release and update machinery. Pin this NuGet package in each app."
+        env:
+          GH_TOKEN: ${{ github.token }}

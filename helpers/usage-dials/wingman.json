@@ -1,13 +1,20 @@
 {
-  "schemaVersion": 1,
+  "schemaVersion": 2,
   "id": "usage-dials",
   "name": "Usage dials",
-  "version": "1.3.3",
-  "description": "Shows five-hour and weekly usage beside every context dial.",
+  "version": "1.5.5",
+  "description": "Shows provider usage limits beside the composer model picker or context dial.",
   "refreshSeconds": 60,
-  "capabilities": [],
-  "entrypoints": {
-    "apply": "apply.js",
-    "remove": "remove.js"
+  "capabilities": ["files.providerUsage"],
+  "targets": {
+    "codex": {
+      "apply": "apply.js",
+      "remove": "remove.js"
+    },
+    "t3-code": {
+      "backend": "backend.js",
+      "apply": "apply.js",
+      "remove": "remove.js"
+    }
   }
 }

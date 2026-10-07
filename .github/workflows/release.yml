@@ -1,0 +1,64 @@
+name: Wingman release
+on:
+  push:
+    tags: ['v*']
+permissions:
+  contents: write
+jobs:
+  windows-release:
+    runs-on: windows-latest
+    timeout-minutes: 30
+    env:
+      NUGET_PACKAGES: ${{ github.workspace }}/.packages/nuget-cache
+      RELEASE_TAG: ${{ github.ref_name }}
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262
+        with:
+          fetch-depth: 0
+      - name: Set canonical release origin
+        shell: pwsh
+        run: |
+          $repository = (Get-Content release-repository.json -Raw | ConvertFrom-Json).repository
+          git remote set-url origin ($repository + '.git')
+      - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020
+        with:
+          node-version: '24'
+      - uses: actions/setup-dotnet@67a3573c9a986a3f9c594539f4ab511d57bb3ce9
+        with:
+          dotnet-version: '9.0.x'
+      - uses: actions/setup-python@7f4fc3e22c37d6ff65e88745f38bd3157c663f7c
+        with:
+          python-version: '3.11'
+      - name: Pack pinned shared release kit
+        shell: pwsh
+        run: |
+          New-Item -ItemType Directory -Force .packages | Out-Null
+          dotnet pack src/CodexApp.ReleaseKit/CodexApp.ReleaseKit.csproj -c Release -o .packages -p:NuGetAudit=false
+      - name: Verify release identity and exact source
+        shell: pwsh
+        run: |
+          if ($env:RELEASE_TAG -cnotmatch '^v[0-9]+\.[0-9]+\.[0-9]+$') { throw 'Invalid Wingman release tag' }
+          python tools/release_identity.py --tag $env:RELEASE_TAG
+          if ($LASTEXITCODE -ne 0) { throw 'Release identity check failed' }
+          python tools/release_provenance.py verify-source
+          if ($LASTEXITCODE -ne 0) { throw 'Exact source verification failed' }
+      - name: Build sealed package
+        shell: pwsh
+        run: ./scripts/Publish-CodexWingman.ps1 -Destination '${{ runner.temp }}/package/CodexWingman-verified'
+      - name: Verify native Windows launcher shortcuts
+        run: dotnet run --project tests/CodexWingman.Windows.Tests/CodexWingman.Windows.Tests.csproj -c Release
+      - name: Create verified download and notes
+        shell: pwsh
+        run: |
+          $tag = $env:RELEASE_TAG
+          $asset = "Wingman-$tag-win-x64.zip"
+          Compress-Archive -LiteralPath '${{ runner.temp }}/package/CodexWingman-verified' -DestinationPath $asset
+          python tools/release_archive.py $asset --root-name CodexWingman-verified --repository 'https://github.com/owenkemeys/CodexWingman' --version $tag.TrimStart('v')
+          if ($LASTEXITCODE -ne 0) { throw 'Release archive verification failed' }
+          $hash = (Get-FileHash -LiteralPath $asset -Algorithm SHA256).Hash.ToLowerInvariant()
+          Set-Content -LiteralPath ($asset + '.sha256') -Value "$hash  $asset" -Encoding ascii
+          python tools/release_identity.py --tag $tag --notes-output release-notes.md
+          if ($LASTEXITCODE -ne 0) { throw 'Release notes identity check failed' }
+          gh release create $tag $asset ($asset + '.sha256') --verify-tag --title $tag --notes-file release-notes.md
+        env:
+          GH_TOKEN: ${{ github.token }}

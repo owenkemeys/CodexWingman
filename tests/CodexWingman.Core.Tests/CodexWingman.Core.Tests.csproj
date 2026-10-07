@@ -7,5 +7,6 @@
   </PropertyGroup>
   <ItemGroup>
     <ProjectReference Include="..\..\src\CodexWingman.Core\CodexWingman.Core.csproj" />
+    <ProjectReference Include="..\..\src\CodexApp.ReleaseKit\CodexApp.ReleaseKit.csproj" />
   </ItemGroup>
 </Project>
