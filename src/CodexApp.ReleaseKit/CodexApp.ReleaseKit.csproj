@@ -1,0 +1,21 @@
+<Project Sdk="Microsoft.NET.Sdk">
+  <PropertyGroup>
+    <TargetFramework>net9.0</TargetFramework>
+    <ImplicitUsings>enable</ImplicitUsings>
+    <Nullable>enable</Nullable>
+    <RootNamespace>CodexApp.ReleaseKit</RootNamespace>
+    <PackageId>CodexApp.ReleaseKit</PackageId>
+    <Version>0.1.0-preview.3</Version>
+    <Description>Shared GitHub release discovery and package verification for Codex desktop apps.</Description>
+    <PackageLicenseExpression>MIT</PackageLicenseExpression>
+    <RepositoryUrl>https://github.com/owenkemeys/CodexWingman</RepositoryUrl>
+    <PackageReadmeFile>README.md</PackageReadmeFile>
+    <!-- The PowerShell file is copied as app content, never run by NuGet during installation. -->
+    <NoWarn>$(NoWarn);NU5111</NoWarn>
+  </PropertyGroup>
+  <ItemGroup>
+    <None Include="Apply-CodexAppUpdate.ps1" Pack="true" PackagePath="tools/Apply-CodexAppUpdate.ps1" />
+    <None Include="CodexApp.ReleaseKit.targets" Pack="true" PackagePath="buildTransitive/CodexApp.ReleaseKit.targets" />
+    <None Include="README.md" Pack="true" PackagePath="README.md" />
+  </ItemGroup>
+</Project>

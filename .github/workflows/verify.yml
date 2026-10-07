@@ -14,6 +14,8 @@ jobs:
   verify:
     runs-on: windows-latest
     timeout-minutes: 20
+    env:
+      NUGET_PACKAGES: ${{ github.workspace }}/.packages/nuget-cache
     steps:
       - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262
         with:
@@ -32,8 +34,45 @@ jobs:
       - uses: actions/setup-python@7f4fc3e22c37d6ff65e88745f38bd3157c663f7c
         with:
           python-version: '3.11'
+      - name: Pack pinned shared release kit
+        shell: pwsh
+        run: |
+          New-Item -ItemType Directory -Force .packages | Out-Null
+          dotnet pack src/CodexApp.ReleaseKit/CodexApp.ReleaseKit.csproj -c Release -o .packages -p:NuGetAudit=false
       - name: Verify exact source commit
         run: python tools/release_provenance.py verify-source
+      - name: Verify About identity
+        run: python tools/release_identity.py
+      - name: Verify native Windows launcher shortcuts
+        run: dotnet run --project tests/CodexWingman.Windows.Tests/CodexWingman.Windows.Tests.csproj -c Release
+      - name: Preserve native Windows contract tests
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02
+        with:
+          name: Wingman-Windows-contract-tests
+          path: tests/CodexWingman.Windows.Tests/bin/Release/net9.0-windows/
+          retention-days: 14
+      - name: Verify Wingman consumes the packed kit
+        shell: pwsh
+        run: |
+          dotnet build src/CodexWingman/CodexWingman.csproj -c Release -p:NuGetAudit=false
+          if ($LASTEXITCODE -ne 0) { throw 'Wingman build failed' }
+          if (-not (Test-Path src/CodexWingman/bin/Release/net9.0-windows/Apply-CodexAppUpdate.ps1)) {
+            throw 'Packed ReleaseKit updater script is missing from Wingman output'
+          }
+      - name: Verify a separate app consumes the packed kit
+        run: python -m unittest -v tests.release.test_releasekit_consumer
+      - name: Build downloadable development candidate
+        if: github.event_name == 'pull_request' || github.event_name == 'workflow_dispatch'
+        run: python tools/development_package.py --output '${{ runner.temp }}/wingman-development-download'
+      - name: Preserve development download
+        if: github.event_name == 'pull_request' || github.event_name == 'workflow_dispatch'
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02
+        with:
+          name: Wingman-development-win-x64
+          path: |
+            ${{ runner.temp }}/wingman-development-download/*.zip
+            ${{ runner.temp }}/wingman-development-download/*.sha256
+          retention-days: 14
       - name: Build sealed main package
         if: github.event_name == 'push' && github.ref == 'refs/heads/main'
         shell: pwsh

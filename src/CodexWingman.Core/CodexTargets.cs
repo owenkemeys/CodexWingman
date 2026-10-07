@@ -51,9 +51,35 @@ public static class CodexTargetCatalog
     }
 }
 
+public static class T3CodeTargetCatalog
+{
+    public static IReadOnlyList<CodexTarget> SelectPages(IEnumerable<CodexTarget> targets) => targets
+        .Where(target => target.Type == "page"
+            && Uri.TryCreate(target.Url, UriKind.Absolute, out var uri)
+            && uri.Scheme.Equals("t3code", StringComparison.OrdinalIgnoreCase)
+            && uri.Host.Equals("app", StringComparison.OrdinalIgnoreCase)
+            && !string.IsNullOrWhiteSpace(target.WebSocketDebuggerUrl))
+        .DistinctBy(target => target.Id)
+        .ToArray();
+}
+
 public interface ICodexTargetSource
 {
     Task<IReadOnlyList<CodexTarget>> ListAsync(CancellationToken cancellationToken = default);
+}
+
+/// <summary>Reads only T3 desktop pages from an explicitly recorded CDP endpoint.</summary>
+public sealed class T3CodeTargetSource(HttpClient httpClient, Func<int?> portProvider) : ICodexTargetSource
+{
+    public Task<IReadOnlyList<CodexTarget>> ListAsync(CancellationToken cancellationToken = default)
+    {
+        var port = portProvider();
+        if (port is null) return Task.FromResult<IReadOnlyList<CodexTarget>>([]);
+        if (port is < 1 or > 65535) throw new InvalidOperationException("Invalid T3 Code debugging port.");
+        return new HttpCodexTargetSource(
+            httpClient, () => port.Value, () => new ClientWebSocketCdpSocket(),
+            T3CodeTargetCatalog.SelectPages).ListAsync(cancellationToken);
+    }
 }
 
 public sealed class HttpCodexTargetSource : ICodexTargetSource
@@ -62,6 +88,7 @@ public sealed class HttpCodexTargetSource : ICodexTargetSource
     private readonly HttpClient httpClient;
     private readonly Func<int> portProvider;
     private readonly Func<ICdpWebSocket> socketFactory;
+    private readonly Func<IEnumerable<CodexTarget>, IReadOnlyList<CodexTarget>> selectPages;
 
     public HttpCodexTargetSource(HttpClient httpClient, Func<int> portProvider)
         : this(httpClient, portProvider, () => new ClientWebSocketCdpSocket()) { }
@@ -73,10 +100,18 @@ public sealed class HttpCodexTargetSource : ICodexTargetSource
         : this(httpClient, () => port, socketFactory) { }
 
     public HttpCodexTargetSource(HttpClient httpClient, Func<int> portProvider, Func<ICdpWebSocket> socketFactory)
+        : this(httpClient, portProvider, socketFactory, CodexTargetCatalog.SelectPages) { }
+
+    public HttpCodexTargetSource(
+        HttpClient httpClient,
+        Func<int> portProvider,
+        Func<ICdpWebSocket> socketFactory,
+        Func<IEnumerable<CodexTarget>, IReadOnlyList<CodexTarget>> selectPages)
     {
         this.httpClient = httpClient;
         this.portProvider = portProvider;
         this.socketFactory = socketFactory;
+        this.selectPages = selectPages;
     }
 
     public async Task<IReadOnlyList<CodexTarget>> ListAsync(CancellationToken cancellationToken = default)
@@ -84,7 +119,7 @@ public sealed class HttpCodexTargetSource : ICodexTargetSource
         var endpoint = $"http://127.0.0.1:{portProvider()}";
         await using var stream = await httpClient.GetStreamAsync($"{endpoint}/json/list", cancellationToken);
         var targets = await JsonSerializer.DeserializeAsync<CodexTarget[]>(stream, cancellationToken: cancellationToken) ?? [];
-        var pages = CodexTargetCatalog.SelectPages(targets);
+        var pages = selectPages(targets);
         return pages.Count > 0
             ? pages
             : await ListBrowserTargetsAsync(endpoint, cancellationToken);
@@ -125,7 +160,7 @@ public sealed class HttpCodexTargetSource : ICodexTargetSource
                 if (!payload.HasValue) continue;
                 var response = CdpTargetDiscoveryResponseParser.Parse(payload.Value.Span, requestId: 1, new Uri(browserUrl));
                 if (response is null) continue;
-                return CodexTargetCatalog.SelectPages(response);
+                return selectPages(response);
             }
         }
         catch (OperationCanceledException error) when (!cancellationToken.IsCancellationRequested)

@@ -18,7 +18,8 @@ public sealed record ConnectionHealthSnapshot(
     int Windows,
     string WindowSummary,
     bool CanRepair,
-    bool CanOpenWindow)
+    bool CanOpenWindow,
+    int VisibleWindows)
 {
     public TrayIconState IconState => State is ConnectionHealthState.NeedsRepair or ConnectionHealthState.Degraded
         ? TrayIconState.Attention
@@ -41,7 +42,8 @@ public static class ConnectionHealthPolicy
                 0,
                 "No Codex windows open",
                 CanRepair: true,
-                CanOpenWindow: false);
+                CanOpenWindow: false,
+                VisibleWindows: 0);
 
         if (hookState is CodexHookState.OpenButCannotHook or CodexHookState.UnknownProblem)
             return new(
@@ -53,7 +55,8 @@ public static class ConnectionHealthPolicy
                 0,
                 "No windows hooked",
                 CanRepair: true,
-                CanOpenWindow: false);
+                CanOpenWindow: false,
+                VisibleWindows: totalWindows ?? 0);
 
         if (helpersSuspended)
         {
@@ -65,7 +68,8 @@ public static class ConnectionHealthPolicy
                 pausedWindows,
                 FormatWindowSummary(pausedWindows, totalWindows),
                 CanRepair: true,
-                CanOpenWindow: hookState == CodexHookState.Hooked);
+                CanOpenWindow: hookState == CodexHookState.Hooked,
+                VisibleWindows: Math.Max(pausedWindows, totalWindows ?? pausedWindows));
         }
 
         if (report is null || report.TargetsDiscovered <= 0)
@@ -76,7 +80,8 @@ public static class ConnectionHealthPolicy
                 0,
                 FormatWindowSummary(0, totalWindows),
                 CanRepair: true,
-                CanOpenWindow: false);
+                CanOpenWindow: false,
+                VisibleWindows: totalWindows ?? 0);
 
         var windows = report.TargetsDiscovered;
         if (report.Failed > 0)
@@ -88,7 +93,8 @@ public static class ConnectionHealthPolicy
                 windows,
                 FormatWindowSummary(windows, totalWindows),
                 CanRepair: true,
-                CanOpenWindow: true);
+                CanOpenWindow: true,
+                VisibleWindows: Math.Max(windows, totalWindows ?? windows));
         }
 
         return new(
@@ -98,7 +104,8 @@ public static class ConnectionHealthPolicy
             windows,
             FormatWindowSummary(windows, totalWindows),
             CanRepair: true,
-            CanOpenWindow: true);
+            CanOpenWindow: true,
+            VisibleWindows: Math.Max(windows, totalWindows ?? windows));
     }
 
     public static string FormatWindowSummary(int alteredWindows, int? totalWindows = null)

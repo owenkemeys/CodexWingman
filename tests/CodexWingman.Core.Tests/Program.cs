@@ -6,7 +6,54 @@ using System.Net.Sockets;
 using System.Net.WebSockets;
 using CodexWingman.Core;
 using CodexWingman.Core.Helpers;
+using CodexApp.ReleaseKit;
 using Jint;
+
+if (args.Contains("--release-discovery", StringComparer.Ordinal))
+{
+    await TestReleaseDiscoveryAsync();
+    Console.WriteLine("Shared release discovery tests passed");
+    return;
+}
+
+if (args.Contains("--launcher-policy", StringComparer.Ordinal))
+{
+    TestWingmanLaunchOptions();
+    Console.WriteLine("Wingman launcher policy tests passed");
+    return;
+}
+
+static void TestWingmanLaunchOptions()
+{
+    var selected = WingmanLaunchOptions.Parse(["--launch=t3-code"]);
+    Equal(WingmanLaunchTarget.T3Code, selected.Target, "T3 shortcut selects T3");
+    Equal(false, selected.OpenOnStartup(WingmanLaunchTarget.Codex, HelperSettings.Default),
+        "T3 shortcut does not open Codex through the default preference");
+    Equal(true, selected.OpenOnStartup(WingmanLaunchTarget.T3Code, HelperSettings.Default),
+        "T3 shortcut opens T3 even when its automatic preference is off");
+    var codex = WingmanLaunchOptions.Parse(["--launch=codex", "--cdp-port=9339"]);
+    Equal(true, codex.OpenOnStartup(WingmanLaunchTarget.Codex, HelperSettings.Default), "Codex shortcut selects Codex");
+    Equal(false, codex.OpenOnStartup(WingmanLaunchTarget.T3Code,
+        HelperSettings.Default with { OpenT3CodeOnLaunch = true }), "Codex shortcut does not open the other preferred app");
+    var preferences = WingmanLaunchOptions.Parse([]);
+    Equal(true, preferences.OpenOnStartup(WingmanLaunchTarget.Codex, HelperSettings.Default), "plain startup keeps preferences");
+    Equal(false, preferences.OpenOnStartup(WingmanLaunchTarget.T3Code, HelperSettings.Default), "plain startup keeps T3 preference");
+    Equal(false, codex.ActivationEventName == selected.ActivationEventName, "repeat launches select different app events");
+    Equal(WingmanIdentity.ActivationEventName, preferences.ActivationEventName, "legacy launch retains its event");
+    var profile = Path.Combine(Path.GetTempPath(), "Wingman profile with spaces");
+    var isolated = WingmanLaunchOptions.Parse(["--local-app-data=" + profile, "--register-launchers"]);
+    Equal(Path.GetFullPath(profile), isolated.LocalAppData, "explicit settings profile is retained");
+    Equal(true, isolated.RegisterOnly, "registration can run without launching apps");
+    Equal("\"--local-app-data=" + Path.GetFullPath(profile) + "\"",
+        WingmanLaunchOptions.RelaunchArguments(profile), "updates retain the profile without selecting a new app window");
+    Equal(string.Empty, WingmanLaunchOptions.RelaunchArguments(null), "normal updates omit empty native arguments");
+    Equal("--launch=t3-code \"--local-app-data=" + Path.GetFullPath(profile) + "\"",
+        WingmanLaunchOptions.ShortcutArguments(WingmanLaunchTarget.T3Code, profile), "shortcut quotes its settings profile");
+    Throws<ArgumentException>(() => WingmanLaunchOptions.Parse(["--launch=other"]), "unknown app rejected");
+    Throws<ArgumentException>(() => WingmanLaunchOptions.Parse(["--launch=codex", "--launch=t3-code"]), "ambiguous target rejected");
+    Throws<ArgumentException>(() => WingmanLaunchOptions.Parse(["--local-app-data=relative"]), "relative settings profile rejected");
+    Throws<ArgumentException>(() => WingmanLaunchOptions.Parse(["--local-app-data=" + profile + "\"extra"]), "quote injection rejected");
+}
 
 if (args.Contains("--live-quota", StringComparer.Ordinal))
 {
@@ -94,7 +141,7 @@ static void TestTrayVisibilityRecovery()
         ?? throw new InvalidOperationException("tray visibility watchdog policy is missing");
     visibilityChanges.Clear();
     ensureVisible.Invoke(null, [false, (Action<bool>)visibilityChanges.Add]);
-    Equal("False,True", string.Join(',', visibilityChanges), "periodic tray watchdog re-registers a lost shell icon");
+    Equal("True", string.Join(',', visibilityChanges), "periodic tray watchdog preserves a registered shell icon");
 
     visibilityChanges.Clear();
     ensureVisible.Invoke(null, [true, (Action<bool>)visibilityChanges.Add]);
@@ -103,10 +150,16 @@ static void TestTrayVisibilityRecovery()
 
 try
 {
+TestWingmanLaunchOptions();
+TestTrayVisibilityRecovery();
+await TestReleaseDiscoveryAsync();
+TestSealedReleasePackage();
+await TestTargetAppIsolation();
+TestT3CodeLaunchPolicy();
 Equal("CodexWingman.Desktop.Singleton.v1", WingmanIdentity.SingleInstanceName, "stable single-instance identity");
 Equal("CodexWingman.Desktop.Activate.v1", WingmanIdentity.ActivationEventName, "stable activation identity");
-Equal("Codex Wingman", WingmanIdentity.RunningMenuText, "concise Wingman menu heading");
-Equal("Close Wingman (leave Codex open)", WingmanIdentity.CloseMenuText, "non-destructive close menu text");
+Equal("Wingman", WingmanIdentity.RunningMenuText, "concise Wingman menu heading");
+Equal("Close Wingman", WingmanIdentity.CloseMenuText, "app-neutral close menu text");
 var verifiedDirectory = Path.Combine(Path.GetTempPath(), "CodexWingman-verified");
 Equal(
     Path.GetFullPath(Path.Combine(verifiedDirectory, "Helpers")),
@@ -321,6 +374,8 @@ var defaultSettings = HelperSettings.Default;
 Equal(true, defaultSettings.UsageDialsEnabled, "usage dials default enabled");
 Equal(0, defaultSettings.AdditionalSessionRoots.Count, "additional roots default empty");
 Equal(false, defaultSettings.ForceHighPerformanceGpu, "high-performance GPU launch defaults off");
+Equal(true, defaultSettings.OpenCodexOnLaunch, "existing Codex startup remains enabled by default");
+Equal(false, defaultSettings.OpenT3CodeOnLaunch, "T3 startup is opt-in");
 
 var settingsRoot = Path.Combine(Path.GetTempPath(), $"codex-wingman-settings-{Guid.NewGuid():N}");
 var settingsPath = Path.Combine(settingsRoot, "settings.json");
@@ -334,6 +389,10 @@ try
     var loaded = HelperSettingsStore.Load(settingsPath);
     Equal(false, loaded.UsageDialsEnabled, "settings round trip feature state");
     Equal(true, loaded.ForceHighPerformanceGpu, "settings round trip high-performance GPU launch preference");
+    HelperSettingsStore.Save(settingsPath, configured with { OpenCodexOnLaunch = false, OpenT3CodeOnLaunch = true });
+    var launchChoices = HelperSettingsStore.Load(settingsPath);
+    Equal(false, launchChoices.OpenCodexOnLaunch, "Codex launch choice persists");
+    Equal(true, launchChoices.OpenT3CodeOnLaunch, "T3 launch choice persists");
     var personalConfig = JsonSerializer.SerializeToElement(new { mappings = new[] { new { sourcePrefix = "C:/Notes/", vault = "Notes" } }, uriAction = "open" });
     HelperSettingsStore.Save(settingsPath, configured with { HelperConfig = new Dictionary<string, JsonElement> { ["obsidian-links"] = personalConfig } });
     var personalized = HelperSettingsStore.Load(settingsPath).WithHelperEnabled("usage-dials", true);
@@ -346,6 +405,10 @@ try
     Equal(4, composed.Count, "composed roots deduplicate additional paths");
     Equal(1, composed.Count(path => path.Equals(@"R:\shared-codex\sessions", StringComparison.OrdinalIgnoreCase)), "duplicate additional root removed");
 
+    await File.WriteAllTextAsync(settingsPath, "{\"usageDialsEnabled\":true,\"additionalSessionRoots\":[]}");
+    var oldSettings = HelperSettingsStore.Load(settingsPath);
+    Equal(true, oldSettings.OpenCodexOnLaunch, "older settings preserve Codex startup");
+    Equal(false, oldSettings.OpenT3CodeOnLaunch, "older settings leave T3 startup off");
     await File.WriteAllTextAsync(settingsPath, "{not-json");
     Equal(HelperSettings.Default, HelperSettingsStore.Load(settingsPath), "malformed settings fail closed to defaults");
 }
@@ -560,12 +623,12 @@ try
     var catalog = new HelperCatalog().Discover(bundledRoot, userRoot);
     Equal(2, catalog.Packages.Count, "catalog accepts valid packages and user overrides");
     Equal("2.0.0", catalog.Packages.Single(package => package.Manifest.Id == "override-me").Manifest.Version, "user package overrides bundled package by helper id");
-    Equal(false, catalog.Packages.Any(package => package.Manifest.Id == "future-helper"), "unknown schema version rejected");
+    Equal(false, catalog.Packages.Any(package => package.Manifest.Id == "future-helper"), "schema v2 without targets rejected");
     Equal(false, catalog.Packages.Any(package => package.Manifest.Id == "traversal-helper"), "entrypoint traversal rejected");
     Equal(false, catalog.Packages.Any(package => package.Manifest.Id == "duplicate-helper"), "duplicates within one root are rejected together");
     Equal(true, catalog.Diagnostics.Count >= 3, "invalid catalog entries produce diagnostics");
 
-    Equal("About CodexWingman v1.2.3", TrayAboutText.For(new Version(1, 2, 3, 0)), "About row uses the application assembly version");
+    Equal("About Wingman v1.2.3", TrayAboutText.For(new Version(1, 2, 3, 0)), "About row uses the application assembly version");
 
     var childWindowRoot = Path.Combine(helperRoot, "child-window-bundled");
     var childWindowUserRoot = Path.Combine(helperRoot, "child-window-user");
@@ -941,6 +1004,29 @@ try
     Equal("fixture-session-text", backendState.RootElement.GetProperty("text").GetString(), "backend reads text only through declared session capability");
     Equal(1, backendState.RootElement.GetProperty("count").GetInt32(), "backend lists files below configured session roots");
 
+    var providerUsagePath = Path.Combine(helperRoot, "provider-usage.json");
+    await File.WriteAllTextAsync(providerUsagePath, """
+{"schemaVersion":1,"secret":"must-not-reach-renderer","entries":[{"environmentId":"env","instanceId":"grok","driver":"grok","accountEmail":"account@example.test","secret":"must-not-reach-renderer","usageLimits":{"checkedAt":"2026-10-06T01:14:00Z","windows":[{"id":"subscription","kind":"weekly","label":"Weekly","usedPercent":0,"resetsAt":"2026-10-12T01:46:48Z","windowDurationMins":10080}]}}]}
+""");
+    WritePackage(bundledRoot, "provider-usage", "provider-usage", capabilities: ["files.providerUsage"],
+        backend: "backend.js", backendSource: "function refresh(wingman) { return wingman.files.providerUsage.read(); }");
+    var providerUsagePackage = new HelperCatalog().Discover(bundledRoot, userRoot).Packages.Single(package => package.Manifest.Id == "provider-usage");
+    providerUsagePackage = providerUsagePackage with { Manifest = providerUsagePackage.Manifest with { Config = JsonSerializer.SerializeToElement(new { providerUsageFile = providerUsagePath }) } };
+    using (var quotaState = await backend.RefreshAsync(providerUsagePackage))
+    {
+        Equal(1, quotaState.RootElement.GetProperty("providerUsage").GetArrayLength(), "dedicated backend reads configured quota snapshot");
+        Equal(false, quotaState.RootElement.GetRawText().Contains("must-not-reach-renderer", StringComparison.Ordinal), "quota projection strips unknown secret fields");
+    }
+    await File.WriteAllTextAsync(providerUsagePath, "{\"key\":\"must-not-reach-renderer\"}");
+    using (var quotaState = await backend.RefreshAsync(providerUsagePackage))
+        Equal(0, quotaState.RootElement.GetProperty("providerUsage").GetArrayLength(), "wrong snapshot schema fails closed");
+    await File.WriteAllTextAsync(providerUsagePath, new string(' ', 65537));
+    using (var quotaState = await backend.RefreshAsync(providerUsagePackage))
+        Equal(0, quotaState.RootElement.GetProperty("providerUsage").GetArrayLength(), "oversized quota snapshot fails closed");
+    File.Delete(providerUsagePath);
+    using (var quotaState = await backend.RefreshAsync(providerUsagePackage))
+        Equal(0, quotaState.RootElement.GetProperty("providerUsage").GetArrayLength(), "missing optional snapshot preserves native fallback");
+
     WritePackage(
         bundledRoot,
         "backend-no-capability",
@@ -1109,6 +1195,13 @@ try
         true,
         targetEngine.Evaluate("window.__rendererInjected").IsUndefined(),
         "renderer target ID JavaScript syntax cannot escape its serialized string");
+    await File.WriteAllTextAsync(Path.Combine(targetCapturePackageRoot, "apply.js"),
+        "wingman.reportRenderHealth({state:'waiting',detail:'Usage unavailable'});");
+    var healthPackage = new HelperCatalog().Discover(bundledRoot, userRoot).Packages.Single(package => package.Manifest.Id == "target-id-capture");
+    var healthValue = targetEngine.Evaluate(renderer.BuildApply(healthPackage, rendererState.RootElement, "health-target"));
+    targetEngine.SetValue("__healthResult", healthValue);
+    Equal("waiting", targetEngine.Evaluate("__healthResult.renderHealth.state").AsString(),
+        "real wrapper returns renderer readiness to CDP instead of discarding the helper result");
     var applyExpression = renderer.BuildApply(backendPackage, rendererState.RootElement, "renderer-target");
     Equal(true, applyExpression.Contains("const state={\"enabled\":true}", StringComparison.Ordinal), "renderer receives serialized backend state");
     WritePackage(
@@ -1986,6 +2079,374 @@ catch (Exception error)
 {
     Console.Error.WriteLine($"CodexWingman core tests failed cleanly: {error}");
     Environment.ExitCode = 1;
+}
+
+static async Task TestReleaseDiscoveryAsync()
+{
+    const string digest = "sha256:0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef";
+    var json = JsonSerializer.Serialize(new
+    {
+        draft = false,
+        prerelease = false,
+        tag_name = "v2.0.0",
+        body = "## What's in this release\n\n- Supports Codex and T3 Code.\n- Updates from GitHub Releases.",
+        assets = new[]
+        {
+            new
+            {
+                name = "Wingman-v2.0.0-win-x64.zip",
+                state = "uploaded",
+                digest,
+                browser_download_url = "https://github.com/owenkemeys/CodexWingman/releases/download/v2.0.0/Wingman-v2.0.0-win-x64.zip",
+            },
+        },
+    });
+    using var http = new HttpClient(new StaticHttpMessageHandler(request =>
+    {
+        Equal("api.github.com", request.RequestUri?.Host, "release check uses the GitHub API");
+        return new HttpResponseMessage(HttpStatusCode.OK) { Content = new StringContent(json) };
+    }));
+    var client = new AppReleaseClient(http, "Wingman");
+    var found = await client.CheckAsync("owenkemeys/CodexWingman", "Wingman", new Version(1, 0, 0));
+    Equal("v2.0.0", found?.Tag, "a newer complete release is offered");
+    Equal(true, found?.Summary.Contains("Supports Codex and T3 Code.") == true, "release summary is user-facing");
+    Equal(null, await client.CheckAsync("owenkemeys/CodexWingman", "Wingman", new Version(2, 0, 0)),
+        "current release is not offered again");
+    using var emptyHttp = new HttpClient(new StaticHttpMessageHandler(request =>
+        new HttpResponseMessage(request.RequestUri!.AbsolutePath.EndsWith("/releases/latest", StringComparison.Ordinal)
+            ? HttpStatusCode.NotFound : HttpStatusCode.OK)));
+    Equal(null, await new AppReleaseClient(emptyHttp, "Wingman")
+        .CheckAsync("owenkemeys/CodexWingman", "Wingman", new Version(1, 0, 0)),
+        "an accessible repository with no stable release is an ordinary empty update check");
+    var empty = await new AppReleaseClient(emptyHttp, "Wingman")
+        .CheckLatestAsync("owenkemeys/CodexWingman", "Wingman", new Version(1, 0, 0));
+    Equal(AppReleaseCheckStatus.NoStableRelease, empty.Status, "no release is distinguished from up to date");
+    Equal("No stable release of Wingman has been published yet.", empty.Message, "manual update check explains an empty release feed");
+    using var unavailableHttp = new HttpClient(new StaticHttpMessageHandler(_ => new HttpResponseMessage(HttpStatusCode.NotFound)));
+    await ThrowsAsync<HttpRequestException>(() => new AppReleaseClient(unavailableHttp, "Wingman")
+        .CheckAsync("owner/unavailable", "Wingman", new Version(1, 0, 0)),
+        "a missing or inaccessible repository remains an access failure");
+    async Task<AppRelease?> CheckFixtureAsync(string fixture)
+    {
+        using var fixtureHttp = new HttpClient(new StaticHttpMessageHandler(_ =>
+            new HttpResponseMessage(HttpStatusCode.OK) { Content = new StringContent(fixture) }));
+        return await new AppReleaseClient(fixtureHttp, "Wingman")
+            .CheckAsync("owenkemeys/CodexWingman", "Wingman", new Version(1, 0, 0));
+    }
+    Equal(null, await CheckFixtureAsync(json.Replace("sha256:", "unverified:", StringComparison.Ordinal)),
+        "release without a GitHub SHA-256 digest is not installable");
+    Equal(null, await CheckFixtureAsync(json.Replace("https://github.com/", "https://example.invalid/", StringComparison.Ordinal)),
+        "asset outside the selected repository is not installable");
+    Equal(null, await CheckFixtureAsync(json.Replace("\"prerelease\":false", "\"prerelease\":true", StringComparison.Ordinal)),
+        "stable channel ignores prereleases");
+}
+
+static void TestSealedReleasePackage()
+{
+    var root = Path.Combine(Path.GetTempPath(), "wingman-release-test-" + Guid.NewGuid().ToString("N"));
+    Directory.CreateDirectory(Path.Combine(root, "Helpers", "Sample"));
+    try
+    {
+        File.WriteAllText(Path.Combine(root, "CodexWingman.exe"), "exe");
+        File.WriteAllText(Path.Combine(root, "Helpers", "Sample", "wingman.json"), "helper");
+        var files = new Dictionary<string, string>
+        {
+            ["CodexWingman.exe"] = Convert.ToHexString(System.Security.Cryptography.SHA256.HashData(
+                File.ReadAllBytes(Path.Combine(root, "CodexWingman.exe")))).ToLowerInvariant(),
+            ["Helpers/Sample/wingman.json"] = Convert.ToHexString(System.Security.Cryptography.SHA256.HashData(
+                File.ReadAllBytes(Path.Combine(root, "Helpers", "Sample", "wingman.json")))).ToLowerInvariant(),
+        };
+        File.WriteAllText(Path.Combine(root, "release.json"), JsonSerializer.Serialize(new
+        {
+            schema = "codexwingman.release.v1",
+            repository = "https://github.com/owenkemeys/CodexWingman",
+            version = "2.0.0",
+            files,
+        }));
+        SealedReleasePackage.Verify(root, "https://github.com/owenkemeys/CodexWingman",
+            new Version(2, 0, 0), "codexwingman.release.v1", "CodexWingman.exe", "Helpers/");
+        File.WriteAllText(Path.Combine(root, "Helpers", "Sample", "wingman.json"), "changed");
+        Throws<InvalidDataException>(
+            () => SealedReleasePackage.Verify(root, "https://github.com/owenkemeys/CodexWingman",
+                new Version(2, 0, 0), "codexwingman.release.v1", "CodexWingman.exe", "Helpers/"),
+            "tampered release file cannot be installed");
+    }
+    finally
+    {
+        Directory.Delete(root, recursive: true);
+    }
+}
+
+static void TestT3CodeLaunchPolicy()
+{
+    var paths = T3CodeLaunchPolicy.CandidateExecutables("/local", "/programs");
+    Equal(true, paths.Any(path => path.Replace('\\', '/').EndsWith("T3 Code Nightly/T3 Code Nightly.exe", StringComparison.Ordinal)),
+        "T3 Nightly per-user executable discovery");
+    Equal(true, paths.Any(path => path.Replace('\\', '/').EndsWith("t3code/T3 Code (Nightly).exe", StringComparison.Ordinal)),
+        "installed T3 Nightly executable discovery");
+    Equal(true, paths.All(T3CodeLaunchPolicy.IsT3Executable), "candidate paths identify only T3 executables");
+    var installed = new[] { paths[0], paths[1] };
+    Equal(paths[1], T3CodeLaunchPolicy.SelectExecutable(paths, [paths[1]], installed.Contains),
+        "running T3 Nightly takes precedence over installed stable");
+    Equal(paths[0], T3CodeLaunchPolicy.SelectExecutable(paths, [], installed.Contains),
+        "stable T3 takes precedence when no installed instance runs");
+    Equal(paths[5], T3CodeLaunchPolicy.SelectExecutable(paths, [paths[5]], path => path == paths[5]),
+        "running t3code Nightly install is selected");
+    Equal<string?>(null, T3CodeLaunchPolicy.SelectExecutable(paths, [], _ => false),
+        "missing T3 executable fails closed");
+    Equal(false, T3CodeLaunchPolicy.IsT3Executable(@"C:\Programs\Codex\Codex.exe"),
+        "T3 discovery rejects Codex");
+    Equal(false, T3CodeLaunchPolicy.IsT3Executable(@"C:\Programs\Other\T3 Code.exe"),
+        "T3 discovery rejects lookalike path");
+    Equal(true, T3CodeLaunchPolicy.MatchesRunningProcess(paths[1], 2, paths[1], 2),
+        "T3 repair selects its exact executable in the current session");
+    Equal(false, T3CodeLaunchPolicy.MatchesRunningProcess(paths[1], 2, paths[0], 2),
+        "T3 repair excludes stable when Nightly is selected");
+    Equal(false, T3CodeLaunchPolicy.MatchesRunningProcess(paths[1], 2, paths[1], 3),
+        "T3 repair excludes another session");
+    Equal(false, T3CodeLaunchPolicy.MatchesRunningProcess(paths[1], 2, @"C:\Programs\Codex\Codex.exe", 2),
+        "T3 repair excludes Codex");
+    Equal(true, T3CodeLaunchPolicy.MatchesVisibleWindow(paths, 2, paths[1], 2,
+        visible: true, owned: false, titled: true), "visible T3 window is counted");
+    Equal(false, T3CodeLaunchPolicy.MatchesVisibleWindow(paths, 2, paths[1], 2,
+        visible: false, owned: false, titled: true), "hidden T3 window is excluded");
+    Equal(false, T3CodeLaunchPolicy.MatchesVisibleWindow(paths, 2, paths[1], 2,
+        visible: true, owned: true, titled: true), "owned T3 popup is excluded");
+    Equal(false, T3CodeLaunchPolicy.MatchesVisibleWindow(paths, 2, paths[1], 2,
+        visible: true, owned: false, titled: false), "untitled background window is excluded");
+    Equal(false, T3CodeLaunchPolicy.MatchesVisibleWindow(paths, 2, paths[1], 3,
+        visible: true, owned: false, titled: true), "other-session T3 window is excluded");
+    Equal(false, T3CodeLaunchPolicy.MatchesVisibleWindow(paths, 2, @"C:\Programs\Codex\Codex.exe", 2,
+        visible: true, owned: false, titled: true), "Codex window is excluded from T3 coverage");
+    Equal(true, T3CodeLaunchPolicy.CandidatePorts(9411).SequenceEqual([9411, T3CodeLaunchPolicy.PreferredPort]),
+        "T3 port search uses its own remembered port");
+    Equal(false, T3CodeLaunchPolicy.CandidatePorts(null).Contains(CodexLaunchPolicy.PreferredPort),
+        "T3 port selection excludes Codex port");
+    Equal(false, T3CodeLaunchPolicy.CandidatePorts(CodexLaunchPolicy.PreferredPort)
+        .Contains(CodexLaunchPolicy.PreferredPort), "T3 rejects a saved Codex default port");
+    Equal(false, T3CodeLaunchPolicy.CandidatePorts(9411, codexPort: 9411).Contains(9411),
+        "T3 rejects a saved active Codex port");
+    Equal(0, T3CodeLaunchPolicy.CandidatePorts(null, codexPort: T3CodeLaunchPolicy.PreferredPort).Count,
+        "T3 rejects its preferred port when Codex owns it");
+    Equal(true, T3CodeLaunchPolicy.DebugArguments(T3CodeLaunchPolicy.PreferredPort).Contains("127.0.0.1"),
+        "T3 CDP binds loopback");
+    Equal("--remote-debugging-address=127.0.0.1 --remote-debugging-port=9323",
+        T3CodeLaunchPolicy.DebugArguments(T3CodeLaunchPolicy.PreferredPort),
+        "T3 activation uses its native single-window route without an unsupported CLI flag");
+}
+
+static async Task TestTargetAppIsolation()
+{
+    var targets = new[]
+    {
+        new CodexTarget("codex", "page", "app://-/index.html", "ws://127.0.0.1/devtools/page/codex"),
+        new CodexTarget("t3", "page", "t3code://app/index.html", "ws://127.0.0.1/devtools/page/t3"),
+        new CodexTarget("t3-dev", "page", "t3code-dev://app/index.html", "ws://127.0.0.1/devtools/page/t3-dev"),
+        new CodexTarget("remote-web", "page", "https://app.t3.codes/", "ws://127.0.0.1/devtools/page/remote-web"),
+    };
+    Equal("codex", CodexTargetCatalog.SelectPages(targets).Single().Id,
+        "Codex discovery selects only the official Codex page");
+    Equal("t3", T3CodeTargetCatalog.SelectPages(targets).Single().Id,
+        "T3 discovery selects only the production T3 desktop page");
+    var twoConnected = new T3CodeConnectionReport(2, 2, 0);
+    Equal("T3 Code: Closed (0/0)", T3CodeMenuPolicy.Evaluate(0, false, null, null, false).Label,
+        "T3 menu counts closed visible windows");
+    Equal("T3 Code: Problem (0/3)", T3CodeMenuPolicy.Evaluate(3, false, null, null, false).Label,
+        "visible T3 windows without an endpoint need repair");
+    Equal("T3 Code: Problem (2/3)", T3CodeMenuPolicy.Evaluate(
+        3, true, new HelperHostReport(1, 2, 2, 0, []), twoConnected, false).Label,
+        "partial T3 coverage uses visible-window denominator");
+    Equal("T3 Code: OK (2/2)", T3CodeMenuPolicy.Evaluate(
+        2, true, new HelperHostReport(1, 2, 2, 0, []), twoConnected, false).Label,
+        "complete T3 coverage reports all visible windows");
+    Equal("T3 Code: No Helpers (0/2)", T3CodeMenuPolicy.Evaluate(
+        2, true, new HelperHostReport(0, 2, 0, 0, []), twoConnected, false,
+        hasEnabledHelpers: false).Label,
+        "an endpoint alone does not claim that T3 windows have Helpers");
+    Equal("T3 Code: OK (1/1)", T3CodeMenuPolicy.Evaluate(
+        1, true, new HelperHostReport(1, 3, 3, 0, []), new T3CodeConnectionReport(3, 3, 0), false).Label,
+        "extra renderer pages never inflate visible T3 window count");
+    Equal("T3 Code: Problem (1/2)", T3CodeMenuPolicy.Evaluate(
+        2, true, new HelperHostReport(1, 1, 1, 0, []), twoConnected, false).Label,
+        "newly probed renderers not yet reconciled cannot inflate coverage");
+    Equal("T3 Code: Problem (2/2)", T3CodeMenuPolicy.Evaluate(
+        2, true, new HelperHostReport(1, 2, 1, 1, []), twoConnected, false).Label,
+        "failed Helper keeps complete T3 window coverage in problem state");
+    Equal("T3 Code: Problem (2/2)", T3CodeMenuPolicy.Evaluate(
+        2, true, new HelperHostReport(1, 2, 2, 0, [new HelperDiagnostic("helper", "invalid manifest")]), twoConnected, false).Label,
+        "Helper catalog diagnostic keeps complete T3 window coverage in problem state");
+    Equal("T3 Code: Problem (1/2)", T3CodeMenuPolicy.Evaluate(
+        2, true, new HelperHostReport(1, 2, 1, 1, []), new T3CodeConnectionReport(2, 1, 1), false).Label,
+        "unresponsive renderer does not count as a hooked T3 window");
+    Equal("T3 Code: Problem (0/2)", T3CodeMenuPolicy.Evaluate(
+        2, true, new HelperHostReport(1, 2, 2, 0, []), twoConnected, true).Label,
+        "failed T3 status check does not claim coverage");
+    Equal("T3 Code: Paused (0/2)", T3CodeMenuPolicy.Evaluate(
+        2, true, null, null, false, helpersSuspended: true).Label,
+        "paused T3 Helpers do not claim hooked windows");
+    Equal("T3 Code: Status unavailable", T3CodeMenuPolicy.Evaluate(null, true, null, null, true).Label,
+        "window discovery failure does not claim OK");
+    var probedTargets = targets.Append(new CodexTarget("t3-second", "page", "t3code://app/second",
+        "ws://127.0.0.1/devtools/page/t3-second")).ToArray();
+    var probeEvaluator = new FakeEvaluator("t3-second");
+    var probe = await new T3CodeConnectionProbe(new FakeTargetSource(probedTargets), probeEvaluator).ProbeAsync();
+    Equal(new T3CodeConnectionReport(2, 1, 1), probe,
+        "T3 connection probe counts successful renderer evaluations only");
+    Equal(true, probeEvaluator.Calls.All(call => call.Target.Id.StartsWith("t3", StringComparison.Ordinal)),
+        "T3 connection probe does not evaluate Codex targets");
+    var requests = 0;
+    using (var t3Http = new HttpClient(new StaticHttpMessageHandler(_ =>
+    {
+        requests++;
+        return new HttpResponseMessage(HttpStatusCode.OK)
+        {
+            Content = new StringContent(JsonSerializer.Serialize(targets)),
+        };
+    })))
+    {
+        int? port = null;
+        var t3Source = new T3CodeTargetSource(t3Http, () => port);
+        Equal(0, (await t3Source.ListAsync()).Count, "T3 source has no targets without its own endpoint");
+        Equal(0, requests, "T3 source does not probe an unconfigured port");
+        port = 9237;
+        Equal("t3", (await t3Source.ListAsync()).Single().Id,
+            "T3 source selects only its renderer from a mixed CDP response");
+        Equal(1, requests, "T3 source probes only its configured endpoint");
+    }
+
+    var root = Path.Combine(Path.GetTempPath(), $"wingman-target-isolation-{Guid.NewGuid():N}");
+    var settingsPath = Path.Combine(root, "settings", "settings.json");
+    Directory.CreateDirectory(root);
+    try
+    {
+        WritePackage(root, "legacy", "legacy-codex-helper");
+        WriteAppTargetPackage(root, "t3-only", "t3-only-helper", [HelperAppIds.T3Code]);
+        WriteAppTargetPackage(root, "both", "both-helper", [HelperAppIds.Codex, HelperAppIds.T3Code]);
+        WriteAppTargetPackage(root, "t3-invalid", "t3-invalid-helper", [HelperAppIds.T3Code],
+            [HostActionDispatcher.OpenNewChatWindow]);
+        WriteAppTargetPackage(root, "t3-private", "t3-private-helper", [HelperAppIds.T3Code],
+            ["files.codexSessions"]);
+        var userRoot = Path.Combine(root, "user-overrides");
+        Directory.CreateDirectory(userRoot);
+        WriteAppTargetPackage(userRoot, "t3-shadow", "legacy-codex-helper", [HelperAppIds.T3Code]);
+        var catalog = new HelperCatalog();
+        var codexPackages = catalog.DiscoverForApp(HelperAppIds.Codex, root).Packages;
+        var t3Packages = catalog.DiscoverForApp(HelperAppIds.T3Code, root).Packages;
+        Equal(true, codexPackages.Any(package => package.Manifest.Id == "legacy-codex-helper"),
+            "legacy manifest still defaults to Codex");
+        Equal(false, codexPackages.Any(package => package.Manifest.Id == "t3-only-helper"),
+            "Codex catalog excludes T3-only Helper");
+        Equal(false, t3Packages.Any(package => package.Manifest.Id == "legacy-codex-helper"),
+            "T3 catalog excludes legacy Codex Helper");
+        Equal(true, t3Packages.Any(package => package.Manifest.Id == "t3-only-helper"),
+            "T3 catalog accepts its targeted Helper");
+        Equal(false, t3Packages.Any(package => package.Manifest.Id == "t3-invalid-helper"),
+            "T3 catalog rejects a Codex-only capability");
+        Equal(false, t3Packages.Any(package => package.Manifest.Id == "t3-private-helper"),
+            "T3 catalog rejects Codex private session access");
+        Equal(HelperPackageSource.Bundled,
+            catalog.DiscoverForApp(HelperAppIds.Codex, root, userRoot).Packages
+                .Single(package => package.Manifest.Id == "legacy-codex-helper").Source,
+            "a T3-only user package cannot override a bundled Codex Helper");
+        Equal(true, codexPackages.Single(package => package.Manifest.Id == "both-helper")
+                .ApplySource.Contains("codex-script", StringComparison.Ordinal),
+            "Codex selects its own script from a shared manifest");
+        Equal(true, t3Packages.Single(package => package.Manifest.Id == "both-helper")
+                .ApplySource.Contains("t3-code-script", StringComparison.Ordinal),
+            "T3 selects its own script from a shared manifest");
+
+        var source = new FakeTargetSource(targets);
+        var codexEvaluator = new FakeEvaluator(null);
+        var codexHost = new HelperHost(root, settingsPath, source, codexEvaluator,
+            new HostActionDispatcher(codexEvaluator), [], appId: HelperAppIds.Codex);
+        var codexReport = await codexHost.ReconcileAsync();
+        Equal(1, codexReport.TargetsDiscovered, "Codex host sees only Codex page");
+        Equal(true, codexEvaluator.Calls.All(call => call.Target.Id == "codex"),
+            "Codex host never evaluates a T3 page");
+        Equal(false, codexEvaluator.Calls.Any(call => call.Expression.Contains("t3-code-script", StringComparison.Ordinal)),
+            "Codex host never evaluates T3 script");
+        await codexHost.RemoveAllAsync();
+        Equal(true, codexEvaluator.Calls.All(call => call.Target.Id == "codex"),
+            "Codex cleanup remains in Codex window");
+
+        var t3Evaluator = new FakeEvaluator(null);
+        IReadOnlyList<string>? t3BackendRoots = null;
+        var t3Host = new HelperHost(root, settingsPath, source, t3Evaluator,
+            new HostActionDispatcher(t3Evaluator), ["private-codex-root"],
+            backendFactory: roots =>
+            {
+                t3BackendRoots = roots.ToArray();
+                return new HelperBackend(roots);
+            },
+            appId: HelperAppIds.T3Code);
+        Equal(0, t3BackendRoots?.Count ?? -1, "T3 backend receives no Codex session roots");
+        var t3Report = await t3Host.ReconcileAsync();
+        Equal(1, t3Report.TargetsDiscovered, "T3 host sees only T3 desktop page");
+        Equal(true, t3Evaluator.Calls.All(call => call.Target.Id == "t3"),
+            "T3 host never evaluates a Codex page");
+        Equal(false, t3Evaluator.Calls.Any(call => call.Expression.Contains("codex-script", StringComparison.Ordinal)),
+            "T3 host never evaluates Codex script");
+        await t3Host.RemoveAllAsync();
+        Equal(true, t3Evaluator.Calls.All(call => call.Target.Id == "t3"),
+            "T3 cleanup remains in T3 window");
+        await ThrowsAsync<NotSupportedException>(() => t3Host.OpenNativeNewWindowAsync(),
+            "unverified Codex new-window action is unavailable to T3 host");
+        var readinessEvaluator = new HostFakeEvaluator();
+        var readinessRoot = Path.Combine(root, "readiness-fixture");
+        WriteAppTargetPackage(readinessRoot, "usage", "usage-dials", [HelperAppIds.T3Code]);
+        using var waitingJson = JsonDocument.Parse("{\"renderHealth\":{\"state\":\"waiting\",\"detail\":\"Current provider usage is out of date.\"}}");
+        readinessEvaluator.ValueResultFactory = (_, expression) => expression.Contains("t3-code-script", StringComparison.Ordinal)
+            ? waitingJson.RootElement.Clone() : null;
+        var readinessHost = new HelperHost(readinessRoot, settingsPath, source, readinessEvaluator,
+            new HostActionDispatcher(readinessEvaluator), [], appId: HelperAppIds.T3Code);
+        var waitingReport = await readinessHost.ReconcileAsync();
+        var waitingMenu = T3CodeMenuPolicy.Evaluate(1, true, waitingReport, new(1, 1, 0), false);
+        Equal(0, waitingReport.Failed, "successful evaluation can still report unavailable usage");
+        Equal("T3 Code: Problem (1/1)", waitingMenu.Label, "connection does not conceal renderer waiting state");
+        Equal(true, waitingMenu.Details.Contains("out of date", StringComparison.Ordinal), "tray explains data readiness without a restart recommendation");
+        using var readyJson = JsonDocument.Parse("{\"renderHealth\":{\"state\":\"ready\"}}");
+        readinessEvaluator.ValueResultFactory = (_, expression) => expression.Contains("t3-code-script", StringComparison.Ordinal)
+            ? readyJson.RootElement.Clone() : null;
+        var readyReport = await readinessHost.ReconcileAsync();
+        Equal("T3 Code: OK (1/1)", T3CodeMenuPolicy.Evaluate(1, true, readyReport, new(1, 1, 0), false).Label,
+            "fresh renderer readiness clears waiting diagnostics on the next reconciliation");
+        await codexHost.SetEnabledAsync("legacy-codex-helper", false);
+        await t3Host.SetEnabledAsync("t3-only-helper", false);
+        var sharedSettings = HelperSettingsStore.Load(settingsPath);
+        Equal(false, sharedSettings.IsHelperEnabled("legacy-codex-helper"),
+            "a later T3 setting does not erase Codex's saved Helper choice");
+        Equal(false, sharedSettings.IsHelperEnabled("t3-only-helper"),
+            "T3 Helper choice persists beside Codex's choice");
+    }
+    finally { Directory.Delete(root, recursive: true); }
+}
+
+static void WriteAppTargetPackage(string root, string folder, string id, string[] apps, string[]? capabilities = null)
+{
+    var directory = Path.Combine(root, folder);
+    Directory.CreateDirectory(directory);
+    var targets = apps.ToDictionary(app => app, app => new
+    {
+        backend = (string?)null,
+        apply = $"{app}.apply.js",
+        remove = $"{app}.remove.js",
+    });
+    File.WriteAllText(Path.Combine(directory, "wingman.json"), JsonSerializer.Serialize(new
+    {
+        schemaVersion = 2,
+        id,
+        name = id,
+        version = "1.0.0",
+        description = $"Fixture {id}",
+        refreshSeconds = 0,
+        capabilities = capabilities ?? [],
+        targets,
+    }));
+    foreach (var app in apps)
+    {
+        File.WriteAllText(Path.Combine(directory, $"{app}.apply.js"), $"window['__{app}-script']=true;");
+        File.WriteAllText(Path.Combine(directory, $"{app}.remove.js"), $"delete window['__{app}-script'];");
+    }
 }
 
 static string WritePackage(

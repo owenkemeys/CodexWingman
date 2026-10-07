@@ -10,18 +10,23 @@ public sealed partial class HelperCatalog
         PropertyNameCaseInsensitive = true,
     };
 
-    public HelperCatalogReport Discover(string helpersRoot)
+    public HelperCatalogReport Discover(string helpersRoot) => DiscoverForApp(HelperAppIds.Codex, helpersRoot);
+
+    public HelperCatalogReport DiscoverForApp(string appId, string helpersRoot)
     {
         var diagnostics = new List<HelperDiagnostic>();
-        var discovery = DiscoverRoot(helpersRoot, HelperPackageSource.User, diagnostics);
+        var discovery = DiscoverRoot(helpersRoot, HelperPackageSource.User, appId, diagnostics);
         return new(discovery.Packages, diagnostics);
     }
 
-    public HelperCatalogReport Discover(string bundledRoot, string userRoot)
+    public HelperCatalogReport Discover(string bundledRoot, string userRoot) =>
+        DiscoverForApp(HelperAppIds.Codex, bundledRoot, userRoot);
+
+    public HelperCatalogReport DiscoverForApp(string appId, string bundledRoot, string userRoot)
     {
         var diagnostics = new List<HelperDiagnostic>();
-        var bundled = DiscoverRoot(bundledRoot, HelperPackageSource.Bundled, diagnostics);
-        var user = DiscoverRoot(userRoot, HelperPackageSource.User, diagnostics);
+        var bundled = DiscoverRoot(bundledRoot, HelperPackageSource.Bundled, appId, diagnostics);
+        var user = DiscoverRoot(userRoot, HelperPackageSource.User, appId, diagnostics);
         var selected = bundled.Packages.ToDictionary(package => package.Manifest.Id, StringComparer.Ordinal);
         var bundledIds = selected.Keys.ToHashSet(StringComparer.Ordinal);
         foreach (var identifiedUserId in user.IdentifiedIds)
@@ -36,6 +41,7 @@ public sealed partial class HelperCatalog
     private static RootDiscovery DiscoverRoot(
         string root,
         HelperPackageSource source,
+        string appId,
         List<HelperDiagnostic> diagnostics)
     {
         if (!Directory.Exists(root)) return new([], new HashSet<string>(StringComparer.Ordinal));
@@ -56,19 +62,21 @@ public sealed partial class HelperCatalog
             {
                 var manifest = JsonSerializer.Deserialize<HelperManifest>(File.ReadAllText(manifestPath), JsonOptions)
                     ?? throw new InvalidDataException("Manifest is empty");
+                if (!ClaimsApp(manifest, appId)) continue;
                 if (!string.IsNullOrWhiteSpace(manifest.Id) && HelperIdPattern().IsMatch(manifest.Id))
                 {
                     identifiedId = manifest.Id;
                     identifiedIds.Add(manifest.Id);
                 }
-                Validate(manifest, directory);
+                var entrypoints = Validate(manifest, directory, appId);
+                var selectedManifest = manifest with { Entrypoints = entrypoints };
                 candidates.Add(new(
-                    manifest,
+                    selectedManifest,
                     Path.GetFullPath(directory),
                     source,
-                    File.ReadAllText(Path.Combine(directory, manifest.Entrypoints.Apply)),
-                    File.ReadAllText(Path.Combine(directory, manifest.Entrypoints.Remove)),
-                    manifest.Entrypoints.Backend is { } backend
+                    File.ReadAllText(Path.Combine(directory, entrypoints.Apply)),
+                    File.ReadAllText(Path.Combine(directory, entrypoints.Remove)),
+                    entrypoints.Backend is { } backend
                         ? File.ReadAllText(Path.Combine(directory, backend))
                         : null));
             }
@@ -90,9 +98,18 @@ public sealed partial class HelperCatalog
             identifiedIds);
     }
 
-    private static void Validate(HelperManifest manifest, string directory)
+    private static bool ClaimsApp(HelperManifest manifest, string appId) => manifest.SchemaVersion switch
     {
-        if (manifest.SchemaVersion != 1)
+        1 => appId == HelperAppIds.Codex,
+        2 => manifest.Targets is null or { Count: 0 }
+            ? appId == HelperAppIds.Codex
+            : manifest.Targets.ContainsKey(appId),
+        _ => appId == HelperAppIds.Codex,
+    };
+
+    private static HelperEntrypoints Validate(HelperManifest manifest, string directory, string appId)
+    {
+        if (manifest.SchemaVersion is not (1 or 2))
             throw new InvalidDataException($"Unsupported schemaVersion {manifest.SchemaVersion}");
         if (string.IsNullOrWhiteSpace(manifest.Id) || !HelperIdPattern().IsMatch(manifest.Id))
             throw new InvalidDataException("ID must contain only lowercase ASCII letters, digits, and hyphens");
@@ -106,11 +123,34 @@ public sealed partial class HelperCatalog
             throw new InvalidDataException("Capabilities are required");
         if (manifest.Capabilities.Any(string.IsNullOrWhiteSpace))
             throw new InvalidDataException("Capabilities must be nonblank strings");
-        if (manifest.Entrypoints is null)
-            throw new InvalidDataException("Entrypoints are required");
-        ValidateEntrypoint(directory, manifest.Entrypoints.Apply, required: true, "apply");
-        ValidateEntrypoint(directory, manifest.Entrypoints.Remove, required: true, "remove");
-        if (manifest.Entrypoints.Backend is { } backend)
+        if (appId != HelperAppIds.Codex
+            && (manifest.Capabilities.Contains("files.codexSessions")
+                || manifest.Capabilities.Contains("files.codexTargetSession")
+                || manifest.Capabilities.Contains(HostActionDispatcher.OpenNewChatWindow)))
+            throw new InvalidDataException("Codex-only capability cannot target another app");
+        if (manifest.SchemaVersion == 1)
+        {
+            if (manifest.Entrypoints is null || manifest.Targets is not null)
+                throw new InvalidDataException("Schema v1 requires entrypoints and does not support targets");
+            ValidateEntrypoints(directory, manifest.Entrypoints);
+            return manifest.Entrypoints;
+        }
+        if (manifest.Entrypoints is not null || manifest.Targets is not { Count: > 0 })
+            throw new InvalidDataException("Schema v2 requires targets instead of entrypoints");
+        foreach (var (targetApp, entrypoints) in manifest.Targets)
+        {
+            if (!HelperIdPattern().IsMatch(targetApp) || entrypoints is null)
+                throw new InvalidDataException("Invalid target app entry");
+            ValidateEntrypoints(directory, entrypoints);
+        }
+        return manifest.Targets[appId];
+    }
+
+    private static void ValidateEntrypoints(string directory, HelperEntrypoints entrypoints)
+    {
+        ValidateEntrypoint(directory, entrypoints.Apply, required: true, "apply");
+        ValidateEntrypoint(directory, entrypoints.Remove, required: true, "remove");
+        if (entrypoints.Backend is { } backend)
             ValidateEntrypoint(directory, backend, required: true, "backend");
     }
 

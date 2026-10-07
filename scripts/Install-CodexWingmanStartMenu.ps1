@@ -36,7 +36,7 @@ if ([string]::IsNullOrWhiteSpace($programsFolder)) {
     throw 'Windows did not provide a per-user Start Menu Programs folder.'
 }
 
-$shortcutPath = Join-Path $programsFolder 'Codex Wingman.lnk'
+$shortcutPath = Join-Path $programsFolder 'Wingman.lnk'
 $shortcutTarget = $executable
 $shortcutArguments = ''
 $executingProfileRoot = [Environment]::GetFolderPath('UserProfile')
@@ -53,7 +53,20 @@ $shortcut.TargetPath = $shortcutTarget
 $shortcut.Arguments = $shortcutArguments
 $shortcut.WorkingDirectory = $executableDirectory
 $shortcut.IconLocation = "$executable,0"
-$shortcut.Description = 'Codex Wingman - Codex desktop companion'
+$shortcut.Description = 'Wingman - Codex and T3 Code companion'
 $shortcut.Save()
 
 Write-Output $shortcutPath
+
+# The downloaded executable owns the new native, app-specific launcher format.
+# Register for this user only; preserve the legacy cross-profile Explorer route.
+if (-not $ForceExplorerLaunch -and $shortcutTarget -eq $executable -and
+    $ProgramsFolder -eq [Environment]::GetFolderPath('Programs')) {
+    $registration = Start-Process -FilePath $executable -ArgumentList '--register-launchers' -Wait -PassThru
+    if ($registration.ExitCode -ne 0) { throw 'Wingman could not register its app-specific launchers.' }
+    foreach ($name in @('Wingman Codex.lnk', 'Wingman T3 Code.lnk')) {
+        $path = Join-Path $ProgramsFolder $name
+        if (-not (Test-Path -LiteralPath $path -PathType Leaf)) { throw "Wingman launcher missing: $path" }
+        Write-Output $path
+    }
+}

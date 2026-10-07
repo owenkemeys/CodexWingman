@@ -9,6 +9,7 @@ public sealed class HelperHost
     private readonly string helpersRoot;
     private readonly string? overrideRoot;
     private readonly string settingsPath;
+    private readonly string appId;
     private readonly ICodexTargetSource targetSource;
     private readonly ICdpEvaluator evaluator;
     private readonly IHostActionDispatcher actionDispatcher;
@@ -42,8 +43,10 @@ public sealed class HelperHost
         Func<IEnumerable<string>, HelperBackend>? backendFactory = null,
         TimeSpan? nativeWindowTimeout = null,
         TimeSpan? nativeWindowPollInterval = null,
-        Func<string>? childOperationTokenFactory = null)
+        Func<string>? childOperationTokenFactory = null,
+        string appId = HelperAppIds.Codex)
     {
+        this.appId = RequireAppId(appId);
         helpersRoot = bundledRoot;
         overrideRoot = userRoot;
         this.settingsPath = settingsPath;
@@ -56,7 +59,7 @@ public sealed class HelperHost
         this.nativeWindowTimeout = nativeWindowTimeout ?? DefaultNativeWindowTimeout;
         this.nativeWindowPollInterval = nativeWindowPollInterval ?? DefaultNativeWindowPollInterval;
         this.childOperationTokenFactory = childOperationTokenFactory ?? (() => Guid.NewGuid().ToString("N"));
-        backend = this.backendFactory(sessionRoots);
+        backend = this.backendFactory(this.appId == HelperAppIds.Codex ? sessionRoots : []);
         settings = HelperSettingsStore.Load(settingsPath);
         ReloadCore();
     }
@@ -73,8 +76,10 @@ public sealed class HelperHost
         Func<IEnumerable<string>, HelperBackend>? backendFactory = null,
         TimeSpan? nativeWindowTimeout = null,
         TimeSpan? nativeWindowPollInterval = null,
-        Func<string>? childOperationTokenFactory = null)
+        Func<string>? childOperationTokenFactory = null,
+        string appId = HelperAppIds.Codex)
     {
+        this.appId = RequireAppId(appId);
         this.helpersRoot = helpersRoot;
         overrideRoot = null;
         this.settingsPath = settingsPath;
@@ -87,13 +92,25 @@ public sealed class HelperHost
         this.nativeWindowTimeout = nativeWindowTimeout ?? DefaultNativeWindowTimeout;
         this.nativeWindowPollInterval = nativeWindowPollInterval ?? DefaultNativeWindowPollInterval;
         this.childOperationTokenFactory = childOperationTokenFactory ?? (() => Guid.NewGuid().ToString("N"));
-        backend = this.backendFactory(sessionRoots);
+        backend = this.backendFactory(this.appId == HelperAppIds.Codex ? sessionRoots : []);
         settings = HelperSettingsStore.Load(settingsPath);
         ReloadCore();
     }
 
     public IReadOnlyList<HelperSummary> Helpers => summaries;
     public bool IsSuspended => suspended;
+
+    private static string RequireAppId(string value) => value is HelperAppIds.Codex or HelperAppIds.T3Code
+        ? value
+        : throw new ArgumentException("Unknown Helper app target.", nameof(value));
+
+    private async Task<IReadOnlyList<CodexTarget>> ListTargetsAsync(CancellationToken cancellationToken)
+    {
+        var discovered = await targetSource.ListAsync(cancellationToken);
+        return appId == HelperAppIds.Codex
+            ? CodexTargetCatalog.SelectPages(discovered)
+            : T3CodeTargetCatalog.SelectPages(discovered);
+    }
 
     public async Task<HelperHostReport> ReconcileAsync(CancellationToken cancellationToken = default)
     {
@@ -115,7 +132,7 @@ public sealed class HelperHost
         await gate.WaitAsync(cancellationToken);
         try
         {
-            var targets = CodexTargetCatalog.SelectPages(await targetSource.ListAsync(cancellationToken));
+            var targets = await ListTargetsAsync(cancellationToken);
             return suspended
                 ? new(0, targets.Count, 0, 0, [])
                 : await DrainHostActionsCoreAsync(targets, cancellationToken);
@@ -136,7 +153,7 @@ public sealed class HelperHost
         {
             var package = catalogReport.Packages.FirstOrDefault(candidate => candidate.Manifest.Id.Equals(helperId, StringComparison.Ordinal))
                 ?? throw new KeyNotFoundException($"Unknown Helper '{helperId}'");
-            var nextSettings = settings.WithHelperEnabled(helperId, enabled);
+            var nextSettings = HelperSettingsStore.Load(settingsPath).WithHelperEnabled(helperId, enabled);
             HelperSettingsStore.Save(settingsPath, nextSettings);
             settings = nextSettings;
             if (enabled) suspended = false;
@@ -149,7 +166,7 @@ public sealed class HelperHost
             else
             {
                 pendingCleanup.Add(package);
-                var targets = await targetSource.ListAsync(cancellationToken);
+                var targets = await ListTargetsAsync(cancellationToken);
                 report = await RetryPendingCleanupAsync(targets, cancellationToken);
             }
             UpdateSummaries(report.Diagnostics);
@@ -167,7 +184,7 @@ public sealed class HelperHost
         try
         {
             pendingCleanup.UnionWith(catalogReport.Packages);
-            var targets = await targetSource.ListAsync(cancellationToken);
+            var targets = await ListTargetsAsync(cancellationToken);
             var report = await RetryPendingCleanupAsync(targets, cancellationToken);
             UpdateSummaries(report.Diagnostics);
             return report;
@@ -185,7 +202,7 @@ public sealed class HelperHost
         {
             suspended = true;
             pendingCleanup.UnionWith(catalogReport.Packages);
-            var targets = await targetSource.ListAsync(cancellationToken);
+            var targets = await ListTargetsAsync(cancellationToken);
             var report = await RetryPendingCleanupAsync(targets, cancellationToken);
             UpdateSummaries(report.Diagnostics);
             return report;
@@ -214,11 +231,13 @@ public sealed class HelperHost
 
     public async Task<HelperHostReport> OpenNativeNewWindowAsync(CancellationToken cancellationToken = default)
     {
+        if (appId != HelperAppIds.Codex)
+            throw new NotSupportedException("Native new-window routing is not verified for this app.");
         await gate.WaitAsync(cancellationToken);
         try
         {
             suspended = false;
-            var before = CodexTargetCatalog.SelectPages(await targetSource.ListAsync(cancellationToken));
+            var before = await ListTargetsAsync(cancellationToken);
             var source = before.FirstOrDefault()
                 ?? throw new InvalidOperationException("No Codex page is available to open a new hookable window.");
 
@@ -246,7 +265,7 @@ public sealed class HelperHost
             pendingCleanup.UnionWith(catalogReport.Packages);
             try
             {
-                var targets = await targetSource.ListAsync(cancellationToken);
+                var targets = await ListTargetsAsync(cancellationToken);
                 _ = await RetryPendingCleanupAsync(targets, cancellationToken);
             }
             catch when (!cancellationToken.IsCancellationRequested)
@@ -254,7 +273,7 @@ public sealed class HelperHost
                 // Reload must still discover package changes when Codex/CDP is unavailable.
             }
             settings = HelperSettingsStore.Load(settingsPath);
-            backend = backendFactory(settings.ComposeSessionRoots());
+            backend = backendFactory(appId == HelperAppIds.Codex ? settings.ComposeSessionRoots() : []);
             ReloadCore();
         }
         finally
@@ -267,8 +286,8 @@ public sealed class HelperHost
     {
         backendStates.Clear();
         catalogReport = overrideRoot is null
-            ? catalog.Discover(helpersRoot)
-            : catalog.Discover(helpersRoot, overrideRoot);
+            ? catalog.DiscoverForApp(appId, helpersRoot)
+            : catalog.DiscoverForApp(appId, helpersRoot, overrideRoot);
         catalogReport = catalogReport with
         {
             Packages = catalogReport.Packages.Select(package => package with
@@ -287,7 +306,7 @@ public sealed class HelperHost
         while (DateTime.UtcNow < deadline)
         {
             cancellationToken.ThrowIfCancellationRequested();
-            var current = CodexTargetCatalog.SelectPages(await targetSource.ListAsync(cancellationToken));
+            var current = await ListTargetsAsync(cancellationToken);
             if (!CodexTargetCatalog.PreservesPages(before, current))
                 throw new InvalidOperationException("Codex opened a new window but an existing page disappeared before reconciliation.");
 
@@ -306,7 +325,7 @@ public sealed class HelperHost
         var diagnostics = new List<HelperDiagnostic>(catalogReport.Diagnostics);
         if (suspended && pendingCleanup.Count == 0)
             return new(0, 0, 0, 0, diagnostics);
-        var targets = await targetSource.ListAsync(cancellationToken);
+        var targets = await ListTargetsAsync(cancellationToken);
         var attempted = 0;
         var succeeded = 0;
         var failed = 0;
@@ -349,7 +368,7 @@ public sealed class HelperHost
                         var threadId = await GetTargetThreadIdAsync(target, cancellationToken);
                         using var state = await GetBackendStateAsync(package, target, threadId, cancellationToken);
                         var targetExpression = renderer.BuildApply(package, state.RootElement, target.Id);
-                        await evaluator.EvaluateAsync(target, targetExpression, cancellationToken);
+                        await ApplyAndCheckHealthAsync(package, target, targetExpression, diagnostics, cancellationToken);
                         succeeded++;
                     }
                     catch (Exception error) when (!cancellationToken.IsCancellationRequested)
@@ -380,7 +399,7 @@ public sealed class HelperHost
                     try
                     {
                         var expression = renderer.BuildApply(package, backendState.RootElement, target.Id);
-                        await evaluator.EvaluateAsync(target, expression, cancellationToken);
+                        await ApplyAndCheckHealthAsync(package, target, expression, diagnostics, cancellationToken);
                         succeeded++;
                     }
                     catch (Exception error) when (!cancellationToken.IsCancellationRequested)
@@ -398,6 +417,26 @@ public sealed class HelperHost
         diagnostics.AddRange(actionReport.Diagnostics);
 
         return new(attempted, targets.Count, succeeded, failed, diagnostics);
+    }
+
+    private async Task ApplyAndCheckHealthAsync(HelperPackage package, CodexTarget target,
+        string expression, List<HelperDiagnostic> diagnostics, CancellationToken cancellationToken)
+    {
+        if (appId != HelperAppIds.T3Code)
+        {
+            await evaluator.EvaluateAsync(target, expression, cancellationToken);
+            return;
+        }
+        var result = await evaluator.EvaluateValueAsync(target, expression, cancellationToken);
+        if (result is not { ValueKind: JsonValueKind.Object } value
+            || !value.TryGetProperty("renderHealth", out var health)
+            || health.ValueKind != JsonValueKind.Object) return;
+        if (health.TryGetProperty("state", out var state) && state.ValueKind == JsonValueKind.String
+            && state.GetString() is "ready" or "not-applicable") return;
+        var detail = health.TryGetProperty("detail", out var message) && message.ValueKind == JsonValueKind.String
+            ? message.GetString() : null;
+        if (string.IsNullOrWhiteSpace(detail)) detail = "Renderer readiness could not be confirmed.";
+        diagnostics.Add(new(package.Manifest.Id, $"{package.Manifest.Name}: {detail[..Math.Min(detail.Length, 240)]}"));
     }
 
     private async Task<HelperHostReport> DrainHostActionsCoreAsync(
@@ -536,6 +575,12 @@ public sealed class HelperHost
             diagnostics.Add(new(helperId, $"Host Action rejected for unknown or disabled Helper '{helperId}'"));
             return false;
         }
+        if (appId != HelperAppIds.Codex
+            && action is not (HostActionDispatcher.OpenObsidianUri or HostActionDispatcher.OpenFilePath))
+        {
+            diagnostics.Add(new(helperId, $"Host Action '{action}' is not available for {appId}"));
+            return false;
+        }
 
         string capability;
         try
@@ -583,7 +628,7 @@ public sealed class HelperHost
         var request = ExactChildBootstrapRequest.Parse(
             owner.Manifest.Id,
             payload ?? throw new InvalidOperationException("wingman.openChild requires a payload"));
-        var before = CodexTargetCatalog.SelectPages(await targetSource.ListAsync(cancellationToken));
+        var before = await ListTargetsAsync(cancellationToken);
         if (!before.Any(candidate => candidate.Id == source.Id))
             throw new InvalidOperationException("wingman.openChild source target is no longer available");
 
