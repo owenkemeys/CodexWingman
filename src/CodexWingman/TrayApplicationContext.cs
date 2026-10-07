@@ -205,11 +205,6 @@ internal sealed class TrayApplicationContext : ApplicationContext
         {
             startTimer.Stop();
             startTimer.Dispose();
-            try
-            {
-                LauncherShortcuts.Ensure(Application.ExecutablePath, LauncherShortcuts.CurrentProfileOverride(this.launchOptions));
-            }
-            catch (Exception error) { Debug.WriteLine($"[Wingman launchers] {error}"); }
             try { await InitializeAsync(); }
             finally
             {

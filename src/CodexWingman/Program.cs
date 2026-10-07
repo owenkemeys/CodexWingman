@@ -33,10 +33,18 @@ internal static class Program
         using var t3Activation = new EventWaitHandle(false, EventResetMode.AutoReset,
             new WingmanLaunchOptions(WingmanLaunchTarget.T3Code).ActivationEventName, out var createdT3Event);
         using var singleInstance = new Mutex(true, WingmanIdentity.SingleInstanceName, out var isFirstInstance);
+        if (isFirstInstance || createdCodexEvent || createdT3Event)
+        {
+            try { LauncherShortcuts.Ensure(Application.ExecutablePath, LauncherShortcuts.CurrentProfileOverride(options)); }
+            catch (Exception error)
+            {
+                MessageBox.Show("Wingman could not create its Start shortcuts.\n\n" + error.Message,
+                    "Wingman launchers", MessageBoxButtons.OK, MessageBoxIcon.Warning);
+            }
+        }
         if (!isFirstInstance)
         {
-            if ((options.Target == WingmanLaunchTarget.Codex && createdCodexEvent)
-                || (options.Target == WingmanLaunchTarget.T3Code && createdT3Event))
+            if (createdCodexEvent || createdT3Event)
             {
                 MessageBox.Show("Close the older Wingman from its tray menu, then use this shortcut again.",
                     "Wingman update", MessageBoxButtons.OK, MessageBoxIcon.Information);
