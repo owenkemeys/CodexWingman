@@ -39,7 +39,11 @@ internal sealed class TrayApplicationContext : ApplicationContext
     private readonly string t3RuntimeStatePath;
     private readonly string settingsPath;
     private readonly int? configuredPortOverride;
-    private readonly RegisteredWaitHandle? activationRegistration;
+    private readonly List<RegisteredWaitHandle> activationRegistrations = [];
+    private readonly Queue<WingmanLaunchTarget> pendingLaunches = new();
+    private readonly WingmanLaunchOptions launchOptions;
+    private bool drainingLaunches;
+    private bool initializing = true;
     private readonly SynchronizationContext uiContext;
     private readonly TrayRefreshGate automaticRefreshGate = new();
     private readonly TrayRefreshGate actionDrainGate = new();
@@ -60,11 +64,13 @@ internal sealed class TrayApplicationContext : ApplicationContext
         "Status: Checking",
         "Wingman is checking Codex and its Helpers.");
 
-    public TrayApplicationContext(int? portOverride = null, EventWaitHandle? activationEvent = null)
+    public TrayApplicationContext(int? portOverride = null, EventWaitHandle? activationEvent = null,
+        WingmanLaunchOptions? launchOptions = null, EventWaitHandle? codexActivation = null, EventWaitHandle? t3Activation = null)
     {
+        this.launchOptions = launchOptions ?? new WingmanLaunchOptions();
         uiContext = SynchronizationContext.Current ?? new WindowsFormsSynchronizationContext();
         configuredPortOverride = portOverride;
-        var initializedSettings = HelperSettingsStore.InitializeDefault();
+        var initializedSettings = HelperSettingsStore.InitializeDefault(this.launchOptions.LocalAppData);
         var settings = initializedSettings.Settings;
         var settingsDirectory = Path.GetDirectoryName(initializedSettings.Path)
             ?? throw new InvalidOperationException("Settings directory is unavailable");
@@ -172,13 +178,15 @@ internal sealed class TrayApplicationContext : ApplicationContext
         tray.MouseClick += TrayMouseClick;
         if (activationEvent is not null)
         {
-            activationRegistration = ThreadPool.RegisterWaitForSingleObject(
+            activationRegistrations.Add(ThreadPool.RegisterWaitForSingleObject(
                 activationEvent,
-                (_, _) => uiContext.Post(async _ => await LauncherActivatedAsync(), null),
+                (_, _) => uiContext.Post(_ => QueueLauncherActivation(WingmanLaunchTarget.Codex), null),
                 null,
                 Timeout.Infinite,
-                false);
+                false));
         }
+        RegisterLauncherActivation(codexActivation, WingmanLaunchTarget.Codex);
+        RegisterLauncherActivation(t3Activation, WingmanLaunchTarget.T3Code);
 
         refreshTimer = new System.Windows.Forms.Timer { Interval = HelperRefreshSchedule.IntervalMilliseconds(AllHelpers()) };
         refreshTimer.Tick += async (_, _) => await RefreshTimerAsync();
@@ -197,7 +205,17 @@ internal sealed class TrayApplicationContext : ApplicationContext
         {
             startTimer.Stop();
             startTimer.Dispose();
-            await InitializeAsync();
+            try
+            {
+                LauncherShortcuts.Ensure(Application.ExecutablePath, LauncherShortcuts.CurrentProfileOverride(this.launchOptions));
+            }
+            catch (Exception error) { Debug.WriteLine($"[Wingman launchers] {error}"); }
+            try { await InitializeAsync(); }
+            finally
+            {
+                initializing = false;
+                await DrainLauncherActivationsAsync();
+            }
             await CheckForUpdatesAsync(showCurrentResult: false);
         };
         startTimer.Start();
@@ -205,6 +223,16 @@ internal sealed class TrayApplicationContext : ApplicationContext
 
     private async Task InitializeAsync()
     {
+        if (launchOptions.Target == WingmanLaunchTarget.T3Code)
+        {
+            await EnsureT3ReadyAsync(repair: false);
+            return;
+        }
+        if (launchOptions.Target == WingmanLaunchTarget.Codex)
+        {
+            await EnsureCodexReadyAsync(openWindowWhenHealthy: true, "Opening Codex...");
+            return;
+        }
         if (busy || exiting) return;
         SetBusy(true, "Starting Codex...");
         try
@@ -357,15 +385,34 @@ internal sealed class TrayApplicationContext : ApplicationContext
         tray.ShowBalloonTip(2500);
     }
 
-    private async Task LauncherActivatedAsync()
+    private void RegisterLauncherActivation(EventWaitHandle? handle, WingmanLaunchTarget target)
+    {
+        if (handle is null) return;
+        activationRegistrations.Add(ThreadPool.RegisterWaitForSingleObject(handle,
+            (_, _) => uiContext.Post(_ => QueueLauncherActivation(target), null), null, Timeout.Infinite, false));
+    }
+
+    private void QueueLauncherActivation(WingmanLaunchTarget target)
     {
         if (exiting) return;
-        if (busy)
+        pendingLaunches.Enqueue(target);
+        _ = DrainLauncherActivationsAsync();
+    }
+
+    private async Task DrainLauncherActivationsAsync()
+    {
+        if (initializing || drainingLaunches || busy || exiting) return;
+        drainingLaunches = true;
+        try
         {
-            ShowCurrentStatusBalloon();
-            return;
+            while (pendingLaunches.Count > 0 && !busy && !exiting)
+            {
+                var target = pendingLaunches.Dequeue();
+                if (target == WingmanLaunchTarget.T3Code) await EnsureT3ReadyAsync(repair: false);
+                else await EnsureCodexReadyAsync(openWindowWhenHealthy: true, "Opening Codex...");
+            }
         }
-        await EnsureCodexReadyAsync(openWindowWhenHealthy: true, "Opening Codex...");
+        finally { drainingLaunches = false; }
     }
 
     private async void InjectCheckedChanged(object? sender, EventArgs eventArgs)
@@ -866,6 +913,8 @@ internal sealed class TrayApplicationContext : ApplicationContext
             reloadPending = false;
             uiContext.Post(async _ => await ReloadHelpersAsync(), null);
         }
+        if (!value && !exiting && pendingLaunches.Count > 0)
+            uiContext.Post(async _ => await DrainLauncherActivationsAsync(), null);
     }
 
     private async Task EnsureCodexReadyAsync(bool openWindowWhenHealthy, string busyText)
@@ -1047,7 +1096,7 @@ internal sealed class TrayApplicationContext : ApplicationContext
             refreshTimer.Dispose();
             actionTimer.Dispose();
             trayRecoveryTimer.Dispose();
-            activationRegistration?.Unregister(null);
+            foreach (var registration in activationRegistrations) registration.Unregister(null);
             tray.Dispose();
             trayIcons.Dispose();
             targetHttp.Dispose();

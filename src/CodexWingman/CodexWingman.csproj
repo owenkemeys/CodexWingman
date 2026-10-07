@@ -20,7 +20,7 @@
     <EmbeddedResource Include="..\..\release-content.json" LogicalName="Wingman.ReleaseContent.json" />
   </ItemGroup>
   <ItemGroup>
-    <Content Include="..\..\LICENSE;..\..\THIRD_PARTY_NOTICES.md">
+    <Content Include="..\..\LICENSE;..\..\THIRD_PARTY_NOTICES.md;..\..\WINDOWS-START-HERE.md">
       <Link>%(Filename)%(Extension)</Link>
       <CopyToOutputDirectory>PreserveNewest</CopyToOutputDirectory>
       <CopyToPublishDirectory>PreserveNewest</CopyToPublishDirectory>

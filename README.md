@@ -6,7 +6,7 @@ Wingman (formerly CodexWingman) is a Windows tray companion for the official Cod
 
 Start here: [Agent setup and customization](docs/AGENT_SETUP.md). Give this repository link to your agent and ask it to install Wingman, configure local integrations, and report unresolved choices. Windows only.
 
-**Launch Codex through the Codex Wingman shortcut.** Wingman automatically launches Codex with the connection its helpers need. Installing agents must create that shortcut, launch it, verify that Codex opens through Wingman, and tell the user to use it for normal launches. Installing Wingman without launching it does not activate the helpers.
+**Launch through Wingman Codex or Wingman T3 Code.** Extract the whole Windows download into a folder you intend to keep, then run `CodexWingman.exe` once. It creates both Start menu shortcuts. Right-click either entry to pin it to Start or the taskbar. Each shortcut opens its selected app with the connection its Helpers need. See [the included Windows guide](WINDOWS-START-HERE.md).
 
 > Unofficial community project. CodexWingman is not affiliated with, endorsed by, or sponsored by OpenAI. OpenAI, ChatGPT, and Codex are trademarks of OpenAI.
 
@@ -28,7 +28,7 @@ MIT licensed. See [LICENSE](LICENSE) and [third-party notices](THIRD_PARTY_NOTIC
 
 The checked `Helpers enabled` item is the master injection switch: uncheck it to remove Wingman-owned UI, and check it again to refresh or reinject. Individual Helpers can be enabled or disabled from the `Manage helpers` submenu. `Reload helpers` rescans package folders without restarting Wingman. Exit cleans up before Wingman closes.
 
-Use the Codex Wingman shortcut whenever you want to launch Codex through Codex Wingman. The first launch starts Wingman and a Helper-ready Codex process. Launching the same shortcut again asks the running Wingman instance to open Codex, repair it, or open another native window as needed.
+The first app shortcut launch starts Wingman and opens the selected app with Helpers. Repeating it asks the running Wingman instance to open another hooked window of that app. App-specific shortcuts select that app regardless of the automatic startup preferences. Running the executable directly still honors those preferences. Existing `Codex Wingman` shortcuts retain their Codex activation behavior.
 
 `Repair Codex and Helpers...` is always available. It checks the current Codex windows and reapplies Helpers without restarting Wingman. If Codex is already running without a usable connection, Wingman asks before closing and relaunching Codex with the normal profile; cancelling leaves every window untouched. After confirmation, Wingman may stop remaining processes verified as part of the registered Codex package in the current Windows session. `Open another Codex window` remains a separate action.
 
@@ -68,8 +68,9 @@ Run `dist\CodexWingman-verified\CodexWingman.exe` when using the stable publishe
 .\scripts\Install-CodexWingmanStartMenu.ps1
 ```
 
-The installer creates `Codex Wingman.lnk` in the current user's Start Menu. This is the primary Codex launcher while using Wingman. It does not install a service or request administrator access.
-When `dist\CodexWingman-verified` exists, the installer selects it automatically; use `-PackageDirectory` to choose another published folder explicitly.
+Running the executable creates `Wingman Codex.lnk` and `Wingman T3 Code.lnk` in the current user's Start menu. The source installer also retains its legacy Codex shortcut. Neither needs administrator access. Keep the extracted folder in place; after moving it, run the executable again to update the Start entries and recreate old taskbar pins.
+
+Pull requests provide a **Wingman-development-win-x64** download in their GitHub verification run. These candidates are marked as development builds and remain separate from stable GitHub Releases and the stable updater.
 
 ## Helper packages
 

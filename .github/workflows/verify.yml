@@ -43,6 +43,8 @@ jobs:
         run: python tools/release_provenance.py verify-source
       - name: Verify About identity
         run: python tools/release_identity.py
+      - name: Verify native Windows launcher shortcuts
+        run: dotnet run --project tests/CodexWingman.Windows.Tests/CodexWingman.Windows.Tests.csproj -c Release
       - name: Verify Wingman consumes the packed kit
         shell: pwsh
         run: |
@@ -53,6 +55,18 @@ jobs:
           }
       - name: Verify a separate app consumes the packed kit
         run: python -m unittest -v tests.release.test_releasekit_consumer
+      - name: Build downloadable development candidate
+        if: github.event_name == 'pull_request' || github.event_name == 'workflow_dispatch'
+        run: python tools/development_package.py --output '${{ runner.temp }}/wingman-development-download'
+      - name: Preserve development download
+        if: github.event_name == 'pull_request' || github.event_name == 'workflow_dispatch'
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02
+        with:
+          name: Wingman-development-win-x64
+          path: |
+            ${{ runner.temp }}/wingman-development-download/*.zip
+            ${{ runner.temp }}/wingman-development-download/*.sha256
+          retention-days: 14
       - name: Build sealed main package
         if: github.event_name == 'push' && github.ref == 'refs/heads/main'
         shell: pwsh
