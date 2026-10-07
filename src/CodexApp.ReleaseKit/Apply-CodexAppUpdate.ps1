@@ -24,6 +24,18 @@ if ($ExpectedRepository -notmatch '^https://github\.com/[A-Za-z0-9_.-]+/[A-Za-z0
     throw 'Invalid release identity parameter'
 }
 
+function Get-ReleaseFileHash([string]$path) {
+    $stream = [IO.File]::OpenRead($path)
+    $algorithm = [Security.Cryptography.SHA256]::Create()
+    try {
+        return [BitConverter]::ToString($algorithm.ComputeHash($stream)).Replace('-', '')
+    }
+    finally {
+        $algorithm.Dispose()
+        $stream.Dispose()
+    }
+}
+
 function Assert-SealedPackage([string]$directory, [string]$version) {
     $recordPath = Join-Path $directory 'release.json'
     $record = Get-Content -LiteralPath $recordPath -Raw | ConvertFrom-Json
@@ -48,7 +60,7 @@ function Assert-SealedPackage([string]$directory, [string]$version) {
         $name = $item.FullName.Substring($directory.Length + 1).Replace('\', '/')
         if ($name -eq 'release.json') { continue }
         if (-not $expected.ContainsKey($name)) { throw "Unexpected release file: $name" }
-        $hash = (Get-FileHash -LiteralPath $item.FullName -Algorithm SHA256).Hash
+        $hash = Get-ReleaseFileHash $item.FullName
         if ($hash -ine $expected[$name]) { throw "Release file did not verify: $name" }
         $actual[$name] = $true
     }
