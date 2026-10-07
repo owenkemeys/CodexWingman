@@ -66,10 +66,11 @@ internal static class T3CodeLauncher
             ? T3CodeLaunchPolicy.CandidatePorts(remembered, codexPort) : [])
         {
             if (!await HasT3PagesAsync(port, cancellationToken)) continue;
-            var previousCount = await CountT3PagesAsync(port, cancellationToken);
-            Start(executable, port, newWindow: true);
-            if (!await WaitForPagesAsync(port, previousCount + 1, cancellationToken))
-                throw new TimeoutException("T3 Code did not expose a new hooked window.");
+            // T3's second-instance route reveals its existing native window. It does
+            // not implement a --new-window CLI contract; keep that hooked window.
+            Start(executable, port);
+            if (!await WaitForPagesAsync(port, 1, cancellationToken))
+                throw new TimeoutException("T3 Code did not retain its hooked window.");
             CodexRuntimeStateStore.SavePort(runtimeStatePath, port);
             return new(port, HookReadyAcquisitionMode.ExistingEndpoint);
         }
@@ -173,16 +174,16 @@ internal static class T3CodeLauncher
     private static async Task<int> LaunchAsync(string executable, string runtimeStatePath, CancellationToken cancellationToken)
     {
         var port = CodexLaunchPolicy.FindAvailablePort(T3CodeLaunchPolicy.PreferredPort);
-        Start(executable, port, newWindow: false);
+        Start(executable, port);
         if (!await WaitForPagesAsync(port, 1, cancellationToken))
             throw new TimeoutException("T3 Code did not expose a localhost Helper endpoint.");
         CodexRuntimeStateStore.SavePort(runtimeStatePath, port);
         return port;
     }
 
-    private static void Start(string executable, int port, bool newWindow)
+    private static void Start(string executable, int port)
     {
-        var process = Process.Start(new ProcessStartInfo(executable, T3CodeLaunchPolicy.DebugArguments(port, newWindow))
+        var process = Process.Start(new ProcessStartInfo(executable, T3CodeLaunchPolicy.DebugArguments(port))
         {
             UseShellExecute = false,
             WorkingDirectory = Path.GetDirectoryName(executable)!,

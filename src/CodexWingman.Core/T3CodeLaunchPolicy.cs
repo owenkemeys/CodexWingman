@@ -74,10 +74,9 @@ public static class T3CodeLaunchPolicy
             : preferred;
     }
 
-    public static string DebugArguments(int port, bool newWindow = false)
+    public static string DebugArguments(int port)
     {
         if (port is < 1 or > 65535) throw new ArgumentOutOfRangeException(nameof(port));
-        return $"--remote-debugging-address=127.0.0.1 --remote-debugging-port={port}"
-            + (newWindow ? " --new-window" : string.Empty);
+        return $"--remote-debugging-address=127.0.0.1 --remote-debugging-port={port}";
     }
 }

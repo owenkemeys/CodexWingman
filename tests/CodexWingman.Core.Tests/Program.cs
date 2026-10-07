@@ -2205,8 +2205,9 @@ static void TestT3CodeLaunchPolicy()
         "T3 rejects its preferred port when Codex owns it");
     Equal(true, T3CodeLaunchPolicy.DebugArguments(T3CodeLaunchPolicy.PreferredPort).Contains("127.0.0.1"),
         "T3 CDP binds loopback");
-    Equal(true, T3CodeLaunchPolicy.DebugArguments(T3CodeLaunchPolicy.PreferredPort, newWindow: true)
-        .Contains("--new-window", StringComparison.Ordinal), "T3 new-window request is explicit");
+    Equal("--remote-debugging-address=127.0.0.1 --remote-debugging-port=9323",
+        T3CodeLaunchPolicy.DebugArguments(T3CodeLaunchPolicy.PreferredPort),
+        "T3 activation uses its native single-window route without an unsupported CLI flag");
 }
 
 static async Task TestTargetAppIsolation()

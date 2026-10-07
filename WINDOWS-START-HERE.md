@@ -5,8 +5,8 @@ Wingman adds **Wingman Codex** and **Wingman T3 Code** to your Start menu.
 Right-click either entry to pin it to Start or the taskbar. Use the matching
 Wingman shortcut whenever you want to open that app with Helpers connected.
 
-The shortcut starts Wingman if needed. If Wingman is already running, it asks
-that instance to open another window of the selected app. If the app was opened
+The shortcut starts Wingman if needed. On repeat launches, Codex opens another
+native window and T3 Code activates its existing connected window. If the app was opened
 without its helper connection, Wingman asks before restarting it.
 
 Keep the executable and its `Helpers` folder together. If you move the extracted
