@@ -62,11 +62,17 @@ public sealed record WingmanLaunchOptions(
             WingmanLaunchTarget.T3Code => "--launch=t3-code",
             _ => throw new ArgumentException("A shortcut must select an app.", nameof(target)),
         };
-        if (localAppData is null) return arguments;
+        var profile = RelaunchArguments(localAppData);
+        return profile.Length == 0 ? arguments : arguments + " " + profile;
+    }
+
+    public static string RelaunchArguments(string? localAppData)
+    {
+        if (localAppData is null) return string.Empty;
         var validated = Parse(["--local-app-data=" + localAppData]).LocalAppData!;
         var profileArgument = "--local-app-data=" + validated;
         // Windows doubles trailing backslashes before the closing quote.
         var trailingSlashes = profileArgument.Length - profileArgument.TrimEnd('\\').Length;
-        return arguments + " \"" + profileArgument + new string('\\', trailingSlashes) + "\"";
+        return "\"" + profileArgument + new string('\\', trailingSlashes) + "\"";
     }
 }

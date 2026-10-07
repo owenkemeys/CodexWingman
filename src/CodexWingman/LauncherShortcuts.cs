@@ -19,9 +19,12 @@ internal static class LauncherShortcuts
         {
             (Name: "Wingman Codex", Target: WingmanLaunchTarget.Codex, Id: WingmanIdentity.AppUserModelId + ".Codex"),
             (Name: "Wingman T3 Code", Target: WingmanLaunchTarget.T3Code, Id: WingmanIdentity.AppUserModelId + ".T3Code"),
+            (Name: "Wingman", Target: WingmanLaunchTarget.Preferences, Id: WingmanIdentity.AppUserModelId),
         };
         return shortcuts.Select(item => Save(Path.Combine(programsFolder, item.Name + ".lnk"),
-            executable, WingmanLaunchOptions.ShortcutArguments(item.Target, localAppData), item.Name, item.Id)).ToArray();
+            executable, item.Target == WingmanLaunchTarget.Preferences
+                ? WingmanLaunchOptions.RelaunchArguments(localAppData)
+                : WingmanLaunchOptions.ShortcutArguments(item.Target, localAppData), item.Name, item.Id)).ToArray();
     }
 
     public static string? CurrentProfileOverride(WingmanLaunchOptions options)

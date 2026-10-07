@@ -616,7 +616,7 @@ internal sealed class TrayApplicationContext : ApplicationContext
     {
         MessageBox.Show(
             $"{currentStatus.Label}\n{currentStatus.WindowSummary}\n\n{currentStatus.DiagnosticText}",
-            "Codex Wingman status",
+            "Wingman status",
             MessageBoxButtons.OK,
             MessageBoxIcon.Information);
     }
@@ -729,12 +729,13 @@ internal sealed class TrayApplicationContext : ApplicationContext
             var version = typeof(TrayApplicationContext).Assembly.GetName().Version
                 ?? throw new InvalidOperationException("Wingman version is unavailable.");
             var client = new AppReleaseClient(releaseHttp, "Wingman");
-            var release = await client.CheckAsync("owenkemeys/CodexWingman", "Wingman", version);
+            var check = await client.CheckLatestAsync("owenkemeys/CodexWingman", "Wingman", version);
+            var release = check.Release;
             if (exiting) return;
             if (release is null)
             {
                 if (showCurrentResult)
-                    MessageBox.Show("Wingman is up to date.", "Wingman updates",
+                    MessageBox.Show(check.Message, "Wingman updates",
                         MessageBoxButtons.OK, MessageBoxIcon.Information);
                 return;
             }
@@ -779,6 +780,13 @@ internal sealed class TrayApplicationContext : ApplicationContext
                         "-StableDirectoryName", "CodexWingman-verified",
                         "-ExtensionsDirectoryName", "Helpers",
                     }) startInfo.ArgumentList.Add(argument);
+                    var relaunchArguments = WingmanLaunchOptions.RelaunchArguments(
+                        LauncherShortcuts.CurrentProfileOverride(launchOptions));
+                    if (relaunchArguments.Length > 0)
+                    {
+                        startInfo.ArgumentList.Add("-RelaunchArguments");
+                        startInfo.ArgumentList.Add(relaunchArguments);
+                    }
                     if (preflight) startInfo.ArgumentList.Add("-PreflightOnly");
                     return startInfo;
                 }

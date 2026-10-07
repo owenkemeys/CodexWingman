@@ -7,7 +7,6 @@ public static class TrayVisibilityRecovery
         ArgumentNullException.ThrowIfNull(setVisible);
         if (exiting) return;
 
-        setVisible(false);
         setVisible(true);
     }
 }

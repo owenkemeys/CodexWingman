@@ -32,7 +32,7 @@ class ReleaseKitConsumerTests(unittest.TestCase):
                 '<PropertyGroup><OutputType>Exe</OutputType><TargetFramework>net9.0</TargetFramework>'
                 '<ImplicitUsings>enable</ImplicitUsings></PropertyGroup>'
                 '<ItemGroup><PackageReference Include="CodexApp.ReleaseKit" '
-                'Version="0.1.0-preview.2" /></ItemGroup></Project>', encoding="utf-8")
+                'Version="0.1.0-preview.3" /></ItemGroup></Project>', encoding="utf-8")
             (app / "Program.cs").write_text(
                 'using CodexApp.ReleaseKit; '
                 'Console.WriteLine(AppReleaseClient.Summarize("- Shared updater works"));',

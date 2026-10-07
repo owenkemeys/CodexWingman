@@ -45,7 +45,7 @@ The publisher checks the exact commit against GitHub main, builds a whole packag
 The resulting folder is the installation. Keep it at a stable location because the shortcut points there. After creating the shortcut, the agent can launch it without a setup GUI:
 
 ```powershell
-$wingmanShortcut = Join-Path ([Environment]::GetFolderPath('Programs')) 'Codex Wingman.lnk'
+$wingmanShortcut = Join-Path ([Environment]::GetFolderPath('Programs')) 'Wingman.lnk'
 Start-Process -FilePath $wingmanShortcut -WindowStyle Hidden
 ```
 
