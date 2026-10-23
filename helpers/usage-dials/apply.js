@@ -1,6 +1,9 @@
 (() => {
-  const controllerVersion = 'native-slot-v26';
-  const t3Renderer = window.location?.protocol === 't3code:';
+  const controllerVersion = 'native-slot-v27';
+  // Wingman names the app it injected into; the legacy embedded Codex renderer has no wingman object.
+  const wingmanApp = typeof wingman === 'undefined' ? null : wingman?.app;
+  const t3Renderer = window.location?.protocol === 't3code:' || wingmanApp === 't3-web';
+  const grokRenderer = wingmanApp === 'grok-bot';
   const initialSnapshot = state || {};
   const existing = window.__codexHelperUsageDials;
   if (existing?.version === controllerVersion) {
@@ -68,6 +71,7 @@
   };
 
   const refreshAccountState = () => {
+    if (grokRenderer) { refreshGrokAccountState(); return; }
     if (t3Renderer) { refreshT3AccountState(); return; }
     const query = readAccountState();
     const count = query?.status === 'success'
@@ -92,7 +96,7 @@
   };
 
   const connectAccountCache = () => {
-    if (t3Renderer) return;
+    if (t3Renderer || grokRenderer) return;
     if (accountClient) return;
     const queue = [window.__codexRoot?._internalRoot?.current];
     const seen = new Set();
@@ -178,9 +182,12 @@
     if (!provider.enabled || !provider.installed || !environmentId || !t3Registry || disposed
       || (Number.isFinite(checked) && now - checked < 60000)
       || now - (t3RefreshAttempts.get(instanceId) || 0) < 60000 || t3RefreshLoading) return;
+    // T3 desktop serves t3code://app/assets; T3 web serves the same bundle from its own https origin.
+    const origin = wingmanApp === 't3-web' && /^https:\/\/[^/]+$/.test(window.location?.origin || '')
+      ? window.location.origin : 't3code://app';
     const urls = [...document.querySelectorAll('link[rel="modulepreload"]')]
-      .map(element => element.href).filter(url => typeof url === 'string'
-        && /^t3code:\/\/app\/assets\/server-[^/]+\.js$/.test(url));
+      .map(element => element.href).filter(url => typeof url === 'string' && url.startsWith(origin + '/assets/')
+        && /^\/assets\/(?:server|runtime)-[^/]+\.js$/.test(url.slice(origin.length)));
     if (!t3RefreshCommand && (urls.length === 0 || urls.length > 8)) return;
     t3RefreshAttempts.set(instanceId, now);
     t3RefreshLoading = true;
@@ -304,6 +311,25 @@
     if (snapshot.primary || snapshot.secondary) quotaUnavailableReason = null;
   };
 
+  // Grok Bot's own weekly-usage cache, passed in by the Wingman backend (percent, reset and read time only).
+  const refreshGrokAccountState = () => {
+    snapshot = { primary: null, secondary: null };
+    availableResets = null;
+    quotaNotReported = false;
+    providerLabel = 'Grok Bot';
+    quotaUnavailableReason = 'Grok Bot has not saved a current usage reading yet.';
+    const usage = fallbackSnapshot?.grokBot;
+    if (!usage || usage.available !== true || !Number.isFinite(usage.percentUsed)
+      || usage.percentUsed < 0 || usage.percentUsed > 100) return;
+    const reset = Number.isSafeInteger(usage.nextResetMs) ? Math.floor(usage.nextResetMs / 1000) : null;
+    const value = (reset !== null && normalizeAccountWindow({ used_percent: usage.percentUsed,
+      limit_window_seconds: 10080 * 60, reset_at: reset }))
+      || { usedPercent: usage.percentUsed, state: usage.percentUsed >= 95 ? 'danger' : 'neutral' };
+    value.label = 'Weekly usage';
+    snapshot.secondary = value;
+    quotaUnavailableReason = null;
+  };
+
   const style = document.createElement('style');
   style.dataset.codexHelperStyle = owner;
   style.textContent = `
@@ -343,6 +369,9 @@
        Scope the palette to both the miniature and its separate hover preview. */
     [data-codex-helper-dial][data-wingman-app="t3-code"] { color: #000; }
     .dark [data-codex-helper-dial][data-wingman-app="t3-code"] { color: #fff; }
+    /* Grok Bot: inherit the composer icon colour, like the native attach and mic controls beside it. */
+    [data-codex-helper="usage-dials"][data-wingman-app="grok-bot"] { height: 32px; margin-right: 4px; }
+    [data-codex-helper-dial][data-wingman-app="grok-bot"] { height: 32px; }
     /* Keep the original composer circle; only the enlarged popup uses an outline. */
     .codex-helper-usage-preview [data-codex-helper-dial] .codex-helper-unused { stroke-width: 2px; vector-effect: non-scaling-stroke; }
     .codex-helper-usage-shared { opacity: .6; }
@@ -413,6 +442,14 @@
   };
 
   const findAnchors = () => {
+    if (grokRenderer) {
+      // Grok Bot marks its composer with stable semantic classes beside its hashed styles.
+      return [...document.querySelectorAll('.sand-prompt-actions-trailing')]
+        .filter(isVisible)
+        .map(row => [...row.children].find(child => String(child.className || '').split(/\s+/).includes('sand-prompt-cta-cluster')))
+        .filter(Boolean)
+        .map(cluster => ({ mode: 'grok-actions', wrapper: cluster }));
+    }
     if (t3Renderer) {
       return [...document.querySelectorAll('[data-chat-provider-model-picker="true"]')]
         .filter(picker => picker.closest?.('[data-chat-composer-main-surface="true"]') && isVisible(picker))
@@ -486,6 +523,7 @@
     const dial = document.createElement('span');
     dial.className = 'text-token-description-foreground';
     if (t3Renderer) dial.dataset.wingmanApp = 't3-code';
+    else if (grokRenderer) dial.dataset.wingmanApp = 'grok-bot';
     dial.dataset.codexHelperDial = key;
     dial.dataset.state = 'unavailable';
     dial.setAttribute('role', 'img');
@@ -540,7 +578,7 @@
   };
 
   const formatWindowLabel = (value, fallback) => {
-    if (t3Renderer && value?.label) return value.label;
+    if ((t3Renderer || grokRenderer) && value?.label) return value.label;
     const minutes = value?.windowMinutes;
     if (!Number.isFinite(minutes) || minutes <= 0) return fallback;
     if (minutes === 300) return '5-hour usage';
@@ -553,7 +591,8 @@
   const createInstance = (anchor) => {
     const bank = document.createElement('span');
     bank.dataset.codexHelper = owner;
-    bank.setAttribute('aria-label', t3Renderer ? 'T3 provider usage' : 'Codex account usage');
+    bank.setAttribute('aria-label', grokRenderer ? 'Grok Bot usage' : t3Renderer ? 'T3 provider usage' : 'Codex account usage');
+    if (grokRenderer) bank.dataset.wingmanApp = 'grok-bot';
     const primary = makeDial('primary', '5-hour usage');
     const secondary = makeDial('secondary', 'Weekly usage');
     bank.append(primary, secondary);
@@ -601,10 +640,10 @@
 
   const updateInstance = (instance) => {
     if (t3Renderer) setAttributeIfChanged(instance.bank, 'aria-label', `${providerLabel} usage`);
-    renderDial(instance.primary, snapshot.primary, t3Renderer && !snapshot.primary && !snapshot.secondary);
+    renderDial(instance.primary, snapshot.primary, (t3Renderer || grokRenderer) && !snapshot.primary && !snapshot.secondary);
     renderDial(instance.secondary, snapshot.secondary);
     if (!instance.wrapper?.parentElement) return;
-    if (t3Renderer) {
+    if (t3Renderer || grokRenderer) {
       if (instance.bank.parentElement !== instance.wrapper.parentElement || instance.bank.nextElementSibling !== instance.wrapper)
         insertBefore(instance.wrapper.parentElement, instance.bank, instance.wrapper);
     } else if (instance.bank.parentElement !== instance.wrapper.parentElement || instance.bank.previousElementSibling !== instance.wrapper)
@@ -660,6 +699,7 @@
 
   const appendAvailableReadouts = (stack, key) => {
     if (snapshot[key]) appendWindowReadout(stack, formatWindowLabel(snapshot[key], key === 'primary' ? '5-hour usage' : 'Weekly usage'), snapshot[key], false);
+    if (grokRenderer) return;
     const resetLabel = availableResets === null ? 'Resets unavailable'
       : `${availableResets} ${availableResets === 1 ? 'reset' : 'resets'} available`;
     stack.appendChild(makeText(resetLabel, 'codex-helper-usage-resets'));
@@ -667,7 +707,7 @@
   };
 
   const showFallbackTooltip = (instance) => {
-    const unavailable = t3Renderer && !snapshot.primary && !snapshot.secondary;
+    const unavailable = (t3Renderer || grokRenderer) && !snapshot.primary && !snapshot.secondary;
     const key = unavailable ? 'primary' : snapshot[instance.activeWindow] ? instance.activeWindow : (snapshot.primary ? 'primary' : 'secondary');
     const label = key === 'primary' ? '5-hour usage' : 'Weekly usage';
     let tooltip = instance.tooltip;
@@ -680,7 +720,7 @@
       tooltip.style.position = 'fixed';
       tooltip.style.zIndex = '2147483647';
       tooltip.style.pointerEvents = 'none';
-      if (t3Renderer) {
+      if (t3Renderer || grokRenderer) {
         tooltip.style.background = 'var(--color-popover, #1b1b1b)';
         tooltip.style.color = 'var(--color-popover-foreground, #eee)';
         tooltip.style.border = '1px solid var(--color-border, #444)';
@@ -744,6 +784,13 @@
     primary: snapshot.primary || null,
     secondary: snapshot.secondary || null,
     availableResets,
+    ...(grokRenderer ? { renderHealth: {
+      state: !document.querySelector('.sand-prompt-field') ? 'not-applicable'
+        : [...instances.values()].some(instance => instance.bank.isConnected && instance.bank.getBoundingClientRect().width > 0)
+          && snapshot.secondary ? 'ready' : 'waiting',
+      detail: quotaUnavailableReason || ([...instances.values()].some(instance => instance.bank.isConnected)
+        ? 'Grok Bot usage is visible.' : 'Usage Dials could not attach to the Grok Bot composer.'),
+    } } : {}),
     ...(t3Renderer ? { renderHealth: {
       state: !document.querySelector('[data-testid="composer-editor"]') ? 'not-applicable'
         : [...instances.values()].some(instance => instance.bank.isConnected && instance.bank.getBoundingClientRect().width > 0)

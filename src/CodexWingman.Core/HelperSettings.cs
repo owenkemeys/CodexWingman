@@ -9,7 +9,9 @@ public sealed record HelperSettings(
     bool ForceHighPerformanceGpu = false,
     IReadOnlyDictionary<string, JsonElement>? HelperConfig = null,
     bool OpenCodexOnLaunch = true,
-    bool OpenT3CodeOnLaunch = false)
+    bool OpenT3CodeOnLaunch = false,
+    T3WebSettings? T3Web = null,
+    bool OpenGrokBotOnLaunch = false)
 {
     public static HelperSettings Default { get; } = new(
         true,
@@ -105,7 +107,9 @@ public static class HelperSettingsStore
                     value.ForceHighPerformanceGpu,
                     value.HelperConfig,
                     value.OpenCodexOnLaunch,
-                    value.OpenT3CodeOnLaunch);
+                    value.OpenT3CodeOnLaunch,
+                    value.T3Web,
+                    value.OpenGrokBotOnLaunch);
         }
         catch (JsonException) { return HelperSettings.Default; }
         catch (IOException) { return HelperSettings.Default; }
@@ -129,6 +133,30 @@ public static class HelperSettingsStore
             if (File.Exists(temporary)) File.Delete(temporary);
         }
     }
+}
+
+/// <summary>
+/// Local, per-PC T3 web settings. The URL and the pairing folder are private machine
+/// configuration: they live only in settings.json, never in the public source.
+/// </summary>
+public sealed record T3WebSettings(
+    string? Url = null,
+    T3PairingSettings? Pairing = null,
+    bool OpenOnLaunch = false,
+    string? ChromePath = null)
+{
+    public bool IsConfigured => T3WebUrlPolicy.TryNormalizeOrigin(Url, out _) || Pairing?.IsConfigured == true;
+}
+
+/// <summary>Which pluggable provider mints a pairing link, and where it looks.</summary>
+public sealed record T3PairingSettings(
+    string? Provider = null,
+    string? Folder = null,
+    string? Label = null)
+{
+    public const string SharedFolderProvider = "shared-folder";
+    public bool IsConfigured => string.Equals(Provider ?? SharedFolderProvider, SharedFolderProvider, StringComparison.Ordinal)
+        && !string.IsNullOrWhiteSpace(Folder);
 }
 
 public sealed record InitializedHelperSettings(string Path, HelperSettings Settings);

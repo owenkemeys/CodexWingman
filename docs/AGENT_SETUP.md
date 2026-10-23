@@ -60,3 +60,6 @@ For an existing installation outside the checkout, the agent may use `Install-Ve
 Verify the shortcut targets this installation's Wingman executable, launch it, and confirm that Wingman opens Codex automatically. Inspect the tray's status details and the actual Codex window. Verify the requested helpers, usage popup, and a real note link in each configured vault. A green build is not proof that an installed Codex version supports every helper. If Codex needs a restart, report that honestly and arrange it with the user; do not force-kill it.
 
 Give the user the installed location, what works, any disabled optional integrations, and any customization still needed. If a missing choice or permission blocks an optional helper, finish the rest and identify that exact item. Do not claim a colleague's live installation has been tested on the author's machine.
+
+T3 web and Grok Bot are optional targets. Do not pin anything for the user and do not enable `Open on launch` for them. T3 web pairing needs a T3 host that answers pairing requests (see [Configuration](configuration.md)); never copy browser cookies to sign a window in. The Grok Bot pin retarget is the user's own opt-in from the tray.
+

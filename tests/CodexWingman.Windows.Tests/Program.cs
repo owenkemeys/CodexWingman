@@ -75,6 +75,43 @@ internal static class Program
             object refreshed = ((dynamic)shell).CreateShortcut(paths[0]);
             try { Equal("--launch=codex", (string)((dynamic)refreshed).Arguments, "normal profile clears trial argument"); }
             finally { Marshal.FinalReleaseComObject(refreshed); }
+            // T3 web gets its own Start shortcut and taskbar identity only when it can work on this PC.
+            var withWeb = LauncherShortcuts.Ensure(executable, profile, programs, includeT3Web: true);
+            Equal(4, withWeb.Length, "T3 web shortcut added when available");
+            Equal(LauncherShortcuts.T3WebShortcutName + ".lnk", Path.GetFileName(withWeb[3]), "T3 web shortcut name");
+            object webShortcut = ((dynamic)shell).CreateShortcut(withWeb[3]);
+            object webFolder = ((dynamic)explorer).NameSpace(programs);
+            object webItem = ((dynamic)webFolder).ParseName(Path.GetFileName(withWeb[3]));
+            try
+            {
+                Equal(WingmanLaunchOptions.ShortcutArguments(WingmanLaunchTarget.T3Web, profile), (string)((dynamic)webShortcut).Arguments, "T3 web shortcut arguments");
+                Equal(WingmanIdentity.AppUserModelId + ".T3Web", (string)((dynamic)webItem).ExtendedProperty("System.AppUserModel.ID"), "T3 web taskbar identity");
+                observed.Add(new { name = Path.GetFileName(withWeb[3]), arguments = (string)((dynamic)webShortcut).Arguments, appId = WingmanIdentity.AppUserModelId + ".T3Web" });
+            }
+            finally
+            {
+                Marshal.FinalReleaseComObject(webItem);
+                Marshal.FinalReleaseComObject(webFolder);
+                Marshal.FinalReleaseComObject(webShortcut);
+            }
+            Equal(WingmanIdentity.AppUserModelId + ".Codex", WingmanLaunchOptions.AppUserModelIdFor(WingmanLaunchTarget.Codex), "Codex identity unchanged");
+            Equal(WingmanIdentity.AppUserModelId + ".T3Code", WingmanLaunchOptions.AppUserModelIdFor(WingmanLaunchTarget.T3Code), "T3 desktop identity unchanged");
+            Equal(WingmanIdentity.AppUserModelId, WingmanLaunchOptions.AppUserModelIdFor(WingmanLaunchTarget.Preferences), "preferences identity unchanged");
+
+            // Window grouping: Wingman can give another process's top-level windows its T3 web identity.
+            // Here the window is a test form in this process; on a real PC it is Wingman's own Chrome app window.
+            using (var form = new System.Windows.Forms.Form { Text = "Wingman window identity test", ShowInTaskbar = true, Opacity = 0.01 })
+            {
+                form.Show();
+                System.Windows.Forms.Application.DoEvents();
+                var webId = WingmanLaunchOptions.AppUserModelIdFor(WingmanLaunchTarget.T3Web);
+                var applied = WindowAppIdentity.Apply(Environment.ProcessId, webId,
+                    "\"" + executable + "\" --launch=t3-web", LauncherShortcuts.T3WebShortcutName, executable + ",0");
+                Equal(true, applied >= 1, "window identity applied to a visible top-level window");
+                Equal(webId, WindowAppIdentity.Read(form.Handle), "window carries the T3 web identity");
+                Equal(0, WindowAppIdentity.Apply(Environment.ProcessId, webId, "unused", "unused", "unused"), "re-applying is a no-op");
+                form.Close();
+            }
             foreach (var trailingProfile in new[] { Path.GetPathRoot(root)!, profile + "\\" })
             {
                 var parsed = WingmanLaunchOptions.Parse(SplitCommandLine("Wingman.exe " +

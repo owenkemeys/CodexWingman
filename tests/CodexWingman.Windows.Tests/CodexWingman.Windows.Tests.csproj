@@ -10,6 +10,7 @@
     <ProjectReference Include="../../src/CodexWingman.Core/CodexWingman.Core.csproj" />
     <Compile Include="../../src/CodexWingman/LauncherShortcuts.cs" Link="LauncherShortcuts.cs" />
     <Compile Include="../../src/CodexWingman/TrayIconSet.cs" Link="TrayIconSet.cs" />
+    <Compile Include="../../src/CodexWingman/WindowAppIdentity.cs" Link="WindowAppIdentity.cs" />
     <None Include="../../src/CodexApp.ReleaseKit/Apply-CodexAppUpdate.ps1" Link="Apply-CodexAppUpdate.ps1" CopyToOutputDirectory="PreserveNewest" CopyToPublishDirectory="PreserveNewest" />
   </ItemGroup>
 </Project>

@@ -1,7 +1,7 @@
 # Usage dials
 
-- Helper generation: native-slot-v26
-- Manifest version: 1.5.5
+- Helper generation: native-slot-v27
+- Manifest version: 1.6.0
 - Helper ID: `usage-dials`
 
 ## Purpose and behavior
@@ -12,6 +12,7 @@ This helper shows separate 5-hour and weekly account-usage dials beside Codex's 
 
 - `wingman.json`: package metadata, 60-second refresh cadence, entrypoints, and capability declaration.
 - `apply.js`: subscribes to native account state, normalizes current quota windows, and manages the dials and tooltip content in each renderer.
+- `backend.grok.js`: Grok Bot backend; returns Wingman's typed projection of Grok Bot's local weekly-usage cache.
 - `remove.js`: removes owned dials, styles, slots, tooltip sections, and the renderer controller.
 
 ## Capabilities
@@ -59,3 +60,13 @@ The composer-owned picker supplies its committed `activeInstanceId`, including u
 Resolve the refresh registry over the full committed editor ancestry; it can be nested inside the owning composer. Multiple distinct registries leave refresh unavailable.
 
 An optional external Grok companion (`tools/provider_usage_bridge.py`) retains the valid billing config that T3 discards when its percentage field is absent. Grok's own `credit_balance_from_config` and real `/usage` screen interpret that config as 0%. The companion applies this interpretation only to a successful unified-billing response with a valid current weekly/monthly period. Missing configs, invalid percentages and failed requests remain unavailable. The renderer accepts a snapshot only for the exact environment, provider instance and signed-in account, at most three minutes old; native nonempty quota wins. The configured `providerUsageFile` contains quota and its account identity, never an authentication key. Removing the companion or configuration restores native-only behavior. This keeps the fallback outside T3's release files.
+
+## T3 Code (web)
+
+The `t3-web` target runs the T3 renderer branch unchanged inside Wingman's own Chrome app window on the configured T3 web origin. Wingman passes `wingman.app = 't3-web'`; the helper then treats the page exactly like the desktop `t3code:` renderer. The native provider-refresh module is discovered on that same https origin only (`/assets/server-*.js` or `/assets/runtime-*.js`, at most eight), never on another host.
+
+## Grok Bot
+
+The `grok-bot` target shows one weekly dial in Grok Bot's composer, inside `.sand-prompt-actions-trailing` immediately before the send/mic cluster (`.sand-prompt-cta-cluster`). These are Grok Bot's own semantic class markers; its hashed style classes are never used. The dial keeps the Codex/T3 geometry and pacing colours and inherits the composer icon colour.
+
+Numbers come only from `files.grokBotUsage`: Wingman reads Grok Bot's own `weekly-usage.cache` entry in `%APPDATA%\Grok Bot\sand-client-persistence` (read-only) and passes `percentUsed`, `nextResetMs` and `readAtMs`. Account ids, plan names and credentials are never passed. The dial percentage equals the cache's `percentUsed`. Pacing assumes Grok Bot's weekly window is 7 days ending at `nextResetMs`. A reading older than 24 hours, past its own `expiresAtMs`, or missing shows a question mark with an explanation instead of a number. Wingman never calls Grok Bot's servers and never edits Grok Bot files. If Grok Bot renames its composer markers the dial waits and renderHealth reports `waiting`.

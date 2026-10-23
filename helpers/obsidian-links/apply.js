@@ -2,7 +2,7 @@
   const owner = 'obsidian-links'
   const globalName = '__codexWingmanObsidianLinks'
   const version = 'message-links-v13'
-  const t3Renderer = window.location?.protocol === 't3code:'
+  const t3Renderer = window.location?.protocol === 't3code:' || (typeof wingman !== 'undefined' && wingman?.app === 't3-web')
   const normalizeMappings = (config) => {
     const supplied = Array.isArray(config?.mappings)
       ? config.mappings
