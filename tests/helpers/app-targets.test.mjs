@@ -227,7 +227,7 @@ test('Grok Bot: one weekly dial sits before the send cluster and its percentage 
     assert.equal(bank.getAttribute('aria-label'), 'Grok Bot usage')
     const weekly = bank.querySelector('[data-codex-helper-dial="secondary"]')
     assert.equal(weekly.getAttribute('data-wingman-app'), 'grok-bot')
-    assert.match(weekly.getAttribute('aria-label'), /^Weekly usage: 23%\./)
+    assert.match(weekly.getAttribute('aria-label'), /^Weekly: 23%\./)
     assert.equal(weekly.querySelector('[data-segment="background"]').getAttribute('data-end-percent'), '100')
     assert.equal(weekly.querySelector('[data-segment="unused"]').getAttribute('data-start-percent'), '23', 'drawn usage arc ends at the shown percentage')
     assert.equal(bank.querySelector('[data-codex-helper-dial="primary"]').style.display, 'none')
@@ -239,6 +239,8 @@ test('Grok Bot: one weekly dial sits before the send cluster and its percentage 
     weekly.dispatchEvent(new fixture.PointerEvent('pointerover', { bubbles: true, pointerType: 'mouse' }))
     const tip = fixture.document.querySelector('[role="tooltip"]').textContent
     assert.match(tip, /Saved reading, .* \(not live\)/)
+    assert.match(tip, /Weekly:/, 'same heading as the shared popup')
+    assert.doesNotMatch(tip, /Weekly usage/)
     assert.match(tip, /23% used \(77% left\)/)
     assert.doesNotMatch(tip, /Resets unavailable/, 'no Codex reset-credit line for Grok Bot')
     controller.update({ grokBot: { available: true, percentUsed: 61, nextResetMs, readAtMs: Date.now() } })
@@ -337,7 +339,7 @@ test('Grok Bot: the dial follows the live client store, not the stale cache, and
     await fixture.flush()
     assert.equal(controller.status().secondary.usedPercent, 48, 'store change alone redraws')
     const weekly = composer.trailing.querySelector('[data-codex-helper-dial="secondary"]')
-    assert.match(weekly.getAttribute('aria-label'), /^Weekly usage: 48%\./)
+    assert.match(weekly.getAttribute('aria-label'), /^Weekly: 48%\./)
     weekly.dispatchEvent(new fixture.PointerEvent('pointerover', { bubbles: true, pointerType: 'mouse' }))
     assert.match(fixture.document.querySelector('[role="tooltip"]').textContent, /Updated just now/)
     executeRenderer(await read('usage-dials/remove.js'), fixture)
@@ -351,12 +353,57 @@ test('Grok Bot: a stale live reading asks the app\'s own throttled refresh at mo
   const store = grokStore({ status: 'ready', value: { usage: { percentUsed: 10, nextResetMs: Date.now() + 86400000 }, readAtMs: Date.now() - 10 * 60000 } })
   mountGrokRoot(fixture, store)
   try {
+    fixture.document.hasFocus = () => true
     executeRenderer(await read('usage-dials/apply.js'), fixture, { state: {}, wingman: { app: 'grok-bot', request() {}, reportRenderHealth() {} } })
     const controller = fixture.window.__codexHelperUsageDials
     controller.update({})
     controller.update({})
     assert.equal(store.calls.refresh, 1)
     assert.equal(controller.status().secondary.usedPercent, 10)
+  } finally { fixture.dispose() }
+})
+
+test('Grok Bot: no refresh request while the window lacks focus and the popup is closed; opening the popup asks once', async () => {
+  const fixture = createBrowserFixture()
+  fixture.setRectResolver(() => ({ left: 560, top: 700, width: 32, height: 32 }))
+  makeGrokComposer(fixture)
+  const store = grokStore({ status: 'ready', value: { usage: { percentUsed: 10, nextResetMs: Date.now() + 86400000 }, readAtMs: Date.now() - 10 * 60000 } })
+  mountGrokRoot(fixture, store)
+  let focused = false
+  fixture.document.hasFocus = () => focused
+  try {
+    executeRenderer(await read('usage-dials/apply.js'), fixture, { state: {}, wingman: { app: 'grok-bot', request() {}, reportRenderHealth() {} } })
+    const controller = fixture.window.__codexHelperUsageDials
+    controller.update({})
+    assert.equal(store.calls.refresh, 0, 'visible but unfocused, popup closed: no request')
+    const weekly = fixture.document.querySelector('[data-codex-helper-dial="secondary"]')
+    weekly.dispatchEvent(new fixture.PointerEvent('pointerover', { bubbles: true, pointerType: 'mouse' }))
+    assert.equal(store.calls.refresh, 1, 'opening the popup asks once')
+    weekly.dispatchEvent(new fixture.PointerEvent('pointerover', { bubbles: true, pointerType: 'mouse' }))
+    focused = true
+    controller.update({})
+    assert.equal(store.calls.refresh, 1, 'still at most once per 5 minutes')
+  } finally { fixture.dispose() }
+})
+
+test('Grok Bot: the dial follows weeklyUsage (what the account menu renders), not usageSummary (Settings > Usage)', async () => {
+  const fixture = createBrowserFixture()
+  fixture.setRectResolver(() => ({ left: 560, top: 700, width: 32, height: 32 }))
+  makeGrokComposer(fixture)
+  const nextResetMs = Date.now() + 4 * 86400000
+  const store = grokStore({ status: 'ready', value: { usage: { percentUsed: 44.95, nextResetMs }, readAtMs: Date.now() - 1000 } })
+  const root = fixture.document.createElement('div')
+  root.id = 'root'
+  // Live 0.75.3 shape: one context holds both stores, with different numbers.
+  const usageSummary = { snapshots: { get: () => ({ status: 'ready', value: { sandUsagePercent: 42.8, sandUsageResetTimestampMs: nextResetMs } }), subscribe: () => () => {} }, refresh() { throw new Error('helper must not refresh usageSummary') } }
+  root['__reactContainer$test'] = { memoizedProps: {}, child: { memoizedProps: { value: { weeklyUsage: store.weeklyUsage, usageSummary } }, child: null, sibling: null }, sibling: null }
+  fixture.document.body.appendChild(root)
+  try {
+    executeRenderer(await read('usage-dials/apply.js'), fixture, { state: {}, wingman: { app: 'grok-bot', request() {}, reportRenderHealth() {} } })
+    const status = fixture.window.__codexHelperUsageDials.status()
+    assert.equal(status.usageSource, 'live')
+    assert.equal(status.secondary.usedPercent, 45, 'menu shows Math.round(44.95) = 45%, Settings would show 43%')
+    assert.match(fixture.document.querySelector('[data-codex-helper-dial="secondary"]').getAttribute('aria-label'), /^Weekly: 45%\./)
   } finally { fixture.dispose() }
 })
 
