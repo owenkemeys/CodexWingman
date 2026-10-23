@@ -148,11 +148,9 @@ public static class GrokBotUsageCacheFile
                 }
                 else if (name.EndsWith(".kblob", StringComparison.Ordinal))
                 {
-                    var text = ReadCapped(file);
-                    var newline = text?.IndexOf('\n') ?? -1;
-                    if (text is null || newline < 0) continue;
-                    if (!IsUsageKey(JsonSerializer.Deserialize<string>(text[..newline]))) continue;
-                    value = text[(newline + 1)..];
+                    // Only the key line is read; another slice's body is never loaded.
+                    if (ReadKblobUsageBody(file) is not { } body) continue;
+                    value = body;
                 }
             }
             catch (Exception error) when (error is IOException or UnauthorizedAccessException or JsonException) { continue; }
@@ -197,12 +195,61 @@ public static class GrokBotUsageCacheFile
             : new { available = true, percentUsed = reading.PercentUsed, nextResetMs = reading.NextResetMs, readAtMs = reading.ReadAtMs };
     }
 
+    /// <summary>Longest key line accepted in a <c>.kblob</c>.</summary>
+    public const int MaxKeyLineBytes = 1024;
+    private static int bodyReads;
+
+    /// <summary>How many cache bodies this process has read (diagnostics and tests).</summary>
+    public static int BodyReads => Volatile.Read(ref bodyReads);
+
+    /// <summary>
+    /// Reads the first line (the JSON key, at most <see cref="MaxKeyLineBytes"/>) of a <c>.kblob</c>.
+    /// Null when the line is missing, too long or not a JSON string.
+    /// </summary>
+    public static string? ReadKblobKey(string path)
+    {
+        using var stream = new FileStream(path, FileMode.Open, FileAccess.Read, FileShare.ReadWrite | FileShare.Delete);
+        return ReadKeyLine(stream);
+    }
+
+    private static string? ReadKeyLine(Stream stream)
+    {
+        var line = new List<byte>(128);
+        for (var count = 0; count <= MaxKeyLineBytes; count++)
+        {
+            var next = stream.ReadByte();
+            if (next < 0) return null;
+            if (next == '\n')
+            {
+                try { return JsonSerializer.Deserialize<string>(new UTF8Encoding(false, true).GetString(line.ToArray())); }
+                catch (Exception error) when (error is JsonException or DecoderFallbackException or ArgumentException) { return null; }
+            }
+            line.Add((byte)next);
+        }
+        return null;
+    }
+
+    /// <summary>The body of a <c>.kblob</c> whose key line is the weekly-usage key; otherwise null without reading the body.</summary>
+    public static string? ReadKblobUsageBody(string path)
+    {
+        var info = new FileInfo(path);
+        if (!info.Exists || info.Length > MaxBytes + MaxKeyLineBytes) return null;
+        using var stream = new FileStream(path, FileMode.Open, FileAccess.Read, FileShare.ReadWrite | FileShare.Delete);
+        if (!IsUsageKey(ReadKeyLine(stream))) return null;
+        Interlocked.Increment(ref bodyReads);
+        using var reader = new StreamReader(stream, new UTF8Encoding(false, true));
+        var buffer = new char[MaxBytes + 1];
+        var read = reader.ReadBlock(buffer, 0, buffer.Length);
+        return read > MaxBytes ? null : new string(buffer, 0, read);
+    }
+
     private static string? ReadCapped(string path)
     {
         var info = new FileInfo(path);
         if (!info.Exists || info.Length > MaxBytes) return null;
         using var stream = new FileStream(path, FileMode.Open, FileAccess.Read, FileShare.ReadWrite | FileShare.Delete);
         using var reader = new StreamReader(stream, Encoding.UTF8);
+        Interlocked.Increment(ref bodyReads);
         return reader.ReadToEnd();
     }
 }

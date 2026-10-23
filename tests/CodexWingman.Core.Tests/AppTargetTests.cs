@@ -223,6 +223,21 @@ internal static class AppTargetTests
                 JsonSerializer.Serialize(key) + "\n" + Fixture(61.2, now.AddMinutes(-1), now.AddMinutes(30)));
             Equal(61.2, GrokBotUsageCacheFile.Read(userData, now)!.PercentUsed, "kblob variant, newest wins");
 
+            // Other slices stored as .kblob: only their key line is read, never the body.
+            File.WriteAllText(Path.Combine(persistence, "fedcba9876543210.kblob"),
+                JsonSerializer.Serialize("sand.client.slice.account.auth0|000000000000000000000000.private-notes") + "\n{\"secret\":\"x\"}");
+            File.WriteAllText(Path.Combine(persistence, "aaaaaaaaaaaaaaaa.kblob"),
+                JsonSerializer.Serialize("sand.client.slice.other") + "\n" + new string('x', 200_000));
+            File.WriteAllText(Path.Combine(persistence, "bbbbbbbbbbbbbbbb.kblob"), new string('k', 5000) + "\n{}");
+            var readsBefore = GrokBotUsageCacheFile.BodyReads;
+            Equal(61.2, GrokBotUsageCacheFile.Read(userData, now)!.PercentUsed, "unrelated kblobs do not disturb the reading");
+            Equal(readsBefore + 2, GrokBotUsageCacheFile.BodyReads, "bodies read only for the two weekly-usage files");
+            Equal("sand.client.slice.other", GrokBotUsageCacheFile.ReadKblobKey(Path.Combine(persistence, "aaaaaaaaaaaaaaaa.kblob")), "key line read on its own");
+            Equal<string?>(null, GrokBotUsageCacheFile.ReadKblobKey(Path.Combine(persistence, "bbbbbbbbbbbbbbbb.kblob")), "over-long key line rejected");
+            Equal<string?>(null, GrokBotUsageCacheFile.ReadKblobUsageBody(Path.Combine(persistence, "fedcba9876543210.kblob")), "other key: body not returned");
+            foreach (var other in new[] { "fedcba9876543210", "aaaaaaaaaaaaaaaa", "bbbbbbbbbbbbbbbb" })
+                File.Delete(Path.Combine(persistence, other + ".kblob"));
+
             Equal<GrokBotUsageReading?>(null, GrokBotUsageCacheFile.Read(userData, now.AddHours(25)), "stale cache (over 24 h) shows nothing");
             foreach (var file in Directory.EnumerateFiles(persistence)) File.Delete(file);
             File.WriteAllText(Path.Combine(persistence, GrokBotUsageCacheFile.EncodeName(key) + ".blob"),
