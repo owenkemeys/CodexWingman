@@ -91,9 +91,10 @@ internal static class CodexLauncher
 
     public static int GetOpenWindowCount()
     {
-        using var wingmanProcess = Process.GetCurrentProcess();
-        var currentSessionId = wingmanProcess.SessionId;
+        var currentSessionId = WindowProcessInfo.CurrentSession();
         var count = 0;
+        // One answer per process id per enumeration; a process usually owns several windows.
+        var isCodex = new Dictionary<uint, bool>();
         EnumWindows((window, _) =>
         {
             GetWindowThreadProcessId(window, out var processId);
@@ -101,17 +102,15 @@ internal static class CodexLauncher
                 || GetWindow(window, GetWindowCommand.Owner) != IntPtr.Zero
                 || GetWindowTextLength(window) <= 0)
                 return true;
-            try
+            if (!isCodex.TryGetValue(processId, out var matches))
             {
-                using var process = Process.GetProcessById((int)processId);
-                if (process.SessionId == currentSessionId
-                    && string.Equals(TryGetPackageFamilyName(process.Id), CodexLaunchPolicy.PackageFamilyName,
-                        StringComparison.OrdinalIgnoreCase))
-                    count++;
+                // A process that exited or is inaccessible has no session and no package name: not counted.
+                matches = WindowProcessInfo.SessionOf(processId) == currentSessionId
+                    && string.Equals(TryGetPackageFamilyName((int)processId), CodexLaunchPolicy.PackageFamilyName,
+                        StringComparison.OrdinalIgnoreCase);
+                isCodex[processId] = matches;
             }
-            catch (ArgumentException) { } // The window's process exited during enumeration.
-            catch (InvalidOperationException) { }
-            catch (System.ComponentModel.Win32Exception) { } // A foreign process is inaccessible.
+            if (matches) count++;
             return true;
         }, IntPtr.Zero);
         return count;

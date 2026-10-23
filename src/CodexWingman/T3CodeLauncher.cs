@@ -15,8 +15,10 @@ internal static class T3CodeLauncher
         var local = Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData);
         var programs = Environment.GetFolderPath(Environment.SpecialFolder.ProgramFiles);
         var candidates = T3CodeLaunchPolicy.CandidateExecutables(local, programs);
-        using var current = Process.GetCurrentProcess();
+        var currentSession = WindowProcessInfo.CurrentSession();
         var count = 0;
+        // One answer per process id per enumeration; a process usually owns several windows.
+        var isT3 = new Dictionary<uint, bool>();
         if (!EnumWindows((window, _) =>
             {
                 GetWindowThreadProcessId(window, out var processId);
@@ -24,17 +26,17 @@ internal static class T3CodeLauncher
                     || GetWindow(window, GetWindowCommand.Owner) != IntPtr.Zero
                     || GetWindowTextLength(window) <= 0)
                     return true;
-                try
+                if (!isT3.TryGetValue(processId, out var matches))
                 {
-                    using var process = Process.GetProcessById((int)processId);
-                    if (T3CodeLaunchPolicy.MatchesVisibleWindow(
-                        candidates, current.SessionId, process.MainModule?.FileName,
-                        process.SessionId, visible: true, owned: false, titled: true))
-                        count++;
+                    // Session first (cheap); the image path is only read for processes in this session.
+                    // A process that exited or is inaccessible has no session or path: not counted.
+                    var session = WindowProcessInfo.SessionOf(processId);
+                    matches = session == currentSession && T3CodeLaunchPolicy.MatchesVisibleWindow(
+                        candidates, currentSession, WindowProcessInfo.ImagePathOf(processId),
+                        session.Value, visible: true, owned: false, titled: true);
+                    isT3[processId] = matches;
                 }
-                catch (ArgumentException) { }
-                catch (InvalidOperationException) { }
-                catch (System.ComponentModel.Win32Exception) { }
+                if (matches) count++;
                 return true;
             }, IntPtr.Zero))
             throw new System.ComponentModel.Win32Exception(Marshal.GetLastWin32Error(),
