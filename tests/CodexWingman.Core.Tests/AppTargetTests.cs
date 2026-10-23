@@ -83,6 +83,11 @@ internal static class AppTargetTests
         True(T3WebLaunchPolicy.IsWingmanChromeCommandLine("chrome.exe --user-data-dir=" + data + " --app=x", data), "own Chrome recognized");
         False(T3WebLaunchPolicy.IsWingmanChromeCommandLine("chrome.exe --profile-directory=Default", data), "normal Chrome not recognized");
 
+        Equal(T3WebOpenAction.StartNew, T3WebLaunchPolicy.OpenAction(false, 0), "nothing running: start Wingman's Chrome");
+        Equal(T3WebOpenAction.OpenWindowInRunningProfile, T3WebLaunchPolicy.OpenAction(true, 0), "Chrome runs without a T3 web window: open one");
+        Equal(T3WebOpenAction.ActivateExisting, T3WebLaunchPolicy.OpenAction(true, 1), "a T3 web window exists: bring it forward, no second window");
+        Equal(T3WebOpenAction.ActivateExisting, T3WebLaunchPolicy.OpenAction(true, 3), "several windows: still none added");
+
         var webPorts = T3WebLaunchPolicy.CandidatePorts(null, [9423]).Take(3).ToArray();
         False(webPorts.Contains(9423), "reserved port skipped");
         False(webPorts.Contains(CodexLaunchPolicy.PreferredPort) || webPorts.Contains(T3CodeLaunchPolicy.PreferredPort), "Codex and T3 ports never reused");

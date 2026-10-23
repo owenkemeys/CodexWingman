@@ -88,7 +88,12 @@ internal sealed class T3WebLauncher(string wingmanDataRoot, Func<HelperSettings>
         var remembered = Port();
         if (remembered is { } existing && await EndpointAliveAsync(existing, cancellationToken))
         {
-            // Chrome hands the request to the running Wingman profile, which opens one more app window.
+            var pages = await PagesAsync(cancellationToken);
+            if (T3WebLaunchPolicy.OpenAction(true, pages.Count) == T3WebOpenAction.ActivateExisting
+                && await ActivateAsync(existing, pages[0], cancellationToken))
+                return (existing, prefetched);
+            // No T3 web window (or it could not be raised): Chrome hands the request to the running
+            // Wingman profile, which opens one app window.
             Start(chrome, existing, origin);
             return (existing, prefetched);
         }
@@ -126,6 +131,37 @@ internal sealed class T3WebLauncher(string wingmanDataRoot, Func<HelperSettings>
             LauncherShortcuts.T3WebShortcutName,
             wingmanExecutable + ",0");
     }
+
+    /// <summary>Brings the existing T3 web window to the front (restoring it if minimized) through its own DevTools.</summary>
+    private static async Task<bool> ActivateAsync(int port, CodexTarget page, CancellationToken cancellationToken)
+    {
+        try
+        {
+            // Let Wingman's Chrome take the foreground: the shortcut click gave it to Wingman.
+            var info = await CdpBrowserCommand.SendAsync(Http, port, "SystemInfo.getProcessInfo", null, cancellationToken);
+            if (CdpBrowserCommand.BrowserProcessId(info) is { } pid) AllowSetForegroundWindow(pid);
+            var window = await CdpBrowserCommand.SendAsync(Http, port, "Browser.getWindowForTarget", new { targetId = page.Id }, cancellationToken);
+            if (window is { ValueKind: System.Text.Json.JsonValueKind.Object } found
+                && found.TryGetProperty("windowId", out var id) && id.TryGetInt32(out var windowId)
+                && found.TryGetProperty("bounds", out var bounds)
+                && bounds.TryGetProperty("windowState", out var state) && state.GetString() == "minimized")
+                await CdpBrowserCommand.SendAsync(Http, port, "Browser.setWindowBounds",
+                    new { windowId, bounds = new { windowState = "normal" } }, cancellationToken);
+            await CdpBrowserCommand.SendAsync(Http, port, "Target.activateTarget", new { targetId = page.Id }, cancellationToken);
+            return true;
+        }
+        catch (Exception error) when (error is HttpRequestException or InvalidOperationException or TimeoutException
+            or System.Net.WebSockets.WebSocketException or System.Text.Json.JsonException
+            || (error is OperationCanceledException && !cancellationToken.IsCancellationRequested))
+        {
+            Debug.WriteLine($"[T3 web activate] {error.Message}");
+            return false;
+        }
+    }
+
+    [System.Runtime.InteropServices.DllImport("user32.dll")]
+    [return: System.Runtime.InteropServices.MarshalAs(System.Runtime.InteropServices.UnmanagedType.Bool)]
+    private static extern bool AllowSetForegroundWindow(int processId);
 
     private int SelectPort(int? remembered)
     {

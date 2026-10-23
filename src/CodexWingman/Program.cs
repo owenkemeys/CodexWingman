@@ -73,6 +73,9 @@ internal static class Program
                 return;
             }
             using var selected = EventWaitHandle.OpenExisting(options.ActivationEventName);
+            // This launch came from the user's click; pass the right to come to the front to the
+            // running Wingman (and the app window it raises).
+            AllowSetForegroundWindow(-1);
             selected.Set();
             return;
         }
@@ -91,4 +94,8 @@ internal static class Program
 
     [DllImport("shell32.dll", CharSet = CharSet.Unicode)]
     private static extern int SetCurrentProcessExplicitAppUserModelID(string appId);
+
+    [DllImport("user32.dll")]
+    [return: MarshalAs(UnmanagedType.Bool)]
+    private static extern bool AllowSetForegroundWindow(int processId);
 }
