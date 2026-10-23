@@ -106,14 +106,18 @@ internal sealed class GrokBotLauncher(string wingmanDataRoot, Func<IEnumerable<i
 
     private Process[] Running()
     {
-        using var current = Process.GetCurrentProcess();
+        // Session and image path are asked per process id: cheaper than Process.GetCurrentProcess().SessionId
+        // (a machine-wide snapshot) and MainModule (a module-list walk) on this 2-second status path.
+        var currentSession = WindowProcessInfo.CurrentSession();
+        var executable = Path.GetFullPath(Executable);
         var result = new List<Process>();
         foreach (var process in Process.GetProcessesByName(Path.GetFileNameWithoutExtension(Executable)))
         {
             try
             {
-                if (process.SessionId == current.SessionId
-                    && string.Equals(Path.GetFullPath(process.MainModule?.FileName ?? string.Empty), Path.GetFullPath(Executable), StringComparison.OrdinalIgnoreCase))
+                if (process.SessionId == currentSession
+                    && WindowProcessInfo.ImagePathOf((uint)process.Id) is { Length: > 0 } image
+                    && string.Equals(Path.GetFullPath(image), executable, StringComparison.OrdinalIgnoreCase))
                 {
                     result.Add(process);
                     continue;
