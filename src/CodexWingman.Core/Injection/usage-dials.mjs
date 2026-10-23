@@ -1,5 +1,5 @@
 (() => {
-  const controllerVersion = 'native-slot-v27';
+  const controllerVersion = 'native-slot-v28';
   // Wingman names the app it injected into; the legacy embedded Codex renderer has no wingman object.
   const wingmanApp = typeof wingman === 'undefined' ? null : wingman?.app;
   const t3Renderer = window.location?.protocol === 't3code:' || wingmanApp === 't3-web';
@@ -32,6 +32,16 @@
   let t3RefreshLoading = false;
   let disposed = false;
   const t3RefreshAttempts = new Map();
+  let grokStore = null;
+  let unsubscribeGrok = null;
+  let grokLastNudgeMs = 0;
+  let grokSource = null;
+  let grokReadAtMs = null;
+  // Grok Bot refreshes weekly usage itself only when its account menu or
+  // usage settings open, or after a send once its reading is 5 minutes old.
+  // Ask the app's own throttled refresh on that same 5-minute cadence while
+  // the window is visible, so usage spent elsewhere still reaches the dial.
+  const grokNudgeIntervalMs = 5 * 60 * 1000;
 
   // Read Codex's account cache; session usage does not establish a reset balance.
   const hasAccountFields = (data) => data && !Array.isArray(data)
@@ -311,16 +321,73 @@
     if (snapshot.primary || snapshot.secondary) quotaUnavailableReason = null;
   };
 
-  // Grok Bot's own weekly-usage cache, passed in by the Wingman backend (percent, reset and read time only).
+  // Grok Bot keeps its live weekly usage in its client store (the one its
+  // account menu and Settings > Usage render). Find that store by its
+  // contract on the root providers; read and subscribe, never write.
+  const isGrokStore = (value) => value && typeof value.snapshots?.get === 'function'
+    && typeof value.snapshots?.subscribe === 'function' && typeof value.refresh === 'function';
+
+  const connectGrokStore = () => {
+    if (!grokRenderer || grokStore) return;
+    const host = document.getElementById?.('root') || document.body?.firstElementChild;
+    const key = host && Object.keys(host).find((name) => name.startsWith('__reactContainer$'));
+    const queue = key ? [host[key]] : [];
+    const seen = new Set();
+    const stores = new Set();
+    for (let index = 0; index < queue.length && index < 400; index += 1) {
+      const fiber = queue[index];
+      if (!fiber || seen.has(fiber)) continue;
+      seen.add(fiber);
+      const candidate = fiber.memoizedProps?.value?.weeklyUsage;
+      if (isGrokStore(candidate)) stores.add(candidate);
+      if (fiber.child) queue.push(fiber.child);
+      if (fiber.sibling) queue.push(fiber.sibling);
+    }
+    // Never choose between two clients.
+    if (stores.size !== 1) return;
+    grokStore = [...stores][0];
+    try { unsubscribeGrok = grokStore.snapshots.subscribe(() => { if (!disposed) queueReconcile(); }); }
+    catch { unsubscribeGrok = null; }
+  };
+
+  const readGrokLiveUsage = () => {
+    try {
+      const current = grokStore?.snapshots.get();
+      if (current?.status !== 'ready') return null;
+      const usage = current.value?.usage;
+      const readAtMs = current.value?.readAtMs;
+      if (!Number.isFinite(usage?.percentUsed) || usage.percentUsed < 0 || !Number.isFinite(readAtMs)) return null;
+      return { percentUsed: Math.min(100, usage.percentUsed),
+        nextResetMs: Number.isSafeInteger(usage.nextResetMs) ? usage.nextResetMs : null, readAtMs };
+    } catch { return null; }
+  };
+
+  const nudgeGrokRefresh = (live) => {
+    const now = Date.now();
+    if (!grokStore || document.visibilityState === 'hidden') return;
+    if (live && now - live.readAtMs < grokNudgeIntervalMs) return;
+    if (now - grokLastNudgeMs < grokNudgeIntervalMs) return;
+    grokLastNudgeMs = now;
+    try { grokStore.refresh(); } catch { /* The app keeps its own state. */ }
+  };
+
+  // Prefer the live store; fall back to the app's saved cache, labelled with its age.
   const refreshGrokAccountState = () => {
     snapshot = { primary: null, secondary: null };
     availableResets = null;
     quotaNotReported = false;
     providerLabel = 'Grok Bot';
     quotaUnavailableReason = 'Grok Bot has not saved a current usage reading yet.';
-    const usage = fallbackSnapshot?.grokBot;
-    if (!usage || usage.available !== true || !Number.isFinite(usage.percentUsed)
-      || usage.percentUsed < 0 || usage.percentUsed > 100) return;
+    connectGrokStore();
+    const live = readGrokLiveUsage();
+    nudgeGrokRefresh(live);
+    const cached = fallbackSnapshot?.grokBot;
+    const cacheUsable = cached?.available === true && Number.isFinite(cached.percentUsed)
+      && cached.percentUsed >= 0 && cached.percentUsed <= 100;
+    const usage = live || (cacheUsable ? cached : null);
+    grokSource = live ? 'live' : usage ? 'cache' : null;
+    grokReadAtMs = Number.isFinite(usage?.readAtMs) ? usage.readAtMs : null;
+    if (!usage) return;
     const reset = Number.isSafeInteger(usage.nextResetMs) ? Math.floor(usage.nextResetMs / 1000) : null;
     const value = (reset !== null && normalizeAccountWindow({ used_percent: usage.percentUsed,
       limit_window_seconds: 10080 * 60, reset_at: reset }))
@@ -328,6 +395,14 @@
     value.label = 'Weekly usage';
     snapshot.secondary = value;
     quotaUnavailableReason = null;
+  };
+
+  const formatReadAge = (readAtMs) => {
+    const minutes = Math.max(0, Math.round((Date.now() - readAtMs) / 60000));
+    if (minutes < 1) return 'just now';
+    if (minutes < 60) return `${minutes} min ago`;
+    const hours = Math.round(minutes / 60);
+    return hours < 48 ? `${hours} h ago` : `${Math.round(hours / 24)} days ago`;
   };
 
   const style = document.createElement('style');
@@ -380,6 +455,25 @@
     .codex-helper-usage-preview { display: flex; justify-content: center; gap: 8px; padding: 6px 0 8px; margin-bottom: 4px; border-bottom: 1px solid var(--color-token-border, #444); }
     .codex-helper-usage-preview [data-codex-helper-dial],
     .codex-helper-usage-preview [data-codex-helper-dial] svg { width: 76px; height: 76px; }
+    /* The popup owns its layout. Host CSS (or a host without these utility
+       classes, like Grok Bot) must not collapse it, so the values Codex's
+       utilities produce are restated here, scoped to Wingman's own nodes. */
+    [data-codex-helper-tooltip="usage-fallback"] {
+      box-sizing: border-box; width: fit-content; user-select: none;
+      font-size: var(--text-sm, 0.875rem); line-height: var(--text-sm--line-height, calc(1.25 / 0.875));
+      white-space: normal; overflow-wrap: break-word; text-align: center;
+    }
+    [data-codex-helper-tooltip="usage-fallback"] > [data-codex-helper-usage-stack] {
+      display: flex !important; flex-direction: column !important; align-items: stretch;
+      gap: calc(var(--spacing, 0.25rem) * 0.5) !important;
+      width: calc(var(--spacing, 0.25rem) * 38); text-align: center;
+    }
+    [data-codex-helper-usage-stack] > span {
+      display: block !important; margin: 0; padding: 0; white-space: pre-line; float: none;
+    }
+    [data-codex-helper-usage-stack] > span.mt-1 { margin-top: var(--spacing, 0.25rem); }
+    [data-codex-helper-usage-stack] > span.codex-helper-usage-resets { margin-top: 4px; padding-top: 4px; }
+    [data-codex-helper-usage-stack] > .codex-helper-usage-preview { display: flex !important; }
   `;
   document.documentElement.appendChild(style);
 
@@ -695,6 +789,8 @@
     stack.appendChild(makeText(usage === null ? 'Usage unavailable' : `${formatUsage(usage)} used (${formatUsage(remaining)} left)`));
     stack.appendChild(makeText(elapsed === null ? 'Time elapsed unavailable' : `${elapsed}% of time elapsed`));
     if (value?.resetLabel) stack.appendChild(makeText(`Resets ${value.resetLabel}`));
+    if (grokRenderer && grokReadAtMs !== null) stack.appendChild(makeText(grokSource === 'cache'
+      ? `Saved reading, ${formatReadAge(grokReadAtMs)}` : `Updated ${formatReadAge(grokReadAtMs)}`, 'codex-helper-usage-heading'));
   };
 
   const appendAvailableReadouts = (stack, key) => {
@@ -736,6 +832,7 @@
     tooltip.replaceChildren();
     const stack = document.createElement('div');
     stack.className = 'flex w-38 flex-col gap-0.5 text-center';
+    stack.dataset.codexHelperUsageStack = '';
     const preview = document.createElement('div');
     preview.className = 'codex-helper-usage-preview';
     if (snapshot[key]) {
@@ -784,6 +881,7 @@
     primary: snapshot.primary || null,
     secondary: snapshot.secondary || null,
     availableResets,
+    ...(grokRenderer ? { usageSource: grokSource, usageReadAtMs: grokReadAtMs } : {}),
     ...(grokRenderer ? { renderHealth: {
       state: !document.querySelector('.sand-prompt-field') ? 'not-applicable'
         : [...instances.values()].some(instance => instance.bank.isConnected && instance.bank.getBoundingClientRect().width > 0)
@@ -826,6 +924,8 @@
     observer.disconnect();
     unsubscribeAccount?.();
     accountClient = null;
+    try { unsubscribeGrok?.(); } catch { /* already gone */ }
+    grokStore = null;
     clearInterval(interval);
     cancelAnimationFrame(frame);
     for (const instance of instances.values()) destroyInstance(instance);
