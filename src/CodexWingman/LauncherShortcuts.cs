@@ -43,8 +43,9 @@ internal static class LauncherShortcuts
         {
             var settings = HelperSettingsStore.Load(HelperSettingsStore.DefaultPath(localAppData));
             return settings.T3Web?.IsConfigured == true
+                // The the sync share receipt belongs to the Windows user, not to a Wingman profile override.
                 || SharedFolderPairingProvider.ResolveFolder(settings.T3Web?.Pairing,
-                    localAppData ?? Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData)) is { } folder
+                    Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData)) is { } folder
                     && Directory.Exists(folder);
         }
         catch (Exception error) when (error is IOException or UnauthorizedAccessException or System.Text.Json.JsonException or InvalidDataException)
