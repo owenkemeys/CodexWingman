@@ -39,6 +39,9 @@ public enum T3PairingAction { None, Pair, Renew }
 /// <summary>
 /// T3 browser sessions last a fixed 30 days from pairing. Wingman pairs when the page reports no session
 /// and renews a few days before the expiry, so the window never reaches the pairing screen.
+/// The source of truth for expiry is the page itself (<c>/api/auth/session</c> <c>expiresAt</c>, read inside the
+/// T3 page); the locally remembered expiry is only a fallback when the page does not report one, and is
+/// re-synced from the page whenever they differ.
 /// </summary>
 public static class T3PairingPolicy
 {
@@ -97,12 +100,15 @@ public sealed class T3PairingCoordinator(
         Uri? configuredOrigin,
         string label,
         CancellationToken cancellationToken = default,
-        T3PairingLink? prefetchedLink = null)
+        T3PairingLink? prefetchedLink = null,
+        bool forceRenew = false)
     {
         var session = await page.GetSessionAsync(cancellationToken);
         var state = T3PairingStateStore.Load(statePath);
         var now = clock();
         var action = T3PairingPolicy.Evaluate(session, state, now);
+        // Development test hook: renew a signed-in page now, by the same path as renewal before expiry.
+        if (forceRenew && session.Authenticated) action = T3PairingAction.Renew;
         var knownOrigin = configuredOrigin
             ?? (state is not null && T3WebUrlPolicy.TryNormalizeOrigin(state.Origin, out var remembered) ? remembered : null)
             ?? (T3WebUrlPolicy.TryNormalizeOrigin(session.Origin, out var pageOrigin) ? pageOrigin : null);

@@ -49,6 +49,26 @@ static void TestWingmanLaunchOptions()
     Equal(string.Empty, WingmanLaunchOptions.RelaunchArguments(null), "normal updates omit empty native arguments");
     Equal("--launch=t3-code \"--local-app-data=" + Path.GetFullPath(profile) + "\"",
         WingmanLaunchOptions.ShortcutArguments(WingmanLaunchTarget.T3Code, profile), "shortcut quotes its settings profile");
+    Equal(WingmanCommand.T3WebRenewNow, WingmanLaunchOptions.Parse(["--t3-web-renew-now"]).Command, "renew command parses");
+    Equal(WingmanCommand.Close, WingmanLaunchOptions.Parse(["--close"]).Command, "close command parses");
+    Equal(WingmanCommand.None, WingmanLaunchOptions.Parse(["--launch=t3-web"]).Command, "launchers carry no command");
+    Throws<ArgumentException>(() => WingmanLaunchOptions.Parse(["--close", "--t3-web-renew-now"]), "one command at a time");
+    Equal(false, WingmanLaunchOptions.CommandEventName(WingmanCommand.Close) == WingmanLaunchOptions.CommandEventName(WingmanCommand.T3WebRenewNow),
+        "each command has its own event");
+    var channelRoot = Path.Combine(Path.GetTempPath(), "wingman-channel-" + Guid.NewGuid().ToString("N"));
+    Directory.CreateDirectory(channelRoot);
+    try
+    {
+        Equal(false, DevelopmentChannel.IsDevelopmentBuild(channelRoot), "no manifest is not a development build");
+        File.WriteAllText(Path.Combine(channelRoot, "development.json"), "{\"schema\":\"wingman.development-package.v1\",\"channel\":\"development\"}");
+        Equal(true, DevelopmentChannel.IsDevelopmentBuild(channelRoot), "development package enables test hooks");
+        File.WriteAllText(Path.Combine(channelRoot, "release.json"), "{}");
+        Equal(false, DevelopmentChannel.IsDevelopmentBuild(channelRoot), "a stable release never enables test hooks");
+        File.Delete(Path.Combine(channelRoot, "release.json"));
+        File.WriteAllText(Path.Combine(channelRoot, "development.json"), "{\"schema\":\"wingman.development-package.v1\",\"channel\":\"stable\"}");
+        Equal(false, DevelopmentChannel.IsDevelopmentBuild(channelRoot), "other channels never enable test hooks");
+    }
+    finally { Directory.Delete(channelRoot, true); }
     Throws<ArgumentException>(() => WingmanLaunchOptions.Parse(["--launch=other"]), "unknown app rejected");
     Throws<ArgumentException>(() => WingmanLaunchOptions.Parse(["--launch=codex", "--launch=t3-code"]), "ambiguous target rejected");
     Throws<ArgumentException>(() => WingmanLaunchOptions.Parse(["--local-app-data=relative"]), "relative settings profile rejected");
