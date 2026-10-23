@@ -1,5 +1,5 @@
 (() => {
-  const controllerVersion = 'native-slot-v31';
+  const controllerVersion = 'native-slot-v32';
   // Wingman names the app it injected into; the legacy embedded Codex renderer has no wingman object.
   const wingmanApp = typeof wingman === 'undefined' ? null : wingman?.app;
   const t3Renderer = window.location?.protocol === 't3code:' || wingmanApp === 't3-web';
@@ -379,15 +379,16 @@
   };
 
   // Ask Grok Bot's own throttled refresh only while someone is looking: the
-  // Grok Bot window has focus, or the dial's popup is open. At most every 5 min,
-  // and only when the reading is older than that.
+  // Grok Bot window has focus, the dial's popup is open, or the window has just
+  // gained focus or become visible (attention). At most every 5 min, and only
+  // when the reading is older than that.
   const grokPopupOpen = () => [...instances.values()].some((instance) => instance.tooltip);
   const grokWindowFocused = () => {
     try { return typeof document.hasFocus === 'function' && document.hasFocus() === true; } catch { return false; }
   };
-  const nudgeGrokRefresh = (live) => {
+  const nudgeGrokRefresh = (live, attention = false) => {
     const now = Date.now();
-    if (!grokStore || !(grokWindowFocused() || grokPopupOpen())) return;
+    if (!grokStore || !(attention || grokWindowFocused() || grokPopupOpen())) return;
     if (live && now - live.readAtMs < grokNudgeIntervalMs) return;
     if (now - grokLastNudgeMs < grokNudgeIntervalMs) return;
     grokLastNudgeMs = now;
@@ -975,6 +976,19 @@
   });
   observer.observe(document.documentElement, { childList: true, subtree: true, attributes: true, attributeFilter: ['aria-label'] });
   const interval = setInterval(reconcile, 2000);
+  // Grok Bot: a glance must show a current number. When the window gains focus or
+  // becomes visible, ask the refresh right away instead of waiting for the next tick.
+  const onGrokAttention = () => {
+    if (disposed || !grokRenderer) return;
+    try { if (document.visibilityState === 'hidden') return; } catch { /* treat as visible */ }
+    connectGrokStore();
+    nudgeGrokRefresh(readGrokLiveUsage(), true);
+    queueReconcile();
+  };
+  if (grokRenderer) {
+    window.addEventListener('focus', onGrokAttention);
+    document.addEventListener('visibilitychange', onGrokAttention);
+  }
 
   const cleanup = () => {
     disposed = true;
@@ -985,6 +999,10 @@
     grokStore = null;
     grokStoreProblem = null;
     clearInterval(interval);
+    if (grokRenderer) {
+      window.removeEventListener('focus', onGrokAttention);
+      document.removeEventListener('visibilitychange', onGrokAttention);
+    }
     cancelAnimationFrame(frame);
     for (const instance of instances.values()) destroyInstance(instance);
     instances.clear();
