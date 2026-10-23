@@ -69,7 +69,7 @@ public interface ICodexTargetSource
 }
 
 /// <summary>Reads only T3 desktop pages from an explicitly recorded CDP endpoint.</summary>
-public sealed class T3CodeTargetSource(HttpClient httpClient, Func<int?> portProvider) : ICodexTargetSource
+public sealed class T3CodeTargetSource(HttpClient httpClient, Func<int?> portProvider, CdpConnectionPool? pool = null) : ICodexTargetSource
 {
     public Task<IReadOnlyList<CodexTarget>> ListAsync(CancellationToken cancellationToken = default)
     {
@@ -78,7 +78,7 @@ public sealed class T3CodeTargetSource(HttpClient httpClient, Func<int?> portPro
         if (port is < 1 or > 65535) throw new InvalidOperationException("Invalid T3 Code debugging port.");
         return new HttpCodexTargetSource(
             httpClient, () => port.Value, () => new ClientWebSocketCdpSocket(),
-            T3CodeTargetCatalog.SelectPages).ListAsync(cancellationToken);
+            T3CodeTargetCatalog.SelectPages, pool).ListAsync(cancellationToken);
     }
 }
 
@@ -89,6 +89,7 @@ public sealed class HttpCodexTargetSource : ICodexTargetSource
     private readonly Func<int> portProvider;
     private readonly Func<ICdpWebSocket> socketFactory;
     private readonly Func<IEnumerable<CodexTarget>, IReadOnlyList<CodexTarget>> selectPages;
+    private readonly CdpConnectionPool? pool;
 
     public HttpCodexTargetSource(HttpClient httpClient, Func<int> portProvider)
         : this(httpClient, portProvider, () => new ClientWebSocketCdpSocket()) { }
@@ -106,23 +107,55 @@ public sealed class HttpCodexTargetSource : ICodexTargetSource
         HttpClient httpClient,
         Func<int> portProvider,
         Func<ICdpWebSocket> socketFactory,
-        Func<IEnumerable<CodexTarget>, IReadOnlyList<CodexTarget>> selectPages)
+        Func<IEnumerable<CodexTarget>, IReadOnlyList<CodexTarget>> selectPages,
+        CdpConnectionPool? pool = null)
     {
         this.httpClient = httpClient;
         this.portProvider = portProvider;
         this.socketFactory = socketFactory;
         this.selectPages = selectPages;
+        this.pool = pool;
     }
+
+    /// <summary>Lists over the pooled browser connection when a pool is given; HTTP discovery remains the fallback.</summary>
+    public static HttpCodexTargetSource Pooled(
+        HttpClient httpClient, Func<int> portProvider, Func<IEnumerable<CodexTarget>, IReadOnlyList<CodexTarget>> selectPages,
+        CdpConnectionPool pool) => new(httpClient, portProvider, () => new ClientWebSocketCdpSocket(), selectPages, pool);
 
     public async Task<IReadOnlyList<CodexTarget>> ListAsync(CancellationToken cancellationToken = default)
     {
-        var endpoint = $"http://127.0.0.1:{portProvider()}";
+        var port = portProvider();
+        if (pool is not null && await TryListPooledAsync(port, cancellationToken) is { } pooled) return pooled;
+        var endpoint = $"http://127.0.0.1:{port}";
         await using var stream = await httpClient.GetStreamAsync($"{endpoint}/json/list", cancellationToken);
         var targets = await JsonSerializer.DeserializeAsync<CodexTarget[]>(stream, cancellationToken: cancellationToken) ?? [];
         var pages = selectPages(targets);
         return pages.Count > 0
             ? pages
             : await ListBrowserTargetsAsync(endpoint, cancellationToken);
+    }
+
+    private async Task<IReadOnlyList<CodexTarget>?> TryListPooledAsync(int port, CancellationToken cancellationToken)
+    {
+        Uri browserUrl;
+        try { browserUrl = await CdpBrowserEndpoints.ResolveAsync(httpClient, port, cancellationToken); }
+        catch (Exception error) when (error is HttpRequestException or InvalidOperationException or JsonException
+            or TaskCanceledException && !cancellationToken.IsCancellationRequested)
+        { return null; }
+        try
+        {
+            var result = await pool!.SendAsync(browserUrl, "Target.getTargets",
+                new { filter = new object[] { new { } } }, BrowserCommandTimeout, cancellationToken);
+            if (result is not { } value || !value.TryGetProperty("targetInfos", out _)) return null;
+            var envelope = JsonSerializer.SerializeToUtf8Bytes(new { id = 0, result = value });
+            var targets = CdpTargetDiscoveryResponseParser.Parse(envelope, requestId: 0, browserUrl);
+            return targets is null ? null : selectPages(targets);
+        }
+        catch (Exception) when (!cancellationToken.IsCancellationRequested)
+        {
+            CdpBrowserEndpoints.Forget(port);
+            return null;
+        }
     }
 
     private async Task<IReadOnlyList<CodexTarget>> ListBrowserTargetsAsync(

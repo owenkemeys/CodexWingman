@@ -521,6 +521,40 @@ boundedEvaluation.Stop();
 Equal(true, boundedEvaluation.Elapsed < TimeSpan.FromSeconds(1), "production CDP timeout promptly returns control");
 Equal(true, neverReplySocket.AbortCalled, "timed-out CDP socket is aborted before disposal");
 
+// Pooled CDP: one persistent connection per endpoint, multiplexed by id, reopened after failure.
+{
+    var sockets = new List<EchoCdpWebSocket>();
+    using var pool = new CdpConnectionPool(() => { var socket = new EchoCdpWebSocket(); lock (sockets) sockets.Add(socket); return socket; },
+        TimeSpan.FromMinutes(2), sweep: false);
+    var pooledEvaluator = new PooledCdpEvaluator(pool, TimeSpan.FromSeconds(2));
+    var target = selectedTargets[0];
+    for (var round = 0; round < 25; round++)
+        Equal("echo", (await pooledEvaluator.EvaluateValueAsync(target, "window.__fixture"))?.GetString(), "pooled evaluation returns the value");
+    var parallel = await Task.WhenAll(Enumerable.Range(0, 20).Select(_ => pooledEvaluator.EvaluateValueAsync(target, "1")));
+    Equal(20, parallel.Count(value => value?.GetString() == "echo"), "parallel commands each get their own reply");
+    Equal(1, pool.OpenedCount, "45 commands share one connection");
+    Equal(true, sockets[0].SentIds.Distinct().Count() == sockets[0].SentIds.Count, "command ids are unique on a connection");
+    sockets[0].Fail();
+    await Task.Delay(50);
+    Equal("echo", (await pooledEvaluator.EvaluateValueAsync(target, "1"))?.GetString(), "a dropped connection is replaced on the next command");
+    Equal(2, pool.OpenedCount, "failure reopens exactly one connection");
+    pool.CloseIdle(DateTime.UtcNow + TimeSpan.FromMinutes(3));
+    Equal(0, pool.OpenCount, "idle connections close");
+    Equal(true, sockets[1].AbortCalled, "closing an idle connection aborts its socket");
+    await ThrowsAsync<InvalidOperationException>(
+        () => new PooledCdpEvaluator(pool).EvaluateValueAsync(target, "throw"), "renderer exceptions surface through the pool");
+}
+{
+    var silent = new List<NeverReplyCdpWebSocket>();
+    using var pool = new CdpConnectionPool(() => { var socket = new NeverReplyCdpWebSocket(); silent.Add(socket); return socket; }, sweep: false);
+    var pooledEvaluator = new PooledCdpEvaluator(pool, TimeSpan.FromMilliseconds(40));
+    await ThrowsAsync<TimeoutException>(() => pooledEvaluator.EvaluateValueAsync(selectedTargets[0], "1"), "pooled command times out");
+    Equal(1, pool.OpenCount, "one timeout keeps the connection");
+    await ThrowsAsync<TimeoutException>(() => pooledEvaluator.EvaluateValueAsync(selectedTargets[0], "1"), "pooled command times out again");
+    Equal(0, pool.OpenCount, "consecutive timeouts retire a silent connection");
+    Equal(true, silent[0].AbortCalled, "the silent socket is aborted");
+}
+
 var targetSource = new FakeTargetSource(selectedTargets);
 var evaluator = new FakeEvaluator("b");
 var controller = new CodexInjectionController(targetSource, evaluator, new InjectionScriptBuilder());
@@ -2830,4 +2864,40 @@ sealed class ForbiddenUsageSessionFiles : IHelperSessionFiles
     public string[] Roots() { AccessCount++; throw new IOException("Session storage must not be queried"); }
     public string[] ListFiles(string root, CancellationToken token) { AccessCount++; throw new IOException("Session storage must not be queried"); }
     public string ReadText(string path, CancellationToken token) { AccessCount++; throw new IOException("Session storage must not be queried"); }
+}
+
+sealed class EchoCdpWebSocket : ICdpWebSocket
+{
+    private readonly System.Threading.Channels.Channel<byte[]?> replies = System.Threading.Channels.Channel.CreateUnbounded<byte[]?>();
+    public List<int> SentIds { get; } = [];
+    public bool AbortCalled { get; private set; }
+    public WebSocketState State { get; private set; } = WebSocketState.None;
+
+    public Task ConnectAsync(Uri uri, CancellationToken cancellationToken) { State = WebSocketState.Open; return Task.CompletedTask; }
+
+    public ValueTask SendAsync(ReadOnlyMemory<byte> payload, WebSocketMessageType messageType, bool endOfMessage, CancellationToken cancellationToken)
+    {
+        using var request = JsonDocument.Parse(payload);
+        var id = request.RootElement.GetProperty("id").GetInt32();
+        var expression = request.RootElement.GetProperty("params").TryGetProperty("expression", out var value) ? value.GetString() : null;
+        lock (SentIds) SentIds.Add(id);
+        // An unrelated event first, then the reply, as Chrome may interleave.
+        replies.Writer.TryWrite(Encoding.UTF8.GetBytes("{\"method\":\"Inspector.event\",\"params\":{}}"));
+        replies.Writer.TryWrite(Encoding.UTF8.GetBytes(expression == "throw"
+            ? "{\"id\":" + id + ",\"result\":{\"exceptionDetails\":{\"text\":\"fixture\"}}}"
+            : "{\"id\":" + id + ",\"result\":{\"result\":{\"type\":\"string\",\"value\":\"echo\"}}}"));
+        return ValueTask.CompletedTask;
+    }
+
+    public async ValueTask<ValueWebSocketReceiveResult> ReceiveAsync(Memory<byte> buffer, CancellationToken cancellationToken)
+    {
+        var next = await replies.Reader.ReadAsync(cancellationToken);
+        if (next is null) throw new WebSocketException("fixture connection dropped");
+        next.CopyTo(buffer);
+        return new(next.Length, WebSocketMessageType.Text, true);
+    }
+
+    public void Fail() => replies.Writer.TryWrite(null);
+    public void Abort() { AbortCalled = true; State = WebSocketState.Aborted; replies.Writer.TryWrite(null); }
+    public void Dispose() { if (State != WebSocketState.Aborted) State = WebSocketState.Closed; }
 }

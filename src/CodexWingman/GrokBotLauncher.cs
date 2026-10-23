@@ -29,7 +29,7 @@ internal sealed class GrokBotLauncher(string wingmanDataRoot, Func<IEnumerable<i
     public async Task<IReadOnlyList<CodexTarget>> PagesAsync(CancellationToken cancellationToken = default)
     {
         if (Port() is not { } port) return [];
-        try { return await new GrokBotTargetSource(Http, () => port).ListAsync(cancellationToken); }
+        try { return await new GrokBotTargetSource(Http, () => port, CdpConnectionPool.Shared).ListAsync(cancellationToken); }
         catch (HttpRequestException) { return []; }
         catch (TaskCanceledException) when (!cancellationToken.IsCancellationRequested) { return []; }
     }

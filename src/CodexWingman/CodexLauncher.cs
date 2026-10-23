@@ -160,6 +160,9 @@ internal static class CodexLauncher
         return false;
     }
 
+    // Reused so status checks keep one pooled HTTP connection instead of a new client per check.
+    private static readonly HttpClient StatusHttp = new() { Timeout = TimeSpan.FromSeconds(1) };
+
     private static async Task<bool> IsEndpointReadyAsync(
         int port,
         CancellationToken cancellationToken,
@@ -167,9 +170,8 @@ internal static class CodexLauncher
     {
         try
         {
-            using var ownedHttp = http is null ? new HttpClient { Timeout = TimeSpan.FromSeconds(1) } : null;
-            var client = http ?? ownedHttp!;
-            var targets = await new HttpCodexTargetSource(client, port).ListAsync(cancellationToken);
+            var client = http ?? StatusHttp;
+            var targets = await HttpCodexTargetSource.Pooled(client, () => port, CodexTargetCatalog.SelectPages, CdpConnectionPool.Shared).ListAsync(cancellationToken);
             return targets.Count > 0;
         }
         catch (HttpRequestException) { return false; }

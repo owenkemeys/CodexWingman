@@ -38,7 +38,9 @@ internal sealed class TrayApplicationContext : ApplicationContext
     private readonly AppTargetController grok;
     private readonly ToolStripMenuItem t3WebSignInItem;
     private readonly ToolStripMenuItem grokPinItem;
-    private readonly WebSocketCdpEvaluator evaluator;
+    private readonly ICdpEvaluator evaluator;
+    private readonly CdpConnectionPool cdpPool = CdpConnectionPool.Shared;
+    private bool codexHooked;
     private readonly string settingsDirectory;
     private bool pairingInFlight;
     private DateTime nextPairingCheckUtc = DateTime.MinValue;
@@ -91,9 +93,10 @@ internal sealed class TrayApplicationContext : ApplicationContext
         activePort = configuredPortOverride
             ?? CodexRuntimeStateStore.LoadPort(runtimeStatePath)
             ?? CodexLaunchPolicy.PreferredPort;
-        var targetSource = new HttpCodexTargetSource(targetHttp, () => activePort);
-        var t3TargetSource = new T3CodeTargetSource(targetHttp, GetT3Port);
-        evaluator = new WebSocketCdpEvaluator();
+        // One persistent DevTools connection per endpoint, shared by every app target and the action poll.
+        var targetSource = HttpCodexTargetSource.Pooled(targetHttp, () => activePort, CodexTargetCatalog.SelectPages, cdpPool);
+        var t3TargetSource = new T3CodeTargetSource(targetHttp, GetT3Port, cdpPool);
+        evaluator = new PooledCdpEvaluator(cdpPool);
         t3ConnectionProbe = new T3CodeConnectionProbe(t3TargetSource, evaluator);
         userHelpersRoot = WingmanIdentity.ResolveHelpersRoot(Application.ExecutablePath);
         Directory.CreateDirectory(userHelpersRoot);
@@ -118,10 +121,10 @@ internal sealed class TrayApplicationContext : ApplicationContext
         grokLauncher = new GrokBotLauncher(settingsDirectory, ReservedPorts);
         AppTargetController? t3WebReference = null;
         t3Web = t3WebReference = new AppTargetController("T3 web", WingmanLaunchTarget.T3Web, userHelpersRoot, initializedSettings.Path,
-            new T3WebTargetSource(targetHttp, t3WebLauncher.Port, t3WebLauncher.Origin), evaluator, HelperAppIds.T3Web,
+            new T3WebTargetSource(targetHttp, t3WebLauncher.Port, t3WebLauncher.Origin, cdpPool), evaluator, HelperAppIds.T3Web,
             t3WebLauncher.Port, () => t3WebReference?.Connections?.Discovered ?? 0);
         grok = new AppTargetController("Grok Bot", WingmanLaunchTarget.GrokBot, userHelpersRoot, initializedSettings.Path,
-            new GrokBotTargetSource(targetHttp, grokLauncher.Port), evaluator, HelperAppIds.GrokBot,
+            new GrokBotTargetSource(targetHttp, grokLauncher.Port, cdpPool), evaluator, HelperAppIds.GrokBot,
             grokLauncher.Port, () => grokLauncher.OpenWindowCount(),
             roots => new HelperBackend(roots, log: message => Debug.WriteLine($"[Grok Bot Helper backend] {message}"),
                 grokBotUserData: grokLauncher.UserData));
@@ -306,6 +309,7 @@ internal sealed class TrayApplicationContext : ApplicationContext
             }
             if (!t3StartupFailed) await ReconcileT3Async();
             var startupState = await CodexLauncher.GetHookStatusAsync(runtimeStatePath, configuredPortOverride);
+            codexHooked = startupState == CodexHookState.Hooked;
             if (startupState == CodexHookState.OpenButCannotHook
                 || (startupState == CodexHookState.NotOpen && !codexOpenOnLaunchItem.Checked))
             {
@@ -539,8 +543,9 @@ internal sealed class TrayApplicationContext : ApplicationContext
             await ReconcileT3Async();
             await ReconcileAppTargetsAsync();
             await RefreshT3WebWindowsAsync();
-            if (await CodexLauncher.GetHookStatusAsync(runtimeStatePath, configuredPortOverride)
-                != CodexHookState.Hooked)
+            codexHooked = await CodexLauncher.GetHookStatusAsync(runtimeStatePath, configuredPortOverride)
+                == CodexHookState.Hooked;
+            if (!codexHooked)
             {
                 await RefreshConnectionHealthAsync();
                 return;
@@ -565,7 +570,8 @@ internal sealed class TrayApplicationContext : ApplicationContext
         if (!actionDrainGate.TryEnter(busy, exiting)) return;
         try
         {
-            await helperHost.DrainHostActionsAsync();
+            // Codex's action queue only exists while Codex is hooked; the 2-second refresh re-checks that.
+            if (codexHooked) await helperHost.DrainHostActionsAsync();
         }
         catch (Exception error)
         {
@@ -1290,6 +1296,7 @@ internal sealed class TrayApplicationContext : ApplicationContext
             var state = await CodexLauncher.GetHookStatusAsync(
                 runtimeStatePath,
                 configuredPortOverride);
+            codexHooked = state == CodexHookState.Hooked;
             var health = ConnectionHealthPolicy.Evaluate(
                 state,
                 lastReport,

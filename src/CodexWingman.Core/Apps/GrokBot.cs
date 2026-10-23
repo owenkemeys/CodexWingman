@@ -52,7 +52,7 @@ public static class GrokBotTargetCatalog
         .ToArray();
 }
 
-public sealed class GrokBotTargetSource(HttpClient httpClient, Func<int?> portProvider) : ICodexTargetSource
+public sealed class GrokBotTargetSource(HttpClient httpClient, Func<int?> portProvider, CdpConnectionPool? pool = null) : ICodexTargetSource
 {
     public Task<IReadOnlyList<CodexTarget>> ListAsync(CancellationToken cancellationToken = default)
     {
@@ -61,7 +61,7 @@ public sealed class GrokBotTargetSource(HttpClient httpClient, Func<int?> portPr
         if (port is < 1 or > 65535) throw new InvalidOperationException("Invalid Grok Bot debugging port.");
         return new HttpCodexTargetSource(
             httpClient, () => port.Value, () => new ClientWebSocketCdpSocket(),
-            GrokBotTargetCatalog.SelectPages).ListAsync(cancellationToken);
+            GrokBotTargetCatalog.SelectPages, pool).ListAsync(cancellationToken);
     }
 }
 

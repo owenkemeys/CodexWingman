@@ -66,7 +66,7 @@ public static class T3WebTargetCatalog
 }
 
 /// <summary>Reads only T3 web pages (exact configured origin) from Wingman's own Chrome debugging endpoint.</summary>
-public sealed class T3WebTargetSource(HttpClient httpClient, Func<int?> portProvider, Func<Uri?> originProvider) : ICodexTargetSource
+public sealed class T3WebTargetSource(HttpClient httpClient, Func<int?> portProvider, Func<Uri?> originProvider, CdpConnectionPool? pool = null) : ICodexTargetSource
 {
     public Task<IReadOnlyList<CodexTarget>> ListAsync(CancellationToken cancellationToken = default)
     {
@@ -76,7 +76,7 @@ public sealed class T3WebTargetSource(HttpClient httpClient, Func<int?> portProv
         if (port is < 1 or > 65535) throw new InvalidOperationException("Invalid T3 web debugging port.");
         return new HttpCodexTargetSource(
             httpClient, () => port.Value, () => new ClientWebSocketCdpSocket(),
-            targets => T3WebTargetCatalog.SelectPages(targets, origin)).ListAsync(cancellationToken);
+            targets => T3WebTargetCatalog.SelectPages(targets, origin), pool).ListAsync(cancellationToken);
     }
 }
 
@@ -166,35 +166,26 @@ public static class CdpBrowserCommand
 {
     public static async Task<JsonElement?> SendAsync(
         HttpClient httpClient, int port, string method, object? parameters, CancellationToken cancellationToken)
+        => await SendAsync(httpClient, port, method, parameters, CdpConnectionPool.Shared, cancellationToken);
+
+    /// <summary>Sends over the pooled browser connection; the endpoint description is cached per port and re-read after a failure.</summary>
+    public static async Task<JsonElement?> SendAsync(
+        HttpClient httpClient, int port, string method, object? parameters, CdpConnectionPool pool, CancellationToken cancellationToken)
     {
-        if (port is < 1 or > 65535) throw new ArgumentOutOfRangeException(nameof(port));
-        using var versionDocument = JsonDocument.Parse(
-            await httpClient.GetStringAsync($"http://127.0.0.1:{port}/json/version", cancellationToken));
-        if (!versionDocument.RootElement.TryGetProperty("webSocketDebuggerUrl", out var urlValue)
-            || !Uri.TryCreate(urlValue.GetString(), UriKind.Absolute, out var url)
-            || url.Scheme != "ws" || !url.IsLoopback || url.Port != port)
-            throw new InvalidOperationException("The local browser endpoint did not describe itself as expected.");
-        using var socket = new ClientWebSocketCdpSocket();
-        using var deadline = CancellationTokenSource.CreateLinkedTokenSource(cancellationToken);
-        deadline.CancelAfter(TimeSpan.FromSeconds(5));
-        await socket.ConnectAsync(url, deadline.Token);
-        var request = JsonSerializer.SerializeToUtf8Bytes(new { id = 1, method, @params = parameters ?? new { } });
-        await socket.SendAsync(request, System.Net.WebSockets.WebSocketMessageType.Text, true, deadline.Token);
-        var buffer = new byte[16 * 1024];
-        using var accumulator = new CdpMessageAccumulator();
-        while (true)
+        var url = await CdpBrowserEndpoints.ResolveAsync(httpClient, port, cancellationToken);
+        try
         {
-            var receive = await socket.ReceiveAsync(buffer, deadline.Token);
-            if (receive.MessageType == System.Net.WebSockets.WebSocketMessageType.Close)
-                throw new InvalidOperationException("The local browser endpoint closed before replying.");
-            var payload = accumulator.Append(buffer.AsSpan(0, receive.Count), receive.EndOfMessage);
-            if (!payload.HasValue) continue;
-            using var document = JsonDocument.Parse(payload.Value);
-            var root = document.RootElement;
-            if (!root.TryGetProperty("id", out var id) || !id.TryGetInt32(out var number) || number != 1) continue;
-            if (root.TryGetProperty("error", out var error))
-                throw new InvalidOperationException("The local browser refused " + method + ": " + error.GetRawText());
-            return root.TryGetProperty("result", out var result) ? result.Clone() : null;
+            var result = await pool.SendAsync(url, method, parameters, TimeSpan.FromSeconds(5), cancellationToken);
+            return result?.Clone();
+        }
+        catch (CdpProtocolException error)
+        {
+            throw new InvalidOperationException("The local browser refused " + method + ": " + error.Message, error);
+        }
+        catch (Exception) when (!cancellationToken.IsCancellationRequested)
+        {
+            CdpBrowserEndpoints.Forget(port);
+            throw;
         }
     }
 
