@@ -1,6 +1,6 @@
 # Usage dials
 
-- Helper generation: native-slot-v27
+- Helper generation: native-slot-v28
 - Manifest version: 1.6.0
 - Helper ID: `usage-dials`
 
@@ -70,3 +70,11 @@ The `t3-web` target runs the T3 renderer branch unchanged inside Wingman's own C
 The `grok-bot` target shows one weekly dial in Grok Bot's composer, inside `.sand-prompt-actions-trailing` immediately before the send/mic cluster (`.sand-prompt-cta-cluster`). These are Grok Bot's own semantic class markers; its hashed style classes are never used. The dial keeps the Codex/T3 geometry and pacing colours and inherits the composer icon colour.
 
 Numbers come only from `files.grokBotUsage`: Wingman reads Grok Bot's own `weekly-usage.cache` entry in `%APPDATA%\Grok Bot\sand-client-persistence` (read-only) and passes `percentUsed`, `nextResetMs` and `readAtMs`. Account ids, plan names and credentials are never passed. The dial percentage equals the cache's `percentUsed`. Pacing assumes Grok Bot's weekly window is 7 days ending at `nextResetMs`. A reading older than 24 hours, past its own `expiresAtMs`, or missing shows a question mark with an explanation instead of a number. Wingman never calls Grok Bot's servers and never edits Grok Bot files. If Grok Bot renames its composer markers the dial waits and renderHealth reports `waiting`.
+
+## Grok Bot usage source
+
+In Grok Bot the weekly dial reads the app's live client store, the same in-memory weekly-usage value its account menu and Settings > Usage render. The helper finds that store once by its contract (`weeklyUsage` with `snapshots.get`, `snapshots.subscribe` and `refresh`) on the root React providers, subscribes to it, and redraws as soon as the app's value changes. More than one candidate store fails closed. Grok Bot itself refreshes that value only when its account menu or usage settings open, or after a send once the reading is 5 minutes old, so while the window is visible the helper asks the app's own throttled `refresh()` at most every 5 minutes when the reading is older than that. That is the app's own request path; the helper makes no network call, and reads no credentials or storage.
+
+Grok Bot's saved weekly-usage cache (the `.blob` slice, passed in by the Wingman backend) is only a fallback, used when the live store is not available, and the popup labels it with its age ("Saved reading, 3 h ago"). The live value is labelled "Updated …".
+
+The popup restates its own layout (column stack, spacing, text size) in scoped rules on Wingman's own nodes, so a host page without Codex's utility classes, or with conflicting CSS, cannot run the lines together. The values match the utility classes Codex and T3 use, so the popup looks the same there.

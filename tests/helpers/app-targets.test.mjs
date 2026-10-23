@@ -278,3 +278,129 @@ test('Grok Bot backend returns only the typed Wingman projection', async () => {
   const refresh = new Function(`${source}; return refresh`)()
   assert.deepEqual(refresh({ files: { grokBotUsage: { read: () => projection } } }), { grokBot: projection })
 })
+
+const grokStore = (initial) => {
+  let current = initial
+  const listeners = new Set()
+  const calls = { refresh: 0 }
+  return {
+    calls,
+    set(next) { current = next; for (const listener of [...listeners]) listener() },
+    listenerCount: () => listeners.size,
+    weeklyUsage: {
+      snapshots: { get: () => current, subscribe(listener) { listeners.add(listener); return () => listeners.delete(listener) }, set() { throw new Error('helper must not write') }, update() { throw new Error('helper must not write') } },
+      presence: { get: () => 'present' },
+      refresh() { calls.refresh += 1 },
+      refreshNow() { throw new Error('helper uses the throttled refresh only') },
+    },
+  }
+}
+
+const mountGrokRoot = (fixture, store) => {
+  const root = fixture.document.createElement('div')
+  root.id = 'root'
+  const provider = { memoizedProps: { value: { weeklyUsage: store.weeklyUsage, usageSummary: {} } }, child: null, sibling: null }
+  root['__reactContainer$test'] = { memoizedProps: {}, child: { memoizedProps: {}, child: provider, sibling: null }, sibling: null }
+  fixture.document.body.appendChild(root)
+}
+
+test('Grok Bot: the dial follows the live client store, not the stale cache, and redraws on store change', async () => {
+  const fixture = createBrowserFixture()
+  fixture.setRectResolver(() => ({ left: 560, top: 700, width: 32, height: 32 }))
+  const composer = makeGrokComposer(fixture)
+  const nextResetMs = Date.now() + 4 * 86400000
+  const store = grokStore({ status: 'ready', value: { usage: { percentUsed: 42.14, nextResetMs }, readAtMs: Date.now() - 30000 } })
+  mountGrokRoot(fixture, store)
+  try {
+    executeRenderer(await read('usage-dials/apply.js'), fixture, {
+      state: { grokBot: { available: true, percentUsed: 33.7, nextResetMs, readAtMs: Date.now() - 5 * 3600000 } },
+      wingman: { app: 'grok-bot', request() {}, reportRenderHealth() {} },
+    })
+    const controller = fixture.window.__codexHelperUsageDials
+    assert.equal(controller.status().secondary.usedPercent, 42.14, 'live store wins over the cache')
+    assert.equal(controller.status().usageSource, 'live')
+    assert.equal(store.listenerCount(), 1)
+    assert.equal(store.calls.refresh, 0, 'a fresh live reading needs no refresh')
+    store.set({ status: 'ready', value: { usage: { percentUsed: 47.5, nextResetMs }, readAtMs: Date.now() } })
+    fixture.flushAnimationFrames?.()
+    controller.update({ grokBot: { available: true, percentUsed: 33.7, nextResetMs, readAtMs: Date.now() - 5 * 3600000 } })
+    assert.equal(controller.status().secondary.usedPercent, 47.5)
+    const weekly = composer.trailing.querySelector('[data-codex-helper-dial="secondary"]')
+    assert.match(weekly.getAttribute('aria-label'), /^Weekly usage: 47\.5%\./)
+    weekly.dispatchEvent(new fixture.PointerEvent('pointerover', { bubbles: true, pointerType: 'mouse' }))
+    assert.match(fixture.document.querySelector('[role="tooltip"]').textContent, /Updated just now/)
+    executeRenderer(await read('usage-dials/remove.js'), fixture)
+    assert.equal(store.listenerCount(), 0, 'cleanup unsubscribes')
+  } finally { fixture.dispose() }
+})
+
+test('Grok Bot: a stale live reading asks the app\'s own throttled refresh at most once per 5 minutes', async () => {
+  const fixture = createBrowserFixture()
+  makeGrokComposer(fixture)
+  const store = grokStore({ status: 'ready', value: { usage: { percentUsed: 10, nextResetMs: Date.now() + 86400000 }, readAtMs: Date.now() - 10 * 60000 } })
+  mountGrokRoot(fixture, store)
+  try {
+    executeRenderer(await read('usage-dials/apply.js'), fixture, { state: {}, wingman: { app: 'grok-bot', request() {}, reportRenderHealth() {} } })
+    const controller = fixture.window.__codexHelperUsageDials
+    controller.update({})
+    controller.update({})
+    assert.equal(store.calls.refresh, 1)
+    assert.equal(controller.status().secondary.usedPercent, 10)
+  } finally { fixture.dispose() }
+})
+
+test('Grok Bot: without a live store the saved cache is used and labelled with its age', async () => {
+  const fixture = createBrowserFixture()
+  fixture.setRectResolver(() => ({ left: 560, top: 700, width: 32, height: 32 }))
+  const composer = makeGrokComposer(fixture)
+  try {
+    executeRenderer(await read('usage-dials/apply.js'), fixture, {
+      state: { grokBot: { available: true, percentUsed: 33.7, nextResetMs: Date.now() + 86400000, readAtMs: Date.now() - 3 * 3600000 } },
+      wingman: { app: 'grok-bot', request() {}, reportRenderHealth() {} },
+    })
+    assert.equal(fixture.window.__codexHelperUsageDials.status().usageSource, 'cache')
+    const weekly = composer.trailing.querySelector('[data-codex-helper-dial="secondary"]')
+    weekly.dispatchEvent(new fixture.PointerEvent('pointerover', { bubbles: true, pointerType: 'mouse' }))
+    assert.match(fixture.document.querySelector('[role="tooltip"]').textContent, /Saved reading, 3 h ago/)
+  } finally { fixture.dispose() }
+})
+
+test('Grok Bot: two candidate stores fail closed to the cache', async () => {
+  const fixture = createBrowserFixture()
+  makeGrokComposer(fixture)
+  const a = grokStore({ status: 'ready', value: { usage: { percentUsed: 1 }, readAtMs: Date.now() } })
+  const b = grokStore({ status: 'ready', value: { usage: { percentUsed: 2 }, readAtMs: Date.now() } })
+  const root = fixture.document.createElement('div')
+  root.id = 'root'
+  root['__reactContainer$test'] = { memoizedProps: { value: { weeklyUsage: a.weeklyUsage } }, child: null,
+    sibling: { memoizedProps: { value: { weeklyUsage: b.weeklyUsage } }, child: null, sibling: null } }
+  fixture.document.body.appendChild(root)
+  try {
+    executeRenderer(await read('usage-dials/apply.js'), fixture, { state: {}, wingman: { app: 'grok-bot', request() {}, reportRenderHealth() {} } })
+    assert.equal(fixture.window.__codexHelperUsageDials.status().usageSource, null)
+    assert.equal(a.calls.refresh + b.calls.refresh, 0)
+  } finally { fixture.dispose() }
+})
+
+test('Usage popup owns its layout so a host without utility classes cannot run lines together', async () => {
+  const fixture = createBrowserFixture()
+  fixture.setRectResolver(() => ({ left: 560, top: 700, width: 32, height: 32 }))
+  const composer = makeGrokComposer(fixture)
+  try {
+    executeRenderer(await read('usage-dials/apply.js'), fixture, {
+      state: { grokBot: { available: true, percentUsed: 33.7, nextResetMs: Date.now() + 86400000, readAtMs: Date.now() } },
+      wingman: { app: 'grok-bot', request() {}, reportRenderHealth() {} },
+    })
+    composer.trailing.querySelector('[data-codex-helper-dial="secondary"]')
+      .dispatchEvent(new fixture.PointerEvent('pointerover', { bubbles: true, pointerType: 'mouse' }))
+    const tip = fixture.document.querySelector('[data-codex-helper-tooltip="usage-fallback"]')
+    const stack = tip.querySelector('[data-codex-helper-usage-stack]')
+    assert.ok(stack, 'stack is marked for the scoped rules')
+    assert.ok(stack.children.length >= 4, 'each readout line is its own element')
+    const css = fixture.document.querySelector('[data-codex-helper-style="usage-dials"]').textContent
+    assert.match(css, /\[data-codex-helper-tooltip="usage-fallback"\] > \[data-codex-helper-usage-stack\] \{[^}]*display: flex !important;[^}]*flex-direction: column !important;/)
+    assert.match(css, /\[data-codex-helper-usage-stack\] > span \{[^}]*display: block !important;/)
+    assert.match(css, /gap: calc\(var\(--spacing, 0\.25rem\) \* 0\.5\)/, 'same gap as gap-0.5')
+    assert.match(css, /width: calc\(var\(--spacing, 0\.25rem\) \* 38\)/, 'same width as w-38')
+  } finally { fixture.dispose() }
+})
