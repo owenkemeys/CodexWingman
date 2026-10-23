@@ -80,9 +80,28 @@ public sealed class T3WebTargetSource(HttpClient httpClient, Func<int?> portProv
     }
 }
 
+public enum T3WebOpenAction
+{
+    /// <summary>Nothing of Wingman's T3 web Chrome is running: start it.</summary>
+    StartNew,
+    /// <summary>Wingman's Chrome runs but shows no T3 web window: ask it for one.</summary>
+    OpenWindowInRunningProfile,
+    /// <summary>A T3 web window exists: bring it to the front instead of opening another.</summary>
+    ActivateExisting,
+}
+
 public static class T3WebLaunchPolicy
 {
     public const int PreferredPort = 9423;
+
+    /// <summary>
+    /// What one launch of the T3 web shortcut does. Like one click on a pinned app, it never opens a
+    /// second T3 web window while one exists.
+    /// </summary>
+    public static T3WebOpenAction OpenAction(bool endpointAlive, int t3WebPageCount) =>
+        !endpointAlive ? T3WebOpenAction.StartNew
+        : t3WebPageCount > 0 ? T3WebOpenAction.ActivateExisting
+        : T3WebOpenAction.OpenWindowInRunningProfile;
 
     public static IReadOnlyList<string> CandidateChromeExecutables(string localAppData, string programFiles, string programFilesX86) =>
     [
