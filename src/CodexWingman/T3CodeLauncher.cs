@@ -205,12 +205,13 @@ internal static class T3CodeLauncher
     private static async Task<bool> HasT3PagesAsync(int port, CancellationToken cancellationToken) =>
         await CountT3PagesAsync(port, cancellationToken) > 0;
 
+    private static readonly HttpClient StatusHttp = new() { Timeout = TimeSpan.FromSeconds(1) };
+
     private static async Task<int> CountT3PagesAsync(int port, CancellationToken cancellationToken)
     {
         try
         {
-            using var http = new HttpClient { Timeout = TimeSpan.FromSeconds(1) };
-            return (await new T3CodeTargetSource(http, () => port).ListAsync(cancellationToken)).Count;
+            return (await new T3CodeTargetSource(StatusHttp, () => port, CdpConnectionPool.Shared).ListAsync(cancellationToken)).Count;
         }
         catch (HttpRequestException) { return 0; }
         catch (TaskCanceledException) when (!cancellationToken.IsCancellationRequested) { return 0; }

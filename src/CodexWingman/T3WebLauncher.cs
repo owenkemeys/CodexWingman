@@ -61,7 +61,7 @@ internal sealed class T3WebLauncher(string wingmanDataRoot, Func<HelperSettings>
         var port = Port();
         var origin = Origin();
         if (port is null || origin is null) return [];
-        try { return await new T3WebTargetSource(Http, () => port, () => origin).ListAsync(cancellationToken); }
+        try { return await new T3WebTargetSource(Http, () => port, () => origin, CdpConnectionPool.Shared).ListAsync(cancellationToken); }
         catch (HttpRequestException) { return []; }
         catch (TaskCanceledException) when (!cancellationToken.IsCancellationRequested) { return []; }
     }
