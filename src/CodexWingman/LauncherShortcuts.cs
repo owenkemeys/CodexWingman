@@ -6,7 +6,13 @@ namespace CodexWingman;
 
 internal static class LauncherShortcuts
 {
-    public static string[] Ensure(string executable, string? localAppData = null, string? programsFolder = null)
+    public const string T3WebShortcutName = "Wingman T3 Code (web)";
+
+    /// <summary>
+    /// Creates or refreshes Wingman's Start shortcuts. The T3 web shortcut is added only when T3 web can
+    /// work on this PC. Shortcuts are never pinned; pinning stays the user's choice.
+    /// </summary>
+    public static string[] Ensure(string executable, string? localAppData = null, string? programsFolder = null, bool includeT3Web = false)
     {
         executable = Path.GetFullPath(executable);
         if (!File.Exists(executable) || !Directory.Exists(Path.Combine(Path.GetDirectoryName(executable)!, "Helpers")))
@@ -20,11 +26,31 @@ internal static class LauncherShortcuts
             (Name: "Wingman Codex", Target: WingmanLaunchTarget.Codex, Id: WingmanIdentity.AppUserModelId + ".Codex"),
             (Name: "Wingman T3 Code", Target: WingmanLaunchTarget.T3Code, Id: WingmanIdentity.AppUserModelId + ".T3Code"),
             (Name: "Wingman", Target: WingmanLaunchTarget.Preferences, Id: WingmanIdentity.AppUserModelId),
-        };
+        }.ToList();
+        if (includeT3Web)
+            shortcuts.Add((Name: T3WebShortcutName, Target: WingmanLaunchTarget.T3Web,
+                Id: WingmanLaunchOptions.AppUserModelIdFor(WingmanLaunchTarget.T3Web)));
         return shortcuts.Select(item => Save(Path.Combine(programsFolder, item.Name + ".lnk"),
             executable, item.Target == WingmanLaunchTarget.Preferences
                 ? WingmanLaunchOptions.RelaunchArguments(localAppData)
                 : WingmanLaunchOptions.ShortcutArguments(item.Target, localAppData), item.Name, item.Id)).ToArray();
+    }
+
+    /// <summary>True when this profile has a T3 web address or a reachable pairing folder (set up or found via Jarvis Sync).</summary>
+    public static bool T3WebAvailable(string? localAppData)
+    {
+        try
+        {
+            var settings = HelperSettingsStore.Load(HelperSettingsStore.DefaultPath(localAppData));
+            return settings.T3Web?.IsConfigured == true
+                || SharedFolderPairingProvider.ResolveFolder(settings.T3Web?.Pairing,
+                    localAppData ?? Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData)) is { } folder
+                    && Directory.Exists(folder);
+        }
+        catch (Exception error) when (error is IOException or UnauthorizedAccessException or System.Text.Json.JsonException or InvalidDataException)
+        {
+            return false;
+        }
     }
 
     public static string? CurrentProfileOverride(WingmanLaunchOptions options)

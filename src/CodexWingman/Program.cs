@@ -19,7 +19,7 @@ internal static class Program
         }
         if (options.RegisterOnly)
         {
-            try { LauncherShortcuts.Ensure(Application.ExecutablePath, LauncherShortcuts.CurrentProfileOverride(options)); }
+            try { EnsureShortcuts(options); }
             catch (Exception error)
             {
                 Console.Error.WriteLine(error.Message);
@@ -32,10 +32,16 @@ internal static class Program
             new WingmanLaunchOptions(WingmanLaunchTarget.Codex).ActivationEventName, out var createdCodexEvent);
         using var t3Activation = new EventWaitHandle(false, EventResetMode.AutoReset,
             new WingmanLaunchOptions(WingmanLaunchTarget.T3Code).ActivationEventName, out var createdT3Event);
+        using var t3WebActivation = new EventWaitHandle(false, EventResetMode.AutoReset,
+            new WingmanLaunchOptions(WingmanLaunchTarget.T3Web).ActivationEventName, out var createdT3WebEvent);
+        using var grokActivation = new EventWaitHandle(false, EventResetMode.AutoReset,
+            new WingmanLaunchOptions(WingmanLaunchTarget.GrokBot).ActivationEventName, out var createdGrokEvent);
+        // A running Wingman always holds every activation event; creating one here means an older build is running.
+        var olderInstanceRunning = createdCodexEvent || createdT3Event || createdT3WebEvent || createdGrokEvent;
         using var singleInstance = new Mutex(true, WingmanIdentity.SingleInstanceName, out var isFirstInstance);
-        if (isFirstInstance || createdCodexEvent || createdT3Event)
+        if (isFirstInstance || olderInstanceRunning)
         {
-            try { LauncherShortcuts.Ensure(Application.ExecutablePath, LauncherShortcuts.CurrentProfileOverride(options)); }
+            try { EnsureShortcuts(options); }
             catch (Exception error)
             {
                 MessageBox.Show("Wingman could not create its Start shortcuts.\n\n" + error.Message,
@@ -44,7 +50,7 @@ internal static class Program
         }
         if (!isFirstInstance)
         {
-            if (createdCodexEvent || createdT3Event)
+            if (olderInstanceRunning)
             {
                 MessageBox.Show("Close the older Wingman from its tray menu, then use this shortcut again.",
                     "Wingman update", MessageBoxButtons.OK, MessageBoxIcon.Information);
@@ -56,14 +62,16 @@ internal static class Program
             return;
         }
 
-        SetCurrentProcessExplicitAppUserModelID(WingmanIdentity.AppUserModelId + (options.Target switch
-        {
-            WingmanLaunchTarget.Codex => ".Codex",
-            WingmanLaunchTarget.T3Code => ".T3Code",
-            _ => string.Empty,
-        }));
+        SetCurrentProcessExplicitAppUserModelID(WingmanLaunchOptions.AppUserModelIdFor(options.Target));
         var portOverride = CodexLaunchPolicy.TryGetPortOverride(args);
-        Application.Run(new TrayApplicationContext(portOverride, activationEvent, options, codexActivation, t3Activation));
+        Application.Run(new TrayApplicationContext(portOverride, activationEvent, options, codexActivation, t3Activation,
+            t3WebActivation, grokActivation));
+    }
+
+    private static void EnsureShortcuts(WingmanLaunchOptions options)
+    {
+        var profile = LauncherShortcuts.CurrentProfileOverride(options);
+        LauncherShortcuts.Ensure(Application.ExecutablePath, profile, includeT3Web: LauncherShortcuts.T3WebAvailable(options.LocalAppData));
     }
 
     [DllImport("shell32.dll", CharSet = CharSet.Unicode)]

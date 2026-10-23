@@ -1,7 +1,8 @@
 (() => {
   const globalName = '__codexWingmanT3ClickableFileLinks'
   const version = 't3-file-links-v1'
-  if (window.location?.protocol !== 't3code:') return false
+  // T3 desktop (t3code:) or T3 web in Wingman's own Chrome app window (wingman.app === 't3-web').
+  if (window.location?.protocol !== 't3code:' && (typeof wingman === 'undefined' || wingman?.app !== 't3-web')) return false
 
   const mappings = (Array.isArray(helperConfig?.mappings) ? helperConfig.mappings : [])
     .filter((entry) => typeof entry?.sourcePrefix === 'string' && entry.sourcePrefix.startsWith('/')

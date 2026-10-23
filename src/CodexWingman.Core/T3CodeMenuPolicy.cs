@@ -41,3 +41,47 @@ public static class T3CodeMenuPolicy
         return new($"T3 Code: OK ({hooked}/{visibleWindows})", "Wingman is connected to each visible T3 Code window, and enabled Helpers report no problems.");
     }
 }
+
+/// <summary>Same menu rules as T3 Code, worded for another Wingman-launched app (T3 web, Grok Bot).</summary>
+public static class AppTargetMenuPolicy
+{
+    public static T3CodeMenuStatus Evaluate(
+        string appName,
+        int? visibleWindows,
+        bool endpointConfigured,
+        HelperHostReport? report,
+        T3CodeConnectionReport? connections,
+        bool checkFailed,
+        bool helpersSuspended = false,
+        bool hasEnabledHelpers = true)
+    {
+        var status = T3CodeMenuPolicy.Evaluate(visibleWindows, endpointConfigured, report, connections, checkFailed,
+            helpersSuspended, hasEnabledHelpers);
+        return new(status.Label.Replace("T3 Code", appName, StringComparison.Ordinal),
+            status.Details.Replace("T3 Code", appName, StringComparison.Ordinal));
+    }
+}
+
+public sealed class AppTargetConnectionProbe(ICodexTargetSource targetSource, ICdpEvaluator evaluator)
+{
+    public async Task<T3CodeConnectionReport> ProbeAsync(CancellationToken cancellationToken = default)
+    {
+        var targets = await targetSource.ListAsync(cancellationToken);
+        var connected = 0;
+        var failed = 0;
+        foreach (var target in targets)
+        {
+            cancellationToken.ThrowIfCancellationRequested();
+            try
+            {
+                await evaluator.EvaluateAsync(target, "void 0", cancellationToken);
+                connected++;
+            }
+            catch (Exception) when (!cancellationToken.IsCancellationRequested)
+            {
+                failed++;
+            }
+        }
+        return new(targets.Count, connected, failed);
+    }
+}

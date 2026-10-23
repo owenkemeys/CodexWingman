@@ -1,6 +1,6 @@
 namespace CodexWingman.Core;
 
-public enum WingmanLaunchTarget { Preferences, Codex, T3Code }
+public enum WingmanLaunchTarget { Preferences, Codex, T3Code, T3Web, GrokBot }
 
 public sealed record WingmanLaunchOptions(
     WingmanLaunchTarget Target = WingmanLaunchTarget.Preferences,
@@ -21,7 +21,9 @@ public sealed record WingmanLaunchOptions(
                 {
                     "codex" => WingmanLaunchTarget.Codex,
                     "t3-code" => WingmanLaunchTarget.T3Code,
-                    _ => throw new ArgumentException("Wingman launcher app must be codex or t3-code."),
+                    "t3-web" => WingmanLaunchTarget.T3Web,
+                    "grok-bot" => WingmanLaunchTarget.GrokBot,
+                    _ => throw new ArgumentException("Wingman launcher app must be codex, t3-code, t3-web or grok-bot."),
                 }};
             }
             else if (argument.StartsWith("--local-app-data=", StringComparison.Ordinal))
@@ -43,16 +45,28 @@ public sealed record WingmanLaunchOptions(
             {
                 WingmanLaunchTarget.Codex => settings.OpenCodexOnLaunch,
                 WingmanLaunchTarget.T3Code => settings.OpenT3CodeOnLaunch,
+                WingmanLaunchTarget.T3Web => settings.T3Web?.OpenOnLaunch == true && settings.T3Web.IsConfigured,
+                WingmanLaunchTarget.GrokBot => settings.OpenGrokBotOnLaunch,
                 _ => false,
             }
             : Target == app;
 
-    public string ActivationEventName => Target switch
+    public string ActivationEventName => Target == WingmanLaunchTarget.Preferences
+        ? WingmanIdentity.ActivationEventName
+        : WingmanIdentity.ActivationEventName + IdentitySuffix(Target);
+
+    /// <summary>Stable per-target suffix shared by the activation event and the AppUserModelID.</summary>
+    public static string IdentitySuffix(WingmanLaunchTarget target) => target switch
     {
-        WingmanLaunchTarget.T3Code => WingmanIdentity.ActivationEventName + ".T3Code",
-        WingmanLaunchTarget.Codex => WingmanIdentity.ActivationEventName + ".Codex",
-        _ => WingmanIdentity.ActivationEventName,
+        WingmanLaunchTarget.Codex => ".Codex",
+        WingmanLaunchTarget.T3Code => ".T3Code",
+        WingmanLaunchTarget.T3Web => ".T3Web",
+        WingmanLaunchTarget.GrokBot => ".GrokBot",
+        _ => string.Empty,
     };
+
+    public static string AppUserModelIdFor(WingmanLaunchTarget target) =>
+        WingmanIdentity.AppUserModelId + IdentitySuffix(target);
 
     public static string ShortcutArguments(WingmanLaunchTarget target, string? localAppData = null)
     {
@@ -60,6 +74,8 @@ public sealed record WingmanLaunchOptions(
         {
             WingmanLaunchTarget.Codex => "--launch=codex",
             WingmanLaunchTarget.T3Code => "--launch=t3-code",
+            WingmanLaunchTarget.T3Web => "--launch=t3-web",
+            WingmanLaunchTarget.GrokBot => "--launch=grok-bot",
             _ => throw new ArgumentException("A shortcut must select an app.", nameof(target)),
         };
         var profile = RelaunchArguments(localAppData);

@@ -17,6 +17,15 @@ T3 Code: Problem (1/3) >
     View status details...
     ──────────────────────
     [ ] Open on launch
+T3 web: OK (1/1) >
+    Open T3 web with Wingman
+    View status details...
+    Check T3 sign-in now
+Grok Bot: OK (1/1) >
+    Open Grok Bot with Wingman
+    View status details...
+    ──────────────────────
+    [ ] Taskbar pin opens Grok Bot through Wingman
 ──────────────────────────
 [x] Helpers enabled
 Manage helpers >
@@ -52,6 +61,24 @@ The first T3 renderer loadout is **Usage dials**, **Obsidian links**, and **Clic
 | New chat window | Needs a T3-specific window action rather than Codex's native action. |
 | Usage Dials | T3 source adapter implemented; real composer and quota display still require live verification. |
 | JSON Debug | Codex-specific diagnostics; a T3 version needs its own evidence and design. |
+
+## T3 web and Grok Bot targets
+
+Two more app targets follow the same `AppTarget` contract, each with its own app ID, Helper Host, loopback port, page predicate and tray row (`T3 web: …`, `Grok Bot: …`). Both default to `Open on launch` off. Native Codex and native T3 desktop behavior is unchanged.
+
+**T3 web (`t3-web`).** Wingman opens the T3 web client as a Chrome app window (`--app=<origin>`) with Wingman's own Chrome data folder (`%LOCALAPPDATA%\CodexWingman\t3-web\chrome-data`) and `--remote-debugging-address=127.0.0.1`. Pages are selected only on the exact https origin from local settings or a validated pairing link; no host name ships in the package. The windows get Wingman's `…T3Web` AppUserModelID and a Start shortcut `Wingman T3 Code (web)` is created when T3 web can work on the PC. Usage dials, Obsidian links and Clickable file links run there with their T3 scripts, gated on `wingman.app === 't3-web'`; the dial imports T3's runtime module only from the same origin.
+
+**T3 web sign-in.** T3 browser sessions end a fixed 30 days after pairing and are not replaced automatically. Wingman pairs a signed-out window and renews three days before the end with a one-time, two-minute pairing link from a pluggable provider, exchanged from inside the page exactly as T3's `/pair` page does, then asks the host to revoke the previous Wingman session with the same label. The shipped provider drops a request file in a folder the T3 host answers (found from the Jarvis Sync receipt, or set as `t3Web.pairing.folder`). Wingman never reads, decrypts or copies browser cookies and stores no credential.
+
+**Grok Bot (`grok-bot`).** Wingman relaunches Grok Bot once, after asking, with only `--remote-debugging-address=127.0.0.1 --remote-debugging-port=<p>`; Grok Bot keeps its own user data and sign-in. A running Grok Bot is closed gracefully and never killed. Wingman changes no Grok Bot files and never calls Grok Bot's servers or uses its credentials. The composer dial reads only Grok Bot's local weekly-usage cache (read-only); the dial percentage equals the cached `percentUsed`, and a stale (over 24 hours), expired or malformed cache shows `?`. An existing Grok Bot taskbar pin can be pointed at Wingman (`--launch=grok-bot`) from the tray as an opt-in step, off by default, with a backup and a restore item; Wingman never adds pins.
+
+### Decisions
+
+- 2026-10-22: T3 web uses Wingman's own Chrome data folder. This is deliberate and applies to T3 web only; the Codex rule to keep the normal-profile hook-ready design and not create a disposable profile is unchanged. Chrome refuses a debugging port on its default data folder, and copying the user's Chrome cookies is not allowed. Do not "fix" this back to the normal Chrome profile.
+- 2026-10-22: T3 web sign-in is renewed by one-time pairing links before the fixed 30-day expiry, never by cookie copying; the previous Wingman session is revoked by label after a renewal.
+- 2026-10-22: Grok Bot gets a relaunch with a localhost-only port and a cache-only dial; no patching, no extension, no floating window, no server calls. Pins are never forced; retargeting the existing Grok Bot pin is opt-in with a backup. Autostart stays off.
+
+These targets are source- and fixture-tested only until a Windows trial shows the real windows grouping under their identities, Grok Bot keeping its sign-in after the relaunch, the dial in the real Grok Bot and T3 web composers, and pairing end to end.
 
 ## Acceptance
 
