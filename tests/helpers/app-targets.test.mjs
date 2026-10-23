@@ -231,9 +231,14 @@ test('Grok Bot: one weekly dial sits before the send cluster and its percentage 
     assert.equal(weekly.querySelector('[data-segment="background"]').getAttribute('data-end-percent'), '100')
     assert.equal(weekly.querySelector('[data-segment="unused"]').getAttribute('data-start-percent'), '23', 'drawn usage arc ends at the shown percentage')
     assert.equal(bank.querySelector('[data-codex-helper-dial="primary"]').style.display, 'none')
-    assert.equal(health.at(-1).state, 'ready')
+    assert.equal(health.at(-1).state, 'saved-reading', 'no live store here, so health says it is the saved reading')
+    assert.match(health.at(-1).detail, /saved reading, not the live value: Grok Bot's page is not ready/)
+    assert.equal(weekly.dataset.usageSource, 'saved')
+    assert.equal(weekly.style.opacity, '0.5', 'a saved reading is visibly dimmed')
+    assert.match(weekly.getAttribute('aria-label'), /Saved reading, not live\.$/)
     weekly.dispatchEvent(new fixture.PointerEvent('pointerover', { bubbles: true, pointerType: 'mouse' }))
     const tip = fixture.document.querySelector('[role="tooltip"]').textContent
+    assert.match(tip, /Saved reading, .* \(not live\)/)
     assert.match(tip, /23% used \(77% left\)/)
     assert.doesNotMatch(tip, /Resets unavailable/, 'no Codex reset-credit line for Grok Bot')
     controller.update({ grokBot: { available: true, percentUsed: 61, nextResetMs, readAtMs: Date.now() } })
@@ -386,6 +391,65 @@ test('Grok Bot: two candidate stores fail closed to the cache', async () => {
     assert.equal(fixture.window.__codexHelperUsageDials.status().usageSource, null)
     assert.equal(a.calls.refresh + b.calls.refresh, 0)
   } finally { fixture.dispose() }
+})
+
+test('Grok Bot: the live store is found however deep or late it sits in the tree (no element budget)', async () => {
+  const fixture = createBrowserFixture()
+  fixture.setRectResolver(() => ({ left: 560, top: 700, width: 32, height: 32 }))
+  makeGrokComposer(fixture)
+  const nextResetMs = Date.now() + 4 * 86400000
+  const store = grokStore({ status: 'ready', value: { usage: { percentUsed: 57.4, nextResetMs }, readAtMs: Date.now() - 1000 } })
+  const root = fixture.document.createElement('div')
+  root.id = 'root'
+  // 5,000 unrelated siblings first, then a 3,000-deep chain, then the provider:
+  // far beyond the old 400-fiber walk.
+  let deep = { memoizedProps: { value: { weeklyUsage: store.weeklyUsage } }, child: null, sibling: null }
+  for (let i = 0; i < 3000; i++) deep = { memoizedProps: { value: i % 7 ? {} : { theme: 'dark' } }, child: deep, sibling: null }
+  let siblings = deep
+  for (let i = 0; i < 5000; i++) siblings = { memoizedProps: {}, child: null, sibling: siblings }
+  root['__reactContainer$test'] = { memoizedProps: {}, child: siblings, sibling: null }
+  fixture.document.body.appendChild(root)
+  const health = []
+  try {
+    executeRenderer(await read('usage-dials/apply.js'), fixture, {
+      state: { grokBot: { available: true, percentUsed: 12, nextResetMs, readAtMs: Date.now() - 3600000 } },
+      wingman: { app: 'grok-bot', request() {}, reportRenderHealth: value => health.push(value) },
+    })
+    const status = fixture.window.__codexHelperUsageDials.status()
+    assert.equal(status.usageSource, 'live')
+    assert.equal(status.secondary.usedPercent, 57)
+    assert.equal(health.at(-1).state, 'ready')
+    const weekly = fixture.document.querySelector('[data-codex-helper-dial="secondary"]')
+    assert.equal(weekly.dataset.usageSource, 'live')
+    assert.equal(weekly.style.opacity, '')
+    assert.doesNotMatch(weekly.getAttribute('aria-label'), /Saved reading/)
+  } finally { fixture.dispose() }
+})
+
+test('Grok Bot: a store that appears after the first look is picked up on a later pass', async () => {
+  const fixture = createBrowserFixture()
+  fixture.setRectResolver(() => ({ left: 560, top: 700, width: 32, height: 32 }))
+  makeGrokComposer(fixture)
+  const nextResetMs = Date.now() + 4 * 86400000
+  const realNow = Date.now
+  let clock = realNow()
+  Date.now = () => clock
+  try {
+    executeRenderer(await read('usage-dials/apply.js'), fixture, {
+      state: { grokBot: { available: true, percentUsed: 12, nextResetMs, readAtMs: clock - 3600000 } },
+      wingman: { app: 'grok-bot', request() {}, reportRenderHealth() {} },
+    })
+    const controller = fixture.window.__codexHelperUsageDials
+    assert.equal(controller.status().usageSource, 'cache')
+    const store = grokStore({ status: 'ready', value: { usage: { percentUsed: 30, nextResetMs }, readAtMs: clock } })
+    mountGrokRoot(fixture, store)
+    controller.update({ grokBot: { available: true, percentUsed: 12, nextResetMs, readAtMs: clock - 3600000 } })
+    assert.equal(controller.status().usageSource, 'cache', 'searches are spaced, not run on every reconcile')
+    clock += 2500
+    controller.update({ grokBot: { available: true, percentUsed: 12, nextResetMs, readAtMs: clock - 3600000 } })
+    assert.equal(controller.status().usageSource, 'live')
+    assert.equal(controller.status().secondary.usedPercent, 30)
+  } finally { Date.now = realNow; fixture.dispose() }
 })
 
 test('Usage popup owns its layout so a host without utility classes cannot run lines together', async () => {
