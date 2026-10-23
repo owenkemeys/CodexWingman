@@ -386,6 +386,48 @@ test('Grok Bot: no refresh request while the window lacks focus and the popup is
   } finally { fixture.dispose() }
 })
 
+test('Grok Bot: gaining focus or becoming visible asks the refresh at once when the reading is old, still at most once per 5 minutes', async () => {
+  const fixture = createBrowserFixture()
+  makeGrokComposer(fixture)
+  const store = grokStore({ status: 'ready', value: { usage: { percentUsed: 46, nextResetMs: Date.now() + 86400000 }, readAtMs: Date.now() - 26 * 60000 } })
+  mountGrokRoot(fixture, store)
+  let focused = false
+  fixture.document.hasFocus = () => focused
+  try {
+    executeRenderer(await read('usage-dials/apply.js'), fixture, { state: {}, wingman: { app: 'grok-bot', request() {}, reportRenderHealth() {} } })
+    const controller = fixture.window.__codexHelperUsageDials
+    controller.update({})
+    assert.equal(store.calls.refresh, 0, 'unfocused, popup closed: no request')
+    fixture.document.visibilityState = 'hidden'
+    fixture.document.dispatchEvent(new fixture.window.Event('visibilitychange'))
+    assert.equal(store.calls.refresh, 0, 'becoming hidden asks nothing')
+    fixture.document.visibilityState = 'visible'
+    fixture.document.dispatchEvent(new fixture.window.Event('visibilitychange'))
+    assert.equal(store.calls.refresh, 1, 'becoming visible asks at once, before any timer tick')
+    focused = true
+    fixture.window.dispatchEvent(new fixture.window.Event('focus'))
+    assert.equal(store.calls.refresh, 1, 'focus right after: the 5-minute cap holds')
+    store.set({ status: 'ready', value: { usage: { percentUsed: 47, nextResetMs: Date.now() + 86400000 }, readAtMs: Date.now() } })
+    await fixture.flush()
+    assert.equal(controller.status().secondary.usedPercent, 47, 'the refreshed reading shows without a hover')
+    executeRenderer(await read('usage-dials/remove.js'), fixture)
+    fixture.window.dispatchEvent(new fixture.window.Event('focus'))
+    assert.equal(store.calls.refresh, 1, 'cleanup removes the focus listener')
+  } finally { fixture.dispose() }
+})
+
+test('Grok Bot: focus with a fresh reading asks nothing', async () => {
+  const fixture = createBrowserFixture()
+  makeGrokComposer(fixture)
+  const store = grokStore({ status: 'ready', value: { usage: { percentUsed: 46, nextResetMs: Date.now() + 86400000 }, readAtMs: Date.now() - 60000 } })
+  mountGrokRoot(fixture, store)
+  try {
+    executeRenderer(await read('usage-dials/apply.js'), fixture, { state: {}, wingman: { app: 'grok-bot', request() {}, reportRenderHealth() {} } })
+    fixture.window.dispatchEvent(new fixture.window.Event('focus'))
+    assert.equal(store.calls.refresh, 0)
+  } finally { fixture.dispose() }
+})
+
 test('Grok Bot: the dial follows weeklyUsage (what the account menu renders), not usageSummary (Settings > Usage)', async () => {
   const fixture = createBrowserFixture()
   fixture.setRectResolver(() => ({ left: 560, top: 700, width: 32, height: 32 }))
