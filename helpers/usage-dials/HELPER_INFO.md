@@ -1,6 +1,6 @@
 # Usage dials
 
-- Helper generation: native-slot-v28
+- Helper generation: native-slot-v29
 - Manifest version: 1.6.0
 - Helper ID: `usage-dials`
 
@@ -75,6 +75,6 @@ Numbers come only from `files.grokBotUsage`: Wingman reads Grok Bot's own `weekl
 
 In Grok Bot the weekly dial reads the app's live client store, the same in-memory weekly-usage value its account menu and Settings > Usage render. The helper finds that store once by its contract (`weeklyUsage` with `snapshots.get`, `snapshots.subscribe` and `refresh`) on the root React providers, subscribes to it, and redraws as soon as the app's value changes. More than one candidate store fails closed. Grok Bot itself refreshes that value only when its account menu or usage settings open, or after a send once the reading is 5 minutes old, so while the window is visible the helper asks the app's own throttled `refresh()` at most every 5 minutes when the reading is older than that. That is the app's own request path; the helper makes no network call, and reads no credentials or storage.
 
-Grok Bot's saved weekly-usage cache (the `.blob` slice, passed in by the Wingman backend) is only a fallback, used when the live store is not available, and the popup labels it with its age ("Saved reading, 3 h ago"). The live value is labelled "Updated …".
+Grok Bot's saved weekly-usage cache (the `.blob` slice, passed in by the Wingman backend) is only a fallback, used when the live store is not available, and the popup labels it with its age ("Saved reading, 3 h ago"). The live value is labelled "Updated …". The Grok Bot dial shows the same whole percent as Grok Bot's account menu (rounded; anything above 0 and below 1 shows as 1%), so the two always read alike.
 
-The popup restates its own layout (column stack, spacing, text size) in scoped rules on Wingman's own nodes, so a host page without Codex's utility classes, or with conflicting CSS, cannot run the lines together. The values match the utility classes Codex and T3 use, so the popup looks the same there.
+The popup pins its own structural layout (column stack, one line per element, spacing, width) as inline `!important` declarations on Wingman's own nodes, which outrank every host stylesheet rule including `!important` ones, and restates text size in scoped rules, so a host page without Codex's utility classes, or with conflicting CSS, cannot run the lines together. The values match the utility classes Codex and T3 use, so the popup looks the same there.

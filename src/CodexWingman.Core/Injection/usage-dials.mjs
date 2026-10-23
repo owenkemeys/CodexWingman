@@ -1,5 +1,5 @@
 (() => {
-  const controllerVersion = 'native-slot-v28';
+  const controllerVersion = 'native-slot-v29';
   // Wingman names the app it injected into; the legacy embedded Codex renderer has no wingman object.
   const wingmanApp = typeof wingman === 'undefined' ? null : wingman?.app;
   const t3Renderer = window.location?.protocol === 't3code:' || wingmanApp === 't3-web';
@@ -388,10 +388,13 @@
     grokSource = live ? 'live' : usage ? 'cache' : null;
     grokReadAtMs = Number.isFinite(usage?.readAtMs) ? usage.readAtMs : null;
     if (!usage) return;
+    // Show the same whole percent Grok Bot's account menu shows: it rounds,
+    // and shows 1% for anything above 0 and below 1.
+    const percent = usage.percentUsed > 0 && usage.percentUsed < 1 ? 1 : Math.round(usage.percentUsed);
     const reset = Number.isSafeInteger(usage.nextResetMs) ? Math.floor(usage.nextResetMs / 1000) : null;
-    const value = (reset !== null && normalizeAccountWindow({ used_percent: usage.percentUsed,
+    const value = (reset !== null && normalizeAccountWindow({ used_percent: percent,
       limit_window_seconds: 10080 * 60, reset_at: reset }))
-      || { usedPercent: usage.percentUsed, state: usage.percentUsed >= 95 ? 'danger' : 'neutral' };
+      || { usedPercent: percent, state: percent >= 95 ? 'danger' : 'neutral' };
     value.label = 'Weekly usage';
     snapshot.secondary = value;
     quotaUnavailableReason = null;
@@ -774,10 +777,27 @@
     return anchors.length;
   };
 
+  // Layout that must survive any host stylesheet. Inline !important
+  // declarations outrank every host rule, !important or not, so a host's
+  // CSS (or a host without Codex's utility classes, like Grok Bot) cannot
+  // run the popup's lines together. Values equal the Codex utilities, so
+  // Codex and T3 look unchanged.
+  const pinLayout = (element, declarations) => {
+    for (const [name, value] of Object.entries(declarations)) {
+      if (typeof element.style?.setProperty === 'function') element.style.setProperty(name, value, 'important');
+      else element.style[name.replace(/-([a-z])/g, (_, letter) => letter.toUpperCase())] = value;
+    }
+  };
+  const stackLayout = { display: 'flex', 'flex-direction': 'column', 'align-items': 'stretch',
+    gap: 'calc(var(--spacing, 0.25rem) * 0.5)', width: 'calc(var(--spacing, 0.25rem) * 38)',
+    'text-align': 'center', float: 'none', position: 'static' };
+  const lineLayout = { display: 'block', float: 'none', position: 'static', 'white-space': 'pre-line' };
+
   const makeText = (text, className = '') => {
     const span = document.createElement('span');
     span.textContent = text;
     if (className) span.className = className;
+    pinLayout(span, lineLayout);
     return span;
   };
 
@@ -833,8 +853,10 @@
     const stack = document.createElement('div');
     stack.className = 'flex w-38 flex-col gap-0.5 text-center';
     stack.dataset.codexHelperUsageStack = '';
+    pinLayout(stack, stackLayout);
     const preview = document.createElement('div');
     preview.className = 'codex-helper-usage-preview';
+    pinLayout(preview, { display: 'flex', 'justify-content': 'center', float: 'none', position: 'static' });
     if (snapshot[key]) {
       const dial = makeDial(key, label, true);
       dial.removeAttribute('tabindex');

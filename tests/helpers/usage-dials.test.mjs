@@ -687,8 +687,8 @@ test('renderer replaces a stale Usage Dials controller during a Helper upgrade',
     executeRenderer(apply, fixture, { state: {} })
     await fixture.flush()
     assert.equal(cleaned, 1)
-    assert.equal(fixture.window.__codexHelperUsageDials?.version, 'native-slot-v28')
-    assert.equal(fixture.window.__codexHelperUsageDials?.status().fallbackStrategy, 'native-slot-v28')
+    assert.equal(fixture.window.__codexHelperUsageDials?.version, 'native-slot-v29')
+    assert.equal(fixture.window.__codexHelperUsageDials?.status().fallbackStrategy, 'native-slot-v29')
     assert.equal(native.wrapper.nextElementSibling?.getAttribute('data-codex-helper'), 'usage-dials')
   } finally {
     fixture.window.__codexHelperUsageDials?.cleanup()
