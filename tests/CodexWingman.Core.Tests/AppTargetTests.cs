@@ -88,6 +88,10 @@ internal static class AppTargetTests
         Equal(T3WebOpenAction.ActivateExisting, T3WebLaunchPolicy.OpenAction(true, 1), "a T3 web window exists: bring it forward, no second window");
         Equal(T3WebOpenAction.ActivateExisting, T3WebLaunchPolicy.OpenAction(true, 3), "several windows: still none added");
 
+        Equal("4100", string.Join(",", WingmanForegroundPolicy.Recipients([(4100, 1), (4200, 1)], 4200, 1)), "second launch lets only the running Wingman come forward, not itself");
+        Equal("", string.Join(",", WingmanForegroundPolicy.Recipients([(4100, 0), (4300, null), (4200, 1)], 4200, 1)), "other sessions and unreadable processes get no foreground right");
+        Equal("4100", string.Join(",", WingmanForegroundPolicy.Recipients([(4100, 1), (4100, 1), (0, 1)], 4200, 1)), "each process once, never pid 0");
+
         var webPorts = T3WebLaunchPolicy.CandidatePorts(null, [9423]).Take(3).ToArray();
         False(webPorts.Contains(9423), "reserved port skipped");
         False(webPorts.Contains(CodexLaunchPolicy.PreferredPort) || webPorts.Contains(T3CodeLaunchPolicy.PreferredPort), "Codex and T3 ports never reused");
