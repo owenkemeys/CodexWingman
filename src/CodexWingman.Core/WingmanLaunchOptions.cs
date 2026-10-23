@@ -2,10 +2,14 @@ namespace CodexWingman.Core;
 
 public enum WingmanLaunchTarget { Preferences, Codex, T3Code, T3Web, GrokBot }
 
+/// <summary>Development-channel commands for an already running Wingman. A command never starts a new tray.</summary>
+public enum WingmanCommand { None, T3WebRenewNow, Close }
+
 public sealed record WingmanLaunchOptions(
     WingmanLaunchTarget Target = WingmanLaunchTarget.Preferences,
     string? LocalAppData = null,
-    bool RegisterOnly = false)
+    bool RegisterOnly = false,
+    WingmanCommand Command = WingmanCommand.None)
 {
     public static WingmanLaunchOptions Parse(IEnumerable<string> arguments)
     {
@@ -35,6 +39,11 @@ public sealed record WingmanLaunchOptions(
                 options = options with { LocalAppData = Path.GetFullPath(path) };
             }
             else if (argument == "--register-launchers") options = options with { RegisterOnly = true };
+            else if (argument is "--t3-web-renew-now" or "--close")
+            {
+                if (options.Command != WingmanCommand.None) throw new ArgumentException("Give Wingman one command at a time.");
+                options = options with { Command = argument == "--close" ? WingmanCommand.Close : WingmanCommand.T3WebRenewNow };
+            }
         }
         return options;
     }
@@ -50,6 +59,14 @@ public sealed record WingmanLaunchOptions(
                 _ => false,
             }
             : Target == app;
+
+    /// <summary>Event a running development build listens on for this command.</summary>
+    public static string CommandEventName(WingmanCommand command) => command switch
+    {
+        WingmanCommand.T3WebRenewNow => WingmanIdentity.ActivationEventName + ".Command.T3WebRenewNow",
+        WingmanCommand.Close => WingmanIdentity.ActivationEventName + ".Command.Close",
+        _ => throw new ArgumentException("No command selected.", nameof(command)),
+    };
 
     public string ActivationEventName => Target == WingmanLaunchTarget.Preferences
         ? WingmanIdentity.ActivationEventName

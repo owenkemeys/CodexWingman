@@ -231,6 +231,7 @@ internal sealed class TrayApplicationContext : ApplicationContext
         RegisterLauncherActivation(t3Activation, WingmanLaunchTarget.T3Code);
         RegisterLauncherActivation(t3WebActivation, WingmanLaunchTarget.T3Web);
         RegisterLauncherActivation(grokActivation, WingmanLaunchTarget.GrokBot);
+        if (DevelopmentChannel.IsDevelopmentBuild(AppContext.BaseDirectory)) RegisterDevelopmentCommands();
 
         refreshTimer = new System.Windows.Forms.Timer { Interval = HelperRefreshSchedule.IntervalMilliseconds(AllHelpers()) };
         refreshTimer.Tick += async (_, _) => await RefreshTimerAsync();
@@ -464,6 +465,31 @@ internal sealed class TrayApplicationContext : ApplicationContext
         if (handle is null) return;
         activationRegistrations.Add(ThreadPool.RegisterWaitForSingleObject(handle,
             (_, _) => uiContext.Post(_ => QueueLauncherActivation(target), null), null, Timeout.Infinite, false));
+    }
+
+    private readonly List<EventWaitHandle> commandEvents = [];
+
+    /// <summary>
+    /// Development builds only: <c>--t3-web-renew-now</c> renews T3 web's pairing now (same path as renewal before
+    /// expiry, no prompt), and <c>--close</c> closes Wingman the same way as its tray Close item.
+    /// </summary>
+    private void RegisterDevelopmentCommands()
+    {
+        foreach (var command in new[] { WingmanCommand.T3WebRenewNow, WingmanCommand.Close })
+        {
+            var handle = new EventWaitHandle(false, EventResetMode.AutoReset, WingmanLaunchOptions.CommandEventName(command));
+            commandEvents.Add(handle);
+            activationRegistrations.Add(ThreadPool.RegisterWaitForSingleObject(handle,
+                (_, _) => uiContext.Post(async _ => await RunDevelopmentCommandAsync(command), null), null, Timeout.Infinite, false));
+        }
+    }
+
+    private async Task RunDevelopmentCommandAsync(WingmanCommand command)
+    {
+        if (exiting) return;
+        if (command == WingmanCommand.Close) { await ExitAsync(); return; }
+        nextPairingCheckUtc = DateTime.MinValue;
+        await CheckT3WebPairingAsync(interactive: false, forceRenew: true);
     }
 
     private void QueueLauncherActivation(WingmanLaunchTarget target)
@@ -744,7 +770,7 @@ internal sealed class TrayApplicationContext : ApplicationContext
     /// days before T3's fixed 30-day session end, using one-time links from the pairing provider.
     /// Runs in the background and never holds the tray busy.
     /// </summary>
-    private async Task CheckT3WebPairingAsync(bool interactive)
+    private async Task CheckT3WebPairingAsync(bool interactive, bool forceRenew = false)
     {
         if (pairingInFlight || exiting || DateTime.UtcNow < nextPairingCheckUtc || t3WebLauncher.Port() is null) return;
         pairingInFlight = true;
@@ -763,7 +789,7 @@ internal sealed class TrayApplicationContext : ApplicationContext
             var coordinator = new T3PairingCoordinator(provider, t3WebLauncher.PairingStatePath);
             var link = Interlocked.Exchange(ref pendingT3WebLink, null);
             outcome = await coordinator.EnsurePairedAsync(new CdpT3WebPage(evaluator, pages[0]), t3WebLauncher.Origin(),
-                t3WebLauncher.PairingLabel(), deadline.Token, link);
+                t3WebLauncher.PairingLabel(), deadline.Token, link, forceRenew);
         }
         catch (Exception error)
         {
@@ -783,7 +809,7 @@ internal sealed class TrayApplicationContext : ApplicationContext
         if (outcome.Result is T3PairingResult.Paired or T3PairingResult.Renewed)
             await t3Web.ReconcileAsync();
         t3Web.SetMenuStatus();
-        if (outcome.Result == T3PairingResult.Failed || interactive)
+        if (outcome.Result == T3PairingResult.Failed || interactive || forceRenew)
         {
             tray.BalloonTipTitle = "T3 web sign-in";
             tray.BalloonTipText = outcome.Message;
@@ -1398,6 +1424,7 @@ internal sealed class TrayApplicationContext : ApplicationContext
             actionTimer.Dispose();
             trayRecoveryTimer.Dispose();
             foreach (var registration in activationRegistrations) registration.Unregister(null);
+            foreach (var handle in commandEvents) handle.Dispose();
             tray.Dispose();
             trayIcons.Dispose();
             targetHttp.Dispose();

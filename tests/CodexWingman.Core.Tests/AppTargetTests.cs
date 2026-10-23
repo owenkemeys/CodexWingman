@@ -375,6 +375,17 @@ internal static class AppTargetTests
             Equal(T3PairingResult.Paired, repaired.Result, "expired session re-pairs: " + repaired.Message);
             Equal("pair,pair,revoke-previous,pair,revoke-previous", string.Join(",", bridge.Kinds), "re-pair revokes the stale session");
 
+            // 4b. Development test hook: a signed-in, not-due page renews now by the same path, no navigation.
+            clock = clock.AddDays(1);
+            var reloadsBefore = page.Reloads;
+            var notDue = await coordinator.EnsurePairedAsync(page, null, label);
+            Equal(T3PairingResult.AlreadyPaired, notDue.Result, "freshly paired session is not due");
+            var forced = await coordinator.EnsurePairedAsync(page, null, label, forceRenew: true);
+            Equal(T3PairingResult.Renewed, forced.Result, "forced renewal renews: " + forced.Message);
+            Equal("pair,pair,revoke-previous,pair,revoke-previous,pair,revoke-previous", string.Join(",", bridge.Kinds),
+                "forced renewal: new link, then revoke only the previous Wingman session");
+            Equal(reloadsBefore, page.Reloads, "forced renewal does not navigate or prompt");
+
             // 5. A link for another host is never used.
             var wrongBridgeFolder = Path.Combine(root, "wrong");
             Directory.CreateDirectory(wrongBridgeFolder);

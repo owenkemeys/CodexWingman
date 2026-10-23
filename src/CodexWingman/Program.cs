@@ -27,6 +27,21 @@ internal static class Program
             }
             return;
         }
+        if (options.Command != WingmanCommand.None)
+        {
+            // Commands only signal a running Wingman (development builds listen); they never start one.
+            try
+            {
+                using var command = EventWaitHandle.OpenExisting(WingmanLaunchOptions.CommandEventName(options.Command));
+                command.Set();
+            }
+            catch (WaitHandleCannotBeOpenedException)
+            {
+                Console.Error.WriteLine("No running development Wingman accepts that command.");
+                Environment.ExitCode = 4;
+            }
+            return;
+        }
         using var activationEvent = new EventWaitHandle(false, EventResetMode.AutoReset, WingmanIdentity.ActivationEventName);
         using var codexActivation = new EventWaitHandle(false, EventResetMode.AutoReset,
             new WingmanLaunchOptions(WingmanLaunchTarget.Codex).ActivationEventName, out var createdCodexEvent);
