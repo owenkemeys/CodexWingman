@@ -1,5 +1,5 @@
 (() => {
-  const controllerVersion = 'native-slot-v29';
+  const controllerVersion = 'native-slot-v30';
   // Wingman names the app it injected into; the legacy embedded Codex renderer has no wingman object.
   const wingmanApp = typeof wingman === 'undefined' ? null : wingman?.app;
   const t3Renderer = window.location?.protocol === 't3code:' || wingmanApp === 't3-web';
@@ -327,24 +327,40 @@
   const isGrokStore = (value) => value && typeof value.snapshots?.get === 'function'
     && typeof value.snapshots?.subscribe === 'function' && typeof value.refresh === 'function';
 
+  // Walk the whole React fiber tree (no element budget, so a bigger or
+  // reordered Grok Bot tree cannot hide the store), but only until the store
+  // is found, and at most once every 2 seconds while it is missing. Only
+  // context-provider values are examined. More than one distinct store, or
+  // none, fails closed to the saved reading, which the dial then marks.
+  let grokSearchAtMs = 0;
+  let grokStoreProblem = null;
+  const grokSearchIntervalMs = 2000;
   const connectGrokStore = () => {
     if (!grokRenderer || grokStore) return;
+    const now = Date.now();
+    if (now - grokSearchAtMs < grokSearchIntervalMs) return;
+    grokSearchAtMs = now;
     const host = document.getElementById?.('root') || document.body?.firstElementChild;
     const key = host && Object.keys(host).find((name) => name.startsWith('__reactContainer$'));
-    const queue = key ? [host[key]] : [];
-    const seen = new Set();
     const stores = new Set();
-    for (let index = 0; index < queue.length && index < 400; index += 1) {
-      const fiber = queue[index];
-      if (!fiber || seen.has(fiber)) continue;
-      seen.add(fiber);
+    const stack = key && host[key] ? [host[key]] : [];
+    let visited = 0;
+    // A fiber tree is acyclic through child/sibling; the ceiling only guards
+    // against a corrupted graph and is far above any real composer page.
+    while (stack.length && visited < 1000000) {
+      const fiber = stack.pop();
+      visited += 1;
       const candidate = fiber.memoizedProps?.value?.weeklyUsage;
       if (isGrokStore(candidate)) stores.add(candidate);
-      if (fiber.child) queue.push(fiber.child);
-      if (fiber.sibling) queue.push(fiber.sibling);
+      if (fiber.sibling) stack.push(fiber.sibling);
+      if (fiber.child) stack.push(fiber.child);
     }
-    // Never choose between two clients.
-    if (stores.size !== 1) return;
+    if (stores.size !== 1) {
+      grokStoreProblem = !key ? 'Grok Bot\'s page is not ready.'
+        : stores.size ? 'Grok Bot exposes more than one usage store.' : 'Grok Bot\'s live usage value was not found.';
+      return;
+    }
+    grokStoreProblem = null;
     grokStore = [...stores][0];
     try { unsubscribeGrok = grokStore.snapshots.subscribe(() => { if (!disposed) queueReconcile(); }); }
     catch { unsubscribeGrok = null; }
@@ -672,6 +688,14 @@
     setAttributeIfChanged(dial, 'aria-label', showUnavailable ? `Usage unavailable. ${quotaUnavailableReason}`
       : `${formatWindowLabel(value, dial.__codexHelper.windowLabel)}: ${formatUsage(usage)}.${reset}`);
     dial.removeAttribute('title');
+    if (grokRenderer) {
+      // A saved reading (live store missing) is visibly marked: dimmed ring and
+      // a spoken/hover note, so it can never pass for the live value.
+      const saved = grokSource === 'cache' && usage !== null;
+      dial.dataset.usageSource = saved ? 'saved' : (grokSource || 'none');
+      dial.style.opacity = saved ? '0.5' : '';
+      if (saved) setAttributeIfChanged(dial, 'aria-label', `${dial.getAttribute('aria-label')} Saved reading, not live.`);
+    }
   };
 
   const formatWindowLabel = (value, fallback) => {
@@ -810,7 +834,7 @@
     stack.appendChild(makeText(elapsed === null ? 'Time elapsed unavailable' : `${elapsed}% of time elapsed`));
     if (value?.resetLabel) stack.appendChild(makeText(`Resets ${value.resetLabel}`));
     if (grokRenderer && grokReadAtMs !== null) stack.appendChild(makeText(grokSource === 'cache'
-      ? `Saved reading, ${formatReadAge(grokReadAtMs)}` : `Updated ${formatReadAge(grokReadAtMs)}`, 'codex-helper-usage-heading'));
+      ? `Saved reading, ${formatReadAge(grokReadAtMs)} (not live)` : `Updated ${formatReadAge(grokReadAtMs)}`, 'codex-helper-usage-heading'));
   };
 
   const appendAvailableReadouts = (stack, key) => {
@@ -906,10 +930,12 @@
     ...(grokRenderer ? { usageSource: grokSource, usageReadAtMs: grokReadAtMs } : {}),
     ...(grokRenderer ? { renderHealth: {
       state: !document.querySelector('.sand-prompt-field') ? 'not-applicable'
-        : [...instances.values()].some(instance => instance.bank.isConnected && instance.bank.getBoundingClientRect().width > 0)
-          && snapshot.secondary ? 'ready' : 'waiting',
-      detail: quotaUnavailableReason || ([...instances.values()].some(instance => instance.bank.isConnected)
-        ? 'Grok Bot usage is visible.' : 'Usage Dials could not attach to the Grok Bot composer.'),
+        : ![...instances.values()].some(instance => instance.bank.isConnected && instance.bank.getBoundingClientRect().width > 0)
+          || !snapshot.secondary ? 'waiting' : grokSource === 'cache' ? 'saved-reading' : 'ready',
+      detail: quotaUnavailableReason || (![...instances.values()].some(instance => instance.bank.isConnected)
+        ? 'Usage Dials could not attach to the Grok Bot composer.'
+        : grokSource === 'cache' ? `Showing Grok Bot's saved reading, not the live value: ${grokStoreProblem || 'live value unavailable.'}`
+          : 'Grok Bot usage is visible.'),
     } } : {}),
     ...(t3Renderer ? { renderHealth: {
       state: !document.querySelector('[data-testid="composer-editor"]') ? 'not-applicable'
@@ -948,6 +974,7 @@
     accountClient = null;
     try { unsubscribeGrok?.(); } catch { /* already gone */ }
     grokStore = null;
+    grokStoreProblem = null;
     clearInterval(interval);
     cancelAnimationFrame(frame);
     for (const instance of instances.values()) destroyInstance(instance);
