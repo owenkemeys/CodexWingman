@@ -1,5 +1,5 @@
 (() => {
-  const controllerVersion = 'native-slot-v30';
+  const controllerVersion = 'native-slot-v31';
   // Wingman names the app it injected into; the legacy embedded Codex renderer has no wingman object.
   const wingmanApp = typeof wingman === 'undefined' ? null : wingman?.app;
   const t3Renderer = window.location?.protocol === 't3code:' || wingmanApp === 't3-web';
@@ -378,9 +378,16 @@
     } catch { return null; }
   };
 
+  // Ask Grok Bot's own throttled refresh only while someone is looking: the
+  // Grok Bot window has focus, or the dial's popup is open. At most every 5 min,
+  // and only when the reading is older than that.
+  const grokPopupOpen = () => [...instances.values()].some((instance) => instance.tooltip);
+  const grokWindowFocused = () => {
+    try { return typeof document.hasFocus === 'function' && document.hasFocus() === true; } catch { return false; }
+  };
   const nudgeGrokRefresh = (live) => {
     const now = Date.now();
-    if (!grokStore || document.visibilityState === 'hidden') return;
+    if (!grokStore || !(grokWindowFocused() || grokPopupOpen())) return;
     if (live && now - live.readAtMs < grokNudgeIntervalMs) return;
     if (now - grokLastNudgeMs < grokNudgeIntervalMs) return;
     grokLastNudgeMs = now;
@@ -411,7 +418,8 @@
     const value = (reset !== null && normalizeAccountWindow({ used_percent: percent,
       limit_window_seconds: 10080 * 60, reset_at: reset }))
       || { usedPercent: percent, state: percent >= 95 ? 'danger' : 'neutral' };
-    value.label = 'Weekly usage';
+    // Same heading as the shared popup (T3 shows its provider's "Weekly").
+    value.label = 'Weekly';
     snapshot.secondary = value;
     quotaUnavailableReason = null;
   };
@@ -723,6 +731,7 @@
       instance.activeWindow = dial && bank.contains(dial) ? dial.dataset.codexHelperDial
         : (snapshot.primary ? 'primary' : 'secondary');
       showFallbackTooltip(instance);
+      if (grokRenderer) nudgeGrokRefresh(readGrokLiveUsage());
     };
     instance.onPointerOver = selectWindow;
     instance.onPointerOut = (event) => {
