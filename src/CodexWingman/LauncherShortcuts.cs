@@ -35,7 +35,7 @@ internal static class LauncherShortcuts
             executable, item.Target == WingmanLaunchTarget.Preferences
                 ? WingmanLaunchOptions.RelaunchArguments(localAppData)
                 : WingmanLaunchOptions.ShortcutArguments(item.Target, localAppData), item.Name, item.Id,
-            item.Target == WingmanLaunchTarget.T3Web ? T3WebLauncher.T3WebIconResource(executable, t3WebIcon) : executable + ",0")).ToArray();
+            item.Target == WingmanLaunchTarget.T3Web ? T3WebIconResource(executable, t3WebIcon) : executable + ",0")).ToArray();
     }
 
     /// <summary>
@@ -48,12 +48,16 @@ internal static class LauncherShortcuts
         var programsFolder = Environment.GetFolderPath(Environment.SpecialFolder.Programs);
         var path = Save(Path.Combine(programsFolder, T3WebShortcutName + ".lnk"), executable,
             WingmanLaunchOptions.ShortcutArguments(WingmanLaunchTarget.T3Web, localAppData), T3WebShortcutName,
-            WingmanLaunchOptions.AppUserModelIdFor(WingmanLaunchTarget.T3Web), T3WebLauncher.T3WebIconResource(executable, t3WebIcon));
+            WingmanLaunchOptions.AppUserModelIdFor(WingmanLaunchTarget.T3Web), T3WebIconResource(executable, t3WebIcon));
         var pointer = Marshal.StringToHGlobalUni(path);
         try { SHChangeNotify(0x00002000 /* SHCNE_UPDATEITEM */, 0x0005 /* SHCNF_PATHW */, pointer, IntPtr.Zero); }
         finally { Marshal.FreeHGlobal(pointer); }
         return path;
     }
+
+    /// <summary>The icon resource for T3 Code (web): T3's cached icon, or Wingman's until one is cached.</summary>
+    public static string T3WebIconResource(string executable, string? appIcon) =>
+        (appIcon is not null && File.Exists(appIcon) ? appIcon : executable) + ",0";
 
     [DllImport("shell32.dll")]
     private static extern void SHChangeNotify(int eventId, uint flags, IntPtr item1, IntPtr item2);
