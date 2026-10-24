@@ -498,6 +498,21 @@ internal sealed class TrayApplicationContext : ApplicationContext
         }
     }
 
+    private string? dumpedLines;
+
+    /// <summary>
+    /// Development builds keep menu-dump.json current: whenever an app line changes (text or shown/hidden),
+    /// the dump is rewritten on the next tick, so the file never shows a state the live menu has left.
+    /// </summary>
+    private void RewriteMenuDumpIfLinesChanged()
+    {
+        if (exiting || !DevelopmentChannel.IsDevelopmentBuild(AppContext.BaseDirectory)) return;
+        if (CurrentLineSignature() != dumpedLines) DumpMenu();
+    }
+
+    private string CurrentLineSignature() => string.Join("|", menu.Items.OfType<ToolStripMenuItem>()
+        .Where(item => TrayMenuCheck.IsLineText(item.Text ?? "")).Select(item => $"{item.Text}:{item.Available}"));
+
     /// <summary>Development command --dump-menu: writes the live tray menu tree and its contract check to a file.</summary>
     private void DumpMenu()
     {
@@ -522,6 +537,7 @@ internal sealed class TrayApplicationContext : ApplicationContext
                 DefaultIgnoreCondition = System.Text.Json.Serialization.JsonIgnoreCondition.WhenWritingNull,
             }));
             File.Move(temporary, path, overwrite: true);
+            dumpedLines = CurrentLineSignature();
         }
         catch (Exception error)
         {
@@ -603,6 +619,7 @@ internal sealed class TrayApplicationContext : ApplicationContext
         // App lines drop to Closed when their app closes even while the full check below is skipped
         // (Wingman busy with an operation or showing a dialog).
         RefreshAppLinePresence();
+        RewriteMenuDumpIfLinesChanged();
         if (!automaticRefreshGate.TryEnter(busy, exiting)) return;
         try
         {
@@ -1534,7 +1551,7 @@ internal sealed class TrayApplicationContext : ApplicationContext
     {
         var label = forceProblem ? "Needs repair" : health.State switch
         {
-            ConnectionHealthState.Working => "OK",
+            ConnectionHealthState.Working => "Running",
             ConnectionHealthState.CodexClosed => "Closed",
             ConnectionHealthState.HelpersPaused => "Paused",
             _ => "Needs repair",

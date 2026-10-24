@@ -345,7 +345,7 @@ internal static class AppTargetTests
         var lastCheck = new T3CodeConnectionReport(1, 1, 0);
         var ready = new HelperHostReport(1, 1, 1, 0, []);
         Equal(1, AppPresence.EndpointWindows(true, lastCheck), "endpoint up: the last check's window count stands");
-        Equal("T3 Code (web): OK", AppTargetMenuPolicy.Evaluate(name, AppPresence.EndpointWindows(true, lastCheck), true, ready, lastCheck, false).Label, "open and connected");
+        Equal("T3 Code (web): Running", AppTargetMenuPolicy.Evaluate(name, AppPresence.EndpointWindows(true, lastCheck), true, ready, lastCheck, false).Label, "open and connected");
         // The window closes: nothing listens on the port any more, but the last check still says 1 window.
         Equal(0, AppPresence.EndpointWindows(false, lastCheck), "endpoint gone: no window, whatever the last check said");
         Equal("T3 Code (web): Closed", AppTargetMenuPolicy.Evaluate(name, AppPresence.EndpointWindows(false, lastCheck), true, ready, lastCheck, false).Label,
@@ -367,6 +367,9 @@ internal static class AppTargetTests
         var tick = tray.IndexOf("private async Task RefreshTimerAsync()", StringComparison.Ordinal);
         True(tick >= 0 && tray.IndexOf("RefreshAppLinePresence();", tick, StringComparison.Ordinal)
             < tray.IndexOf("automaticRefreshGate.TryEnter", tick, StringComparison.Ordinal), "presence refresh runs even when the full refresh is skipped");
+        True(tray.IndexOf("RewriteMenuDumpIfLinesChanged();", tick, StringComparison.Ordinal) >= 0
+            && tray.IndexOf("RewriteMenuDumpIfLinesChanged();", tick, StringComparison.Ordinal) < tray.IndexOf("automaticRefreshGate.TryEnter", tick, StringComparison.Ordinal),
+            "development builds rewrite menu-dump.json when a line changes, even while busy");
     }
 
     private static void RepairAndStartupAreQuiet()
@@ -406,7 +409,7 @@ internal static class AppTargetTests
         // The live tray (AppFlyoutMenu) builds every line from the same layout; this is the tree it produces.
         var tree = new List<TrayMenuNode>
         {
-            Line("Codex: Closed"), Line("T3 Code: Not ready"), Line("T3 Code (web): OK"), Line("Grok Bot: OK"),
+            Line("Codex: Closed"), Line("T3 Code: Not ready"), Line("T3 Code (web): Running"), Line("Grok Bot: Running"),
             new("-"), new("Helpers enabled", Checked: true), new("Manage helpers", Children: [new("Usage Dials", "Usage Dials 1.0")]),
             new("-"), new("About"), new("Check for Updates"), new("Close"),
         };
@@ -418,16 +421,19 @@ internal static class AppTargetTests
         True(lines.All(line => line.ToolTip is null), "no first-layer tooltips");
 
         var withTooltip = tree.ToList();
-        withTooltip[3] = Line("Grok Bot: OK", tooltip: "Grok Bot: OK\n\nGrok Bot is open.");
+        withTooltip[3] = Line("Grok Bot: Running", tooltip: "Grok Bot: Running\n\nGrok Bot is open.");
         True(TrayMenuCheck.Problems(withTooltip).Any(problem => problem.Contains("tooltip", StringComparison.Ordinal)), "a first-layer tooltip is caught");
         var extraItem = tree.ToList();
-        extraItem[2] = Line("T3 Code (web): OK", labels.Append("Check T3 sign-in now"));
+        extraItem[2] = Line("T3 Code (web): Running", labels.Append("Check T3 sign-in now"));
         True(TrayMenuCheck.Problems(extraItem).Any(problem => problem.Contains("T3 Code (web)", StringComparison.Ordinal)), "an extra flyout item is caught");
         var counted = tree.ToList();
         counted[0] = Line("Codex: OK (2/2)");
         True(TrayMenuCheck.Problems(counted).Any(problem => problem.Contains("plain state", StringComparison.Ordinal)), "a count on the line is caught");
         Equal("Codex: Closed", TrayMenuLayout.LineText(WingmanLaunchTarget.Codex, "Closed"), "line text");
         True(TrayMenuCheck.IsLineText("T3 Code (web): Needs repair") && !TrayMenuCheck.IsLineText("T3 web: OK"), "line text check");
+        True(TrayMenuCheck.IsLineText("Grok Bot: Running") && !TrayMenuCheck.IsLineText("Grok Bot: OK"), "an open app reads Running, not OK");
+        True(TrayMenuLayout.LineStates.Contains("Running") && TrayMenuLayout.LineStates.Contains("Closed") && TrayMenuLayout.LineStates.Contains("Needs repair")
+            && !TrayMenuLayout.LineStates.Contains("OK"), "line states: Running, Closed, Needs repair (no OK)");
         var reordered = tree.ToList();
         reordered[0] = Line("Codex: Closed", [labels[1], labels[0], .. labels[2..]]);
         True(TrayMenuCheck.Problems(reordered).Count > 0, "a different order is caught");

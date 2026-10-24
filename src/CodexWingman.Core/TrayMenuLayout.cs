@@ -48,9 +48,9 @@ public static class TrayMenuLayout
 
     /// <summary>The only states an app line shows. Counts and other detail live in Status details....</summary>
     public static IReadOnlyList<string> LineStates { get; } =
-        ["OK", "Closed", "Needs repair", "Paused", "No Helpers", "Checking", "Not ready", "Status unavailable"];
+        ["Running", "Closed", "Needs repair", "Paused", "No Helpers", "Checking", "Not ready", "Status unavailable"];
 
-    /// <summary>The app line: the app and its state only, e.g. "Codex: Closed" or "Grok Bot: OK".</summary>
+    /// <summary>The app line: the app and its state only, e.g. "Codex: Closed" or "Grok Bot: Running".</summary>
     public static string LineText(WingmanLaunchTarget app, string state) =>
         LineStates.Contains(state, StringComparer.Ordinal)
             ? AppName(app) + ": " + state
