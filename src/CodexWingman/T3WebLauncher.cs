@@ -186,12 +186,8 @@ internal sealed class T3WebLauncher(string wingmanDataRoot, Func<HelperSettings>
             WingmanLaunchOptions.AppUserModelIdFor(WingmanLaunchTarget.T3Web),
             "\"" + wingmanExecutable + "\" " + WingmanLaunchOptions.ShortcutArguments(WingmanLaunchTarget.T3Web, profileOverride),
             LauncherShortcuts.T3WebShortcutName,
-            T3WebIconResource(wingmanExecutable, icon));
+            LauncherShortcuts.T3WebIconResource(wingmanExecutable, icon));
     }
-
-    /// <summary>The icon resource for T3 Code (web): T3's cached icon, or Wingman's until one is cached.</summary>
-    public static string T3WebIconResource(string wingmanExecutable, string? appIcon) =>
-        (appIcon is not null && File.Exists(appIcon) ? appIcon : wingmanExecutable) + ",0";
 
     /// <summary>Brings the existing T3 web window to the front (restoring it if minimized) through its own DevTools.</summary>
     private static async Task<bool> ActivateAsync(int port, CodexTarget page, CancellationToken cancellationToken)

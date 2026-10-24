@@ -366,10 +366,10 @@ internal static class AppTargetTests
         // Wiring: the Start shortcut (matched by AppUserModelID) and the window's relaunch icon both use T3's icon.
         var source = Path.Combine(RepositoryRoot(), "src", "CodexWingman");
         var shortcuts = File.ReadAllText(Path.Combine(source, "LauncherShortcuts.cs"));
-        True(shortcuts.Contains("item.Target == WingmanLaunchTarget.T3Web ? T3WebLauncher.T3WebIconResource(executable, t3WebIcon)", StringComparison.Ordinal),
+        True(shortcuts.Contains("item.Target == WingmanLaunchTarget.T3Web ? T3WebIconResource(executable, t3WebIcon)", StringComparison.Ordinal),
             "T3 Code (web) Start shortcut uses T3's icon");
         var launcher = File.ReadAllText(Path.Combine(source, "T3WebLauncher.cs"));
-        True(launcher.Contains("T3WebIconResource(wingmanExecutable, icon));", StringComparison.Ordinal), "window relaunch icon is T3's");
+        True(launcher.Contains("LauncherShortcuts.T3WebIconResource(wingmanExecutable, icon));", StringComparison.Ordinal), "window relaunch icon is T3's");
         var identity = File.ReadAllText(Path.Combine(source, "WindowAppIdentity.cs"));
         True(identity.Contains("if (hasId) Clear(store, idKey);", StringComparison.Ordinal), "an open window picks up the new icon");
         Equal("CodexWingman.Desktop.v1.T3Web", WingmanLaunchOptions.AppUserModelIdFor(WingmanLaunchTarget.T3Web), "AppUserModelID unchanged, so grouping and pins keep working");

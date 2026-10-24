@@ -94,6 +94,33 @@ internal static class Program
                 Marshal.FinalReleaseComObject(webFolder);
                 Marshal.FinalReleaseComObject(webShortcut);
             }
+            // T3's own cached icon: the T3 web shortcut uses it (Wingman's until one is cached); the others keep Wingman's.
+            object webIconBefore = ((dynamic)shell).CreateShortcut(withWeb[3]);
+            try { Equal(executable + ",0", (string)((dynamic)webIconBefore).IconLocation, "Wingman icon until T3's is cached"); }
+            finally { Marshal.FinalReleaseComObject(webIconBefore); }
+            var t3Icon = Path.Combine(root, "t3-web", "app-icon.ico");
+            Directory.CreateDirectory(Path.GetDirectoryName(t3Icon)!);
+            File.WriteAllBytes(t3Icon, [0, 0, 1, 0, 0, 0]);
+            var withIcon = LauncherShortcuts.Ensure(executable, profile, programs, includeT3Web: true, t3WebIcon: t3Icon);
+            Equal(withWeb[3], withIcon[3], "T3 web shortcut path unchanged");
+            object webIcon = ((dynamic)shell).CreateShortcut(withIcon[3]);
+            object codexIcon = ((dynamic)shell).CreateShortcut(withIcon[0]);
+            object iconFolder = ((dynamic)explorer).NameSpace(programs);
+            object iconItem = ((dynamic)iconFolder).ParseName(Path.GetFileName(withIcon[3]));
+            try
+            {
+                Equal(t3Icon + ",0", (string)((dynamic)webIcon).IconLocation, "T3 web shortcut shows T3's icon");
+                Equal(executable, (string)((dynamic)webIcon).TargetPath, "T3 web shortcut target unchanged");
+                Equal(WingmanIdentity.AppUserModelId + ".T3Web", (string)((dynamic)iconItem).ExtendedProperty("System.AppUserModel.ID"), "T3 web identity unchanged with T3's icon");
+                Equal(executable + ",0", (string)((dynamic)codexIcon).IconLocation, "Codex shortcut keeps Wingman's icon");
+            }
+            finally
+            {
+                Marshal.FinalReleaseComObject(iconItem);
+                Marshal.FinalReleaseComObject(iconFolder);
+                Marshal.FinalReleaseComObject(codexIcon);
+                Marshal.FinalReleaseComObject(webIcon);
+            }
             Equal(WingmanIdentity.AppUserModelId + ".Codex", WingmanLaunchOptions.AppUserModelIdFor(WingmanLaunchTarget.Codex), "Codex identity unchanged");
             Equal(WingmanIdentity.AppUserModelId + ".T3Code", WingmanLaunchOptions.AppUserModelIdFor(WingmanLaunchTarget.T3Code), "T3 desktop identity unchanged");
             Equal(WingmanIdentity.AppUserModelId, WingmanLaunchOptions.AppUserModelIdFor(WingmanLaunchTarget.Preferences), "preferences identity unchanged");
