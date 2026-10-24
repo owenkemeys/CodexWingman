@@ -38,7 +38,7 @@ public static class T3CodeMenuPolicy
                 Counted(hooked, visibleWindows.Value) + "T3 Code windows are connected, but a Helper needs attention. " + string.Join(" ", report.Diagnostics.Select(item => item.Message)));
         if (!hasEnabledHelpers)
             return new("T3 Code: No Helpers", Counted(0, visibleWindows.Value) + "Wingman can connect to T3 Code, but no T3 Code Helpers are enabled. Add or enable a T3 Code Helper to alter its windows.");
-        return new("T3 Code: OK", Counted(hooked, visibleWindows.Value) + "Wingman is connected to each visible T3 Code window, and enabled Helpers report no problems.");
+        return new("T3 Code: Running", Counted(hooked, visibleWindows.Value) + "Wingman is connected to each visible T3 Code window, and enabled Helpers report no problems.");
     }
 
     /// <summary>The window counts, for Status details only (the menu line shows the state alone).</summary>
