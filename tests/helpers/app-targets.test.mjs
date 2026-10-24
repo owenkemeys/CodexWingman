@@ -251,6 +251,47 @@ test('Grok Bot: one weekly dial sits before the send cluster and its percentage 
   } finally { fixture.dispose() }
 })
 
+test('Grok Bot: the dial has the same diameter as the round composer buttons and follows their size', async () => {
+  const fixture = createBrowserFixture()
+  fixture.setRectResolver(() => ({ left: 560, top: 700, width: 32, height: 32 }))
+  const composer = makeGrokComposer(fixture)
+  const [mic, send] = composer.cluster.children
+  for (const button of [mic, send]) { button.style.borderRadius = '9999px'; button._rect = { left: 640, top: 702, width: 28, height: 28 } }
+  try {
+    executeRenderer(await read('usage-dials/apply.js'), fixture, {
+      state: { grokBot: { available: true, percentUsed: 40, nextResetMs: Date.now() + 86400000, readAtMs: Date.now() } },
+      wingman: { app: 'grok-bot', request() {}, reportRenderHealth() {} },
+    })
+    const controller = fixture.window.__codexHelperUsageDials
+    const bank = composer.trailing.querySelector('[data-codex-helper="usage-dials"]')
+    const weekly = bank.querySelector('[data-codex-helper-dial="secondary"]')
+    const svg = weekly.querySelector('svg')
+    assert.equal(weekly.style.width, '28px')
+    assert.equal(svg.style.width, '28px')
+    assert.equal(svg.style.height, '28px')
+    assert.equal(svg.getAttribute('viewBox'), '2 2 16 16', 'the ring itself spans the full diameter')
+    assert.equal(bank.dataset.wingmanDialDiameter, '28')
+    for (const button of [mic, send]) button._rect = { left: 640, top: 698, width: 36, height: 36 }
+    controller.update({ grokBot: { available: true, percentUsed: 40, nextResetMs: Date.now() + 86400000, readAtMs: Date.now() } })
+    assert.equal(weekly.style.width, '36px', 'follows the composer, not a fixed pixel size')
+    assert.equal(svg.style.height, '36px')
+  } finally { fixture.dispose() }
+})
+
+test('Grok Bot: without a round button to measure, the dial keeps its stylesheet size', async () => {
+  const fixture = createBrowserFixture()
+  fixture.setRectResolver(() => ({ left: 560, top: 700, width: 40, height: 32 }))
+  const composer = makeGrokComposer(fixture)
+  try {
+    executeRenderer(await read('usage-dials/apply.js'), fixture, {
+      state: { grokBot: { available: true, percentUsed: 40, nextResetMs: Date.now() + 86400000, readAtMs: Date.now() } },
+      wingman: { app: 'grok-bot', request() {}, reportRenderHealth() {} },
+    })
+    const weekly = composer.trailing.querySelector('[data-codex-helper-dial="secondary"]')
+    assert.equal(weekly.style.width, undefined)
+  } finally { fixture.dispose() }
+})
+
 test('Grok Bot: missing or out-of-range cache shows a question mark, never a guessed number', async () => {
   for (const grokBot of [{ available: false }, undefined, { available: true, percentUsed: 140, readAtMs: Date.now() }]) {
     const fixture = createBrowserFixture()

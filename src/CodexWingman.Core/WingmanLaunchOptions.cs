@@ -3,7 +3,7 @@ namespace CodexWingman.Core;
 public enum WingmanLaunchTarget { Preferences, Codex, T3Code, T3Web, GrokBot }
 
 /// <summary>Development-channel commands for an already running Wingman. A command never starts a new tray.</summary>
-public enum WingmanCommand { None, T3WebRenewNow, Close }
+public enum WingmanCommand { None, T3WebRenewNow, Close, DumpMenu, T3WebCheckSignIn, GrokBotPin }
 
 public sealed record WingmanLaunchOptions(
     WingmanLaunchTarget Target = WingmanLaunchTarget.Preferences,
@@ -39,34 +39,40 @@ public sealed record WingmanLaunchOptions(
                 options = options with { LocalAppData = Path.GetFullPath(path) };
             }
             else if (argument == "--register-launchers") options = options with { RegisterOnly = true };
-            else if (argument is "--t3-web-renew-now" or "--close")
+            else if (CommandFor(argument) is { } command)
             {
                 if (options.Command != WingmanCommand.None) throw new ArgumentException("Give Wingman one command at a time.");
-                options = options with { Command = argument == "--close" ? WingmanCommand.Close : WingmanCommand.T3WebRenewNow };
+                options = options with { Command = command };
             }
         }
         return options;
     }
 
     public bool OpenOnStartup(WingmanLaunchTarget app, HelperSettings settings) =>
-        Target == WingmanLaunchTarget.Preferences
-            ? app switch
-            {
-                WingmanLaunchTarget.Codex => settings.OpenCodexOnLaunch,
-                WingmanLaunchTarget.T3Code => settings.OpenT3CodeOnLaunch,
-                WingmanLaunchTarget.T3Web => settings.T3Web?.OpenOnLaunch == true && settings.T3Web.IsConfigured,
-                WingmanLaunchTarget.GrokBot => settings.OpenGrokBotOnLaunch,
-                _ => false,
-            }
-            : Target == app;
+        // The tray checks that the app is on this PC (T3 web: Chrome plus an address or pairing folder).
+        Target == WingmanLaunchTarget.Preferences ? settings.OpensOnLaunch(app) : Target == app;
+
+    private static WingmanCommand? CommandFor(string argument) => argument switch
+    {
+        "--t3-web-renew-now" => WingmanCommand.T3WebRenewNow,
+        "--close" => WingmanCommand.Close,
+        "--dump-menu" => WingmanCommand.DumpMenu,
+        "--t3-web-check-sign-in" => WingmanCommand.T3WebCheckSignIn,
+        "--grok-bot-pin" => WingmanCommand.GrokBotPin,
+        _ => null,
+    };
+
+    /// <summary>Every command a running development build listens for.</summary>
+    public static IReadOnlyList<WingmanCommand> Commands { get; } =
+        [WingmanCommand.T3WebRenewNow, WingmanCommand.Close, WingmanCommand.DumpMenu, WingmanCommand.T3WebCheckSignIn, WingmanCommand.GrokBotPin];
 
     /// <summary>Event a running development build listens on for this command.</summary>
-    public static string CommandEventName(WingmanCommand command) => command switch
-    {
-        WingmanCommand.T3WebRenewNow => WingmanIdentity.ActivationEventName + ".Command.T3WebRenewNow",
-        WingmanCommand.Close => WingmanIdentity.ActivationEventName + ".Command.Close",
-        _ => throw new ArgumentException("No command selected.", nameof(command)),
-    };
+    public static string CommandEventName(WingmanCommand command) => command == WingmanCommand.None
+        ? throw new ArgumentException("No command selected.", nameof(command))
+        : WingmanIdentity.ActivationEventName + ".Command." + command;
+
+    /// <summary>File a running development build writes the live tray menu to on --dump-menu.</summary>
+    public static string MenuDumpPath(string settingsDirectory) => Path.Combine(settingsDirectory, "menu-dump.json");
 
     public string ActivationEventName => Target == WingmanLaunchTarget.Preferences
         ? WingmanIdentity.ActivationEventName

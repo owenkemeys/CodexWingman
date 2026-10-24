@@ -18,6 +18,25 @@ public sealed record HelperSettings(
         [],
         new Dictionary<string, bool>(StringComparer.Ordinal) { ["json-debug"] = false });
 
+    /// <summary>The tray's "Open on launch" choice for one app.</summary>
+    public bool OpensOnLaunch(WingmanLaunchTarget app) => app switch
+    {
+        WingmanLaunchTarget.Codex => OpenCodexOnLaunch,
+        WingmanLaunchTarget.T3Code => OpenT3CodeOnLaunch,
+        WingmanLaunchTarget.T3Web => T3Web?.OpenOnLaunch == true,
+        WingmanLaunchTarget.GrokBot => OpenGrokBotOnLaunch,
+        _ => false,
+    };
+
+    public HelperSettings WithOpenOnLaunch(WingmanLaunchTarget app, bool value) => app switch
+    {
+        WingmanLaunchTarget.Codex => this with { OpenCodexOnLaunch = value },
+        WingmanLaunchTarget.T3Code => this with { OpenT3CodeOnLaunch = value },
+        WingmanLaunchTarget.T3Web => this with { T3Web = (T3Web ?? new T3WebSettings()) with { OpenOnLaunch = value } },
+        WingmanLaunchTarget.GrokBot => this with { OpenGrokBotOnLaunch = value },
+        _ => throw new ArgumentOutOfRangeException(nameof(app), "Only an app has an Open on launch choice."),
+    };
+
     public bool IsHelperEnabled(string helperId, bool defaultEnabled = true)
     {
         if (HelperEnabled is not null && HelperEnabled.TryGetValue(helperId, out var enabled))

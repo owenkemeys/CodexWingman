@@ -1,6 +1,6 @@
 # Usage dials
 
-- Helper generation: native-slot-v32
+- Helper generation: native-slot-v33
 - Manifest version: 1.6.0
 - Helper ID: `usage-dials`
 
