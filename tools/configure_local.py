@@ -12,7 +12,7 @@ def read_object(path):
     return value
 
 
-def plan(settings_path, registry_path, explicit_vaults=(), helper_root=None):
+def plan(settings_path, registry_path, explicit_vaults=(), helper_root=None, t3_web_url=None, t3_pairing_folder=None):
     current = read_object(settings_path)
     proposed = copy.deepcopy(current)
     warnings = []
@@ -87,6 +87,23 @@ def plan(settings_path, registry_path, explicit_vaults=(), helper_root=None):
     proposed.setdefault('usageDialsEnabled', True)
     proposed.setdefault('additionalSessionRoots', [])
     proposed.setdefault('forceHighPerformanceGpu', False)
+    if t3_web_url is not None or t3_pairing_folder is not None:
+        t3_web = proposed.get('t3Web')
+        if t3_web is not None and not isinstance(t3_web, dict):
+            raise ValueError('t3Web must be an object; existing settings were not changed')
+        t3_web = proposed.setdefault('t3Web', {})
+        if t3_web_url is not None:
+            from urllib.parse import urlsplit
+            parts = urlsplit(t3_web_url.strip())
+            if parts.scheme != 'https' or not parts.hostname or parts.username or parts.password:
+                raise ValueError('--t3-web-url must be an https address such as https://host:port')
+            t3_web['url'] = f'https://{parts.netloc}'
+        if t3_pairing_folder is not None:
+            pairing = t3_web.setdefault('pairing', {})
+            if not isinstance(pairing, dict):
+                raise ValueError('t3Web.pairing must be an object; existing settings were not changed')
+            pairing['provider'] = 'shared-folder'
+            pairing['folder'] = str(t3_pairing_folder)
     warnings.append('Remote paths and nonstandard Codex session roots are not guessed. Configure them only if this user needs them.')
     return current, proposed, warnings
 
@@ -119,9 +136,12 @@ def main():
     parser.add_argument('--vault', action='append', default=[], help='VaultName=absolute-directory; repeat for multiple vaults')
     parser.add_argument('--apply', action='store_true')
     parser.add_argument('--import-helper-config', type=Path, help='Existing installation Helpers directory; preserve manifest customization in local settings without changing package files')
+    parser.add_argument('--t3-web-url', help='T3 web address (https only) for Wingman\'s own T3 web window; normally learned from the first pairing link')
+    parser.add_argument('--t3-pairing-folder', help='Folder the T3 host answers pairing requests in; normally found from the Jarvis Sync receipt')
     args = parser.parse_args()
     try:
-        current, proposed, warnings = plan(args.settings, args.obsidian_registry, args.vault, args.import_helper_config)
+        current, proposed, warnings = plan(args.settings, args.obsidian_registry, args.vault, args.import_helper_config,
+                                         args.t3_web_url, args.t3_pairing_folder)
         backup = save(args.settings, current, proposed) if args.apply and proposed != current else None
         print(json.dumps({'applied': args.apply, 'changed': proposed != current, 'settingsPath': str(args.settings), 'backup': backup,
                           'settings': proposed, 'notices': warnings, 'next': 'After applying, restart only the identified Wingman process (or reload helpers); verify one real note link.'}, indent=2))

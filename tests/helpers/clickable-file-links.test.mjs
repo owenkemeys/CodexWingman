@@ -45,7 +45,7 @@ test('package declares Jarvis translation plus local Windows path support', asyn
     schemaVersion: 2,
     id: 'clickable-file-links',
     name: 'Clickable file links',
-    version: '1.5.0',
+    version: '1.6.0',
     description: 'Opens local file and folder references in Windows applications from Codex or T3 Code, with optional remote path mappings.',
     refreshSeconds: 0,
     capabilities: ['system.openFilePath'],
@@ -53,6 +53,7 @@ test('package declares Jarvis translation plus local Windows path support', asyn
     targets: {
       codex: { apply: 'apply.js', remove: 'remove.js' },
       't3-code': { apply: 'apply.t3.js', remove: 'remove.t3.js' },
+      't3-web': { apply: 'apply.t3.js', remove: 'remove.t3.js' },
     },
   })
   assert.match(info, /native Codex file-reference control/i)

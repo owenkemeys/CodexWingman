@@ -297,17 +297,22 @@ async function requiredFile(name) {
   return fs.readFile(file, 'utf8')
 }
 
-test('Usage Dials package declares explicit Codex and T3 targets', async () => {
+test('Usage Dials package declares explicit Codex, T3 desktop, T3 web and Grok Bot targets', async () => {
   const manifest = JSON.parse(await requiredFile('wingman.json'))
   assert.deepEqual(manifest, {
     schemaVersion: 2,
     id: 'usage-dials',
     name: 'Usage dials',
-    version: '1.5.5',
-    description: 'Shows provider usage limits beside the composer model picker or context dial.',
+    version: '1.7.0',
+    description: 'Shows provider usage limits beside the composer model picker or context dial, in Codex, T3 Code (desktop or web) and Grok Bot.',
     refreshSeconds: 60,
-    capabilities: ['files.providerUsage'],
-    targets: { codex: { apply: 'apply.js', remove: 'remove.js' }, 't3-code': { backend: 'backend.js', apply: 'apply.js', remove: 'remove.js' } },
+    capabilities: ['files.providerUsage', 'files.grokBotUsage'],
+    targets: {
+      codex: { apply: 'apply.js', remove: 'remove.js' },
+      't3-code': { backend: 'backend.js', apply: 'apply.js', remove: 'remove.js' },
+      't3-web': { backend: 'backend.js', apply: 'apply.js', remove: 'remove.js' },
+      'grok-bot': { backend: 'backend.grok.js', apply: 'apply.js', remove: 'remove.js' },
+    },
   })
 })
 
@@ -682,8 +687,8 @@ test('renderer replaces a stale Usage Dials controller during a Helper upgrade',
     executeRenderer(apply, fixture, { state: {} })
     await fixture.flush()
     assert.equal(cleaned, 1)
-    assert.equal(fixture.window.__codexHelperUsageDials?.version, 'native-slot-v26')
-    assert.equal(fixture.window.__codexHelperUsageDials?.status().fallbackStrategy, 'native-slot-v26')
+    assert.equal(fixture.window.__codexHelperUsageDials?.version, 'native-slot-v34')
+    assert.equal(fixture.window.__codexHelperUsageDials?.status().fallbackStrategy, 'native-slot-v34')
     assert.equal(native.wrapper.nextElementSibling?.getAttribute('data-codex-helper'), 'usage-dials')
   } finally {
     fixture.window.__codexHelperUsageDials?.cleanup()
@@ -759,7 +764,7 @@ test('native account quota renders without any session backend and updates when 
   const manifest = JSON.parse(await requiredFile('wingman.json'))
   assert.equal(manifest.targets.codex.backend, undefined, 'session reads must not gate renderer activation')
   assert.equal(manifest.targets['t3-code'].backend, 'backend.js', 'T3 can read an optional scoped Grok snapshot')
-  assert.deepEqual(manifest.capabilities, ['files.providerUsage'])
+  assert.deepEqual(manifest.capabilities, ['files.providerUsage', 'files.grokBotUsage'])
   const fixture = createBrowserFixture()
   const composer = makeComposer(fixture.document, 'account-usage', 30)
   const response = (used) => ({ status: 'success', data: {

@@ -21,7 +21,7 @@ public sealed class HelperHost
     private readonly Func<string> childOperationTokenFactory;
     private readonly HelperCatalog catalog = new();
     private HelperBackend backend;
-    private readonly HelperRenderer renderer = new();
+    private readonly HelperRenderer renderer;
     private readonly SemaphoreSlim gate = new(1, 1);
     private readonly Dictionary<string, CachedBackendState> backendStates = new(StringComparer.Ordinal);
     private readonly HashSet<HelperPackage> pendingCleanup = [];
@@ -47,6 +47,7 @@ public sealed class HelperHost
         string appId = HelperAppIds.Codex)
     {
         this.appId = RequireAppId(appId);
+        renderer = new(this.appId);
         helpersRoot = bundledRoot;
         overrideRoot = userRoot;
         this.settingsPath = settingsPath;
@@ -80,6 +81,7 @@ public sealed class HelperHost
         string appId = HelperAppIds.Codex)
     {
         this.appId = RequireAppId(appId);
+        renderer = new(this.appId);
         this.helpersRoot = helpersRoot;
         overrideRoot = null;
         this.settingsPath = settingsPath;
@@ -100,16 +102,22 @@ public sealed class HelperHost
     public IReadOnlyList<HelperSummary> Helpers => summaries;
     public bool IsSuspended => suspended;
 
-    private static string RequireAppId(string value) => value is HelperAppIds.Codex or HelperAppIds.T3Code
+    private static string RequireAppId(string value) => HelperAppIds.IsKnown(value)
         ? value
         : throw new ArgumentException("Unknown Helper app target.", nameof(value));
 
     private async Task<IReadOnlyList<CodexTarget>> ListTargetsAsync(CancellationToken cancellationToken)
     {
         var discovered = await targetSource.ListAsync(cancellationToken);
-        return appId == HelperAppIds.Codex
-            ? CodexTargetCatalog.SelectPages(discovered)
-            : T3CodeTargetCatalog.SelectPages(discovered);
+        // T3 web and Grok Bot sources already select their own pages (origin or packaged renderer).
+        return appId switch
+        {
+            HelperAppIds.Codex => CodexTargetCatalog.SelectPages(discovered),
+            HelperAppIds.T3Code => T3CodeTargetCatalog.SelectPages(discovered),
+            _ => discovered.Where(target => target.Type == "page"
+                    && !string.IsNullOrWhiteSpace(target.WebSocketDebuggerUrl))
+                .DistinctBy(target => target.Id).ToArray(),
+        };
     }
 
     public async Task<HelperHostReport> ReconcileAsync(CancellationToken cancellationToken = default)
@@ -422,7 +430,7 @@ public sealed class HelperHost
     private async Task ApplyAndCheckHealthAsync(HelperPackage package, CodexTarget target,
         string expression, List<HelperDiagnostic> diagnostics, CancellationToken cancellationToken)
     {
-        if (appId != HelperAppIds.T3Code)
+        if (appId == HelperAppIds.Codex)
         {
             await evaluator.EvaluateAsync(target, expression, cancellationToken);
             return;

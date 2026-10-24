@@ -1,6 +1,9 @@
 (() => {
-  const controllerVersion = 'native-slot-v26';
-  const t3Renderer = window.location?.protocol === 't3code:';
+  const controllerVersion = 'native-slot-v34';
+  // Wingman names the app it injected into; the legacy embedded Codex renderer has no wingman object.
+  const wingmanApp = typeof wingman === 'undefined' ? null : wingman?.app;
+  const t3Renderer = window.location?.protocol === 't3code:' || wingmanApp === 't3-web';
+  const grokRenderer = wingmanApp === 'grok-bot';
   const initialSnapshot = __CODEX_HELPER_SNAPSHOT__;
   const existing = window.__codexHelperUsageDials;
   if (existing?.version === controllerVersion) {
@@ -29,6 +32,16 @@
   let t3RefreshLoading = false;
   let disposed = false;
   const t3RefreshAttempts = new Map();
+  let grokStore = null;
+  let unsubscribeGrok = null;
+  let grokLastNudgeMs = 0;
+  let grokSource = null;
+  let grokReadAtMs = null;
+  // Grok Bot refreshes weekly usage itself only when its account menu or
+  // usage settings open, or after a send once its reading is 5 minutes old.
+  // Ask the app's own throttled refresh on that same 5-minute cadence while
+  // the window is visible, so usage spent elsewhere still reaches the dial.
+  const grokNudgeIntervalMs = 5 * 60 * 1000;
 
   // Read Codex's account cache; session usage does not establish a reset balance.
   const hasAccountFields = (data) => data && !Array.isArray(data)
@@ -68,6 +81,7 @@
   };
 
   const refreshAccountState = () => {
+    if (grokRenderer) { refreshGrokAccountState(); return; }
     if (t3Renderer) { refreshT3AccountState(); return; }
     const query = readAccountState();
     const count = query?.status === 'success'
@@ -92,7 +106,7 @@
   };
 
   const connectAccountCache = () => {
-    if (t3Renderer) return;
+    if (t3Renderer || grokRenderer) return;
     if (accountClient) return;
     const queue = [window.__codexRoot?._internalRoot?.current];
     const seen = new Set();
@@ -178,9 +192,12 @@
     if (!provider.enabled || !provider.installed || !environmentId || !t3Registry || disposed
       || (Number.isFinite(checked) && now - checked < 60000)
       || now - (t3RefreshAttempts.get(instanceId) || 0) < 60000 || t3RefreshLoading) return;
+    // T3 desktop serves t3code://app/assets; T3 web serves the same bundle from its own https origin.
+    const origin = wingmanApp === 't3-web' && /^https:\/\/[^/]+$/.test(window.location?.origin || '')
+      ? window.location.origin : 't3code://app';
     const urls = [...document.querySelectorAll('link[rel="modulepreload"]')]
-      .map(element => element.href).filter(url => typeof url === 'string'
-        && /^t3code:\/\/app\/assets\/server-[^/]+\.js$/.test(url));
+      .map(element => element.href).filter(url => typeof url === 'string' && url.startsWith(origin + '/assets/')
+        && /^\/assets\/(?:server|runtime)-[^/]+\.js$/.test(url.slice(origin.length)));
     if (!t3RefreshCommand && (urls.length === 0 || urls.length > 8)) return;
     t3RefreshAttempts.set(instanceId, now);
     t3RefreshLoading = true;
@@ -304,6 +321,118 @@
     if (snapshot.primary || snapshot.secondary) quotaUnavailableReason = null;
   };
 
+  // Grok Bot keeps its live weekly usage in its client store (the one its
+  // account menu and Settings > Usage render). Find that store by its
+  // contract on the root providers; read and subscribe, never write.
+  const isGrokStore = (value) => value && typeof value.snapshots?.get === 'function'
+    && typeof value.snapshots?.subscribe === 'function' && typeof value.refresh === 'function';
+
+  // Walk the whole React fiber tree (no element budget, so a bigger or
+  // reordered Grok Bot tree cannot hide the store), but only until the store
+  // is found, and at most once every 2 seconds while it is missing. Only
+  // context-provider values are examined. More than one distinct store, or
+  // none, fails closed to the saved reading, which the dial then marks.
+  let grokSearchAtMs = 0;
+  let grokStoreProblem = null;
+  const grokSearchIntervalMs = 2000;
+  const connectGrokStore = () => {
+    if (!grokRenderer || grokStore) return;
+    const now = Date.now();
+    if (now - grokSearchAtMs < grokSearchIntervalMs) return;
+    grokSearchAtMs = now;
+    const host = document.getElementById?.('root') || document.body?.firstElementChild;
+    const key = host && Object.keys(host).find((name) => name.startsWith('__reactContainer$'));
+    const stores = new Set();
+    const stack = key && host[key] ? [host[key]] : [];
+    let visited = 0;
+    // A fiber tree is acyclic through child/sibling; the ceiling only guards
+    // against a corrupted graph and is far above any real composer page.
+    while (stack.length && visited < 1000000) {
+      const fiber = stack.pop();
+      visited += 1;
+      const candidate = fiber.memoizedProps?.value?.weeklyUsage;
+      if (isGrokStore(candidate)) stores.add(candidate);
+      if (fiber.sibling) stack.push(fiber.sibling);
+      if (fiber.child) stack.push(fiber.child);
+    }
+    if (stores.size !== 1) {
+      grokStoreProblem = !key ? 'Grok Bot\'s page is not ready.'
+        : stores.size ? 'Grok Bot exposes more than one usage store.' : 'Grok Bot\'s live usage value was not found.';
+      return;
+    }
+    grokStoreProblem = null;
+    grokStore = [...stores][0];
+    try { unsubscribeGrok = grokStore.snapshots.subscribe(() => { if (!disposed) queueReconcile(); }); }
+    catch { unsubscribeGrok = null; }
+  };
+
+  const readGrokLiveUsage = () => {
+    try {
+      const current = grokStore?.snapshots.get();
+      if (current?.status !== 'ready') return null;
+      const usage = current.value?.usage;
+      const readAtMs = current.value?.readAtMs;
+      if (!Number.isFinite(usage?.percentUsed) || usage.percentUsed < 0 || !Number.isFinite(readAtMs)) return null;
+      return { percentUsed: Math.min(100, usage.percentUsed),
+        nextResetMs: Number.isSafeInteger(usage.nextResetMs) ? usage.nextResetMs : null, readAtMs };
+    } catch { return null; }
+  };
+
+  // Ask Grok Bot's own throttled refresh only while someone is looking: the
+  // Grok Bot window has focus, the dial's popup is open, or the window has just
+  // gained focus or become visible (attention). At most every 5 min, and only
+  // when the reading is older than that.
+  const grokPopupOpen = () => [...instances.values()].some((instance) => instance.tooltip);
+  const grokWindowFocused = () => {
+    try { return typeof document.hasFocus === 'function' && document.hasFocus() === true; } catch { return false; }
+  };
+  const nudgeGrokRefresh = (live, attention = false) => {
+    const now = Date.now();
+    if (!grokStore || !(attention || grokWindowFocused() || grokPopupOpen())) return;
+    if (live && now - live.readAtMs < grokNudgeIntervalMs) return;
+    if (now - grokLastNudgeMs < grokNudgeIntervalMs) return;
+    grokLastNudgeMs = now;
+    try { grokStore.refresh(); } catch { /* The app keeps its own state. */ }
+  };
+
+  // Prefer the live store; fall back to the app's saved cache, labelled with its age.
+  const refreshGrokAccountState = () => {
+    snapshot = { primary: null, secondary: null };
+    availableResets = null;
+    quotaNotReported = false;
+    providerLabel = 'Grok Bot';
+    quotaUnavailableReason = 'Grok Bot has not saved a current usage reading yet.';
+    connectGrokStore();
+    const live = readGrokLiveUsage();
+    nudgeGrokRefresh(live);
+    const cached = fallbackSnapshot?.grokBot;
+    const cacheUsable = cached?.available === true && Number.isFinite(cached.percentUsed)
+      && cached.percentUsed >= 0 && cached.percentUsed <= 100;
+    const usage = live || (cacheUsable ? cached : null);
+    grokSource = live ? 'live' : usage ? 'cache' : null;
+    grokReadAtMs = Number.isFinite(usage?.readAtMs) ? usage.readAtMs : null;
+    if (!usage) return;
+    // Show the same whole percent Grok Bot's account menu shows: it rounds,
+    // and shows 1% for anything above 0 and below 1.
+    const percent = usage.percentUsed > 0 && usage.percentUsed < 1 ? 1 : Math.round(usage.percentUsed);
+    const reset = Number.isSafeInteger(usage.nextResetMs) ? Math.floor(usage.nextResetMs / 1000) : null;
+    const value = (reset !== null && normalizeAccountWindow({ used_percent: percent,
+      limit_window_seconds: 10080 * 60, reset_at: reset }))
+      || { usedPercent: percent, state: percent >= 95 ? 'danger' : 'neutral' };
+    // Same heading as the shared popup (T3 shows its provider's "Weekly").
+    value.label = 'Weekly';
+    snapshot.secondary = value;
+    quotaUnavailableReason = null;
+  };
+
+  const formatReadAge = (readAtMs) => {
+    const minutes = Math.max(0, Math.round((Date.now() - readAtMs) / 60000));
+    if (minutes < 1) return 'just now';
+    if (minutes < 60) return `${minutes} min ago`;
+    const hours = Math.round(minutes / 60);
+    return hours < 48 ? `${hours} h ago` : `${Math.round(hours / 24)} days ago`;
+  };
+
   const style = document.createElement('style');
   style.dataset.codexHelperStyle = owner;
   style.textContent = `
@@ -343,6 +472,23 @@
        Scope the palette to both the miniature and its separate hover preview. */
     [data-codex-helper-dial][data-wingman-app="t3-code"] { color: #000; }
     .dark [data-codex-helper-dial][data-wingman-app="t3-code"] { color: #fff; }
+    /* Grok Bot: inherit the composer icon colour, like the native attach and mic controls beside it.
+       The dial is as wide as Grok Bot's round mic/voice buttons (sized inline from a live measurement)
+       and sits at the row's own gap from them, the same spacing those buttons have. */
+    [data-codex-helper="usage-dials"][data-wingman-app="grok-bot"] { height: 32px; }
+    [data-codex-helper-dial][data-wingman-app="grok-bot"] { width: 28px; height: 32px; }
+    [data-codex-helper-dial][data-wingman-app="grok-bot"] svg { width: 28px; height: 28px; }
+    /* Grok Bot (from native-slot-v34, Owen's option B): a small 16px ring inside a grey chip that
+       matches the mic button beside it (fill #282828, rim #343434, icon grey #979797). The used arc is
+       a touch brighter than the icon grey; ahead of pace shows as an equally muted amber (red only at
+       danger), and the unused-until-now marker stays a quiet grey. The popup keeps the plain ring. */
+    [data-codex-helper-dial][data-wingman-dial-style="chip"] { --codex-helper-usage-neutral: #a3a3a3; }
+    [data-codex-helper-dial][data-wingman-dial-style="chip"][data-state="warning"] { --codex-helper-usage-alert: #a9843c; }
+    [data-codex-helper-dial][data-wingman-dial-style="chip"][data-state="danger"] { --codex-helper-usage-alert: #b5564f; }
+    [data-codex-helper-dial][data-wingman-dial-style="chip"] .codex-helper-chip { fill: #282828; stroke: #343434; stroke-width: 1; }
+    [data-codex-helper-dial][data-wingman-dial-style="chip"] .codex-helper-background { stroke: #3d3d3d; opacity: 1; }
+    [data-codex-helper-dial][data-wingman-dial-style="chip"] .codex-helper-unused { stroke: #5a5a5a; opacity: 1; }
+    [data-codex-helper-dial][data-wingman-dial-style="chip"] text { fill: #979797; }
     /* Keep the original composer circle; only the enlarged popup uses an outline. */
     .codex-helper-usage-preview [data-codex-helper-dial] .codex-helper-unused { stroke-width: 2px; vector-effect: non-scaling-stroke; }
     .codex-helper-usage-shared { opacity: .6; }
@@ -351,6 +497,25 @@
     .codex-helper-usage-preview { display: flex; justify-content: center; gap: 8px; padding: 6px 0 8px; margin-bottom: 4px; border-bottom: 1px solid var(--color-token-border, #444); }
     .codex-helper-usage-preview [data-codex-helper-dial],
     .codex-helper-usage-preview [data-codex-helper-dial] svg { width: 76px; height: 76px; }
+    /* The popup owns its layout. Host CSS (or a host without these utility
+       classes, like Grok Bot) must not collapse it, so the values Codex's
+       utilities produce are restated here, scoped to Wingman's own nodes. */
+    [data-codex-helper-tooltip="usage-fallback"] {
+      box-sizing: border-box; width: fit-content; user-select: none;
+      font-size: var(--text-sm, 0.875rem); line-height: var(--text-sm--line-height, calc(1.25 / 0.875));
+      white-space: normal; overflow-wrap: break-word; text-align: center;
+    }
+    [data-codex-helper-tooltip="usage-fallback"] > [data-codex-helper-usage-stack] {
+      display: flex !important; flex-direction: column !important; align-items: stretch;
+      gap: calc(var(--spacing, 0.25rem) * 0.5) !important;
+      width: calc(var(--spacing, 0.25rem) * 38); text-align: center;
+    }
+    [data-codex-helper-usage-stack] > span {
+      display: block !important; margin: 0; padding: 0; white-space: pre-line; float: none;
+    }
+    [data-codex-helper-usage-stack] > span.mt-1 { margin-top: var(--spacing, 0.25rem); }
+    [data-codex-helper-usage-stack] > span.codex-helper-usage-resets { margin-top: 4px; padding-top: 4px; }
+    [data-codex-helper-usage-stack] > .codex-helper-usage-preview { display: flex !important; }
   `;
   document.documentElement.appendChild(style);
 
@@ -413,6 +578,14 @@
   };
 
   const findAnchors = () => {
+    if (grokRenderer) {
+      // Grok Bot marks its composer with stable semantic classes beside its hashed styles.
+      return [...document.querySelectorAll('.sand-prompt-actions-trailing')]
+        .filter(isVisible)
+        .map(row => [...row.children].find(child => String(child.className || '').split(/\s+/).includes('sand-prompt-cta-cluster')))
+        .filter(Boolean)
+        .map(cluster => ({ mode: 'grok-actions', wrapper: cluster }));
+    }
     if (t3Renderer) {
       return [...document.querySelectorAll('[data-chat-provider-model-picker="true"]')]
         .filter(picker => picker.closest?.('[data-chat-composer-main-surface="true"]') && isVisible(picker))
@@ -486,13 +659,28 @@
     const dial = document.createElement('span');
     dial.className = 'text-token-description-foreground';
     if (t3Renderer) dial.dataset.wingmanApp = 't3-code';
+    else if (grokRenderer) dial.dataset.wingmanApp = 'grok-bot';
     dial.dataset.codexHelperDial = key;
     dial.dataset.state = 'unavailable';
     dial.setAttribute('role', 'img');
     dial.setAttribute('tabindex', '0');
     const svg = document.createElementNS(svgNamespace, 'svg');
-    svg.setAttribute('viewBox', '0 0 20 20');
+    // Grok Bot: the canvas is a 28-unit chip around the 20-unit ring canvas, so
+    // the chip spans the measured diameter of the round composer buttons beside
+    // it (28px: one unit per pixel) and the ring inside it is 16px across.
+    const grokChip = grokRenderer && !preview;
+    svg.setAttribute('viewBox', grokChip ? '-4 -4 28 28' : '0 0 20 20');
     svg.setAttribute('aria-hidden', 'true');
+    if (grokChip) {
+      dial.dataset.wingmanDialStyle = 'chip';
+      const chip = document.createElementNS(svgNamespace, 'circle');
+      chip.setAttribute('class', 'codex-helper-chip');
+      chip.setAttribute('data-segment', 'chip');
+      chip.setAttribute('cx', '10');
+      chip.setAttribute('cy', '10');
+      chip.setAttribute('r', '13.5');
+      svg.appendChild(chip);
+    }
     const background = makeSegment('background', 'codex-helper-background', true);
     const unused = makeSegment('unused', 'codex-helper-unused', false, preview);
     const within = makeSegment('within', 'codex-helper-within');
@@ -537,10 +725,18 @@
     setAttributeIfChanged(dial, 'aria-label', showUnavailable ? `Usage unavailable. ${quotaUnavailableReason}`
       : `${formatWindowLabel(value, dial.__codexHelper.windowLabel)}: ${formatUsage(usage)}.${reset}`);
     dial.removeAttribute('title');
+    if (grokRenderer) {
+      // A saved reading (live store missing) is visibly marked: dimmed ring and
+      // a spoken/hover note, so it can never pass for the live value.
+      const saved = grokSource === 'cache' && usage !== null;
+      dial.dataset.usageSource = saved ? 'saved' : (grokSource || 'none');
+      dial.style.opacity = saved ? '0.5' : '';
+      if (saved) setAttributeIfChanged(dial, 'aria-label', `${dial.getAttribute('aria-label')} Saved reading, not live.`);
+    }
   };
 
   const formatWindowLabel = (value, fallback) => {
-    if (t3Renderer && value?.label) return value.label;
+    if ((t3Renderer || grokRenderer) && value?.label) return value.label;
     const minutes = value?.windowMinutes;
     if (!Number.isFinite(minutes) || minutes <= 0) return fallback;
     if (minutes === 300) return '5-hour usage';
@@ -553,7 +749,8 @@
   const createInstance = (anchor) => {
     const bank = document.createElement('span');
     bank.dataset.codexHelper = owner;
-    bank.setAttribute('aria-label', t3Renderer ? 'T3 provider usage' : 'Codex account usage');
+    bank.setAttribute('aria-label', grokRenderer ? 'Grok Bot usage' : t3Renderer ? 'T3 provider usage' : 'Codex account usage');
+    if (grokRenderer) bank.dataset.wingmanApp = 'grok-bot';
     const primary = makeDial('primary', '5-hour usage');
     const secondary = makeDial('secondary', 'Weekly usage');
     bank.append(primary, secondary);
@@ -563,6 +760,7 @@
       instance.activeWindow = dial && bank.contains(dial) ? dial.dataset.codexHelperDial
         : (snapshot.primary ? 'primary' : 'secondary');
       showFallbackTooltip(instance);
+      if (grokRenderer) nudgeGrokRefresh(readGrokLiveUsage());
     };
     instance.onPointerOver = selectWindow;
     instance.onPointerOut = (event) => {
@@ -599,12 +797,45 @@
     parent.children.splice(Math.max(0, index), 0, node);
   };
 
+  // Grok Bot: diameter of the composer's own round buttons (mic, voice chat),
+  // measured on every pass so the dial follows the composer when it resizes.
+  const grokRoundButtonDiameter = (cluster) => {
+    for (const button of cluster?.querySelectorAll?.('button') || []) {
+      if (!isVisible(button)) continue;
+      const rect = button.getBoundingClientRect();
+      if (rect.width < 12 || rect.width > 64 || Math.abs(rect.width - rect.height) > 1) continue;
+      const radius = parseFloat(getComputedStyle(button).borderRadius || '0');
+      if (Number.isFinite(radius) && radius * 2 >= rect.width - 1) return Math.round(rect.width * 100) / 100;
+    }
+    return null;
+  };
+  let grokResizeObserver = null;
+  const observedGrokClusters = new WeakSet();
+  const sizeGrokDials = (instance) => {
+    const diameter = grokRoundButtonDiameter(instance.wrapper);
+    if (diameter !== null) {
+      const size = `${diameter}px`;
+      for (const dial of [instance.primary, instance.secondary]) {
+        if (dial.style.width !== size) dial.style.width = size;
+        const svg = dial.querySelector('svg');
+        if (svg && svg.style.width !== size) { svg.style.width = size; svg.style.height = size; }
+      }
+      instance.bank.dataset.wingmanDialDiameter = String(diameter);
+    }
+    if (!grokResizeObserver && typeof ResizeObserver === 'function') grokResizeObserver = new ResizeObserver(() => queueReconcile());
+    if (grokResizeObserver && instance.wrapper && !observedGrokClusters.has(instance.wrapper)) {
+      observedGrokClusters.add(instance.wrapper);
+      grokResizeObserver.observe(instance.wrapper);
+    }
+  };
+
   const updateInstance = (instance) => {
     if (t3Renderer) setAttributeIfChanged(instance.bank, 'aria-label', `${providerLabel} usage`);
-    renderDial(instance.primary, snapshot.primary, t3Renderer && !snapshot.primary && !snapshot.secondary);
+    renderDial(instance.primary, snapshot.primary, (t3Renderer || grokRenderer) && !snapshot.primary && !snapshot.secondary);
     renderDial(instance.secondary, snapshot.secondary);
+    if (grokRenderer) sizeGrokDials(instance);
     if (!instance.wrapper?.parentElement) return;
-    if (t3Renderer) {
+    if (t3Renderer || grokRenderer) {
       if (instance.bank.parentElement !== instance.wrapper.parentElement || instance.bank.nextElementSibling !== instance.wrapper)
         insertBefore(instance.wrapper.parentElement, instance.bank, instance.wrapper);
     } else if (instance.bank.parentElement !== instance.wrapper.parentElement || instance.bank.previousElementSibling !== instance.wrapper)
@@ -641,10 +872,27 @@
     return anchors.length;
   };
 
+  // Layout that must survive any host stylesheet. Inline !important
+  // declarations outrank every host rule, !important or not, so a host's
+  // CSS (or a host without Codex's utility classes, like Grok Bot) cannot
+  // run the popup's lines together. Values equal the Codex utilities, so
+  // Codex and T3 look unchanged.
+  const pinLayout = (element, declarations) => {
+    for (const [name, value] of Object.entries(declarations)) {
+      if (typeof element.style?.setProperty === 'function') element.style.setProperty(name, value, 'important');
+      else element.style[name.replace(/-([a-z])/g, (_, letter) => letter.toUpperCase())] = value;
+    }
+  };
+  const stackLayout = { display: 'flex', 'flex-direction': 'column', 'align-items': 'stretch',
+    gap: 'calc(var(--spacing, 0.25rem) * 0.5)', width: 'calc(var(--spacing, 0.25rem) * 38)',
+    'text-align': 'center', float: 'none', position: 'static' };
+  const lineLayout = { display: 'block', float: 'none', position: 'static', 'white-space': 'pre-line' };
+
   const makeText = (text, className = '') => {
     const span = document.createElement('span');
     span.textContent = text;
     if (className) span.className = className;
+    pinLayout(span, lineLayout);
     return span;
   };
 
@@ -656,10 +904,13 @@
     stack.appendChild(makeText(usage === null ? 'Usage unavailable' : `${formatUsage(usage)} used (${formatUsage(remaining)} left)`));
     stack.appendChild(makeText(elapsed === null ? 'Time elapsed unavailable' : `${elapsed}% of time elapsed`));
     if (value?.resetLabel) stack.appendChild(makeText(`Resets ${value.resetLabel}`));
+    if (grokRenderer && grokReadAtMs !== null) stack.appendChild(makeText(grokSource === 'cache'
+      ? `Saved reading, ${formatReadAge(grokReadAtMs)} (not live)` : `Updated ${formatReadAge(grokReadAtMs)}`, 'codex-helper-usage-heading'));
   };
 
   const appendAvailableReadouts = (stack, key) => {
     if (snapshot[key]) appendWindowReadout(stack, formatWindowLabel(snapshot[key], key === 'primary' ? '5-hour usage' : 'Weekly usage'), snapshot[key], false);
+    if (grokRenderer) return;
     const resetLabel = availableResets === null ? 'Resets unavailable'
       : `${availableResets} ${availableResets === 1 ? 'reset' : 'resets'} available`;
     stack.appendChild(makeText(resetLabel, 'codex-helper-usage-resets'));
@@ -667,7 +918,7 @@
   };
 
   const showFallbackTooltip = (instance) => {
-    const unavailable = t3Renderer && !snapshot.primary && !snapshot.secondary;
+    const unavailable = (t3Renderer || grokRenderer) && !snapshot.primary && !snapshot.secondary;
     const key = unavailable ? 'primary' : snapshot[instance.activeWindow] ? instance.activeWindow : (snapshot.primary ? 'primary' : 'secondary');
     const label = key === 'primary' ? '5-hour usage' : 'Weekly usage';
     let tooltip = instance.tooltip;
@@ -680,7 +931,7 @@
       tooltip.style.position = 'fixed';
       tooltip.style.zIndex = '2147483647';
       tooltip.style.pointerEvents = 'none';
-      if (t3Renderer) {
+      if (t3Renderer || grokRenderer) {
         tooltip.style.background = 'var(--color-popover, #1b1b1b)';
         tooltip.style.color = 'var(--color-popover-foreground, #eee)';
         tooltip.style.border = '1px solid var(--color-border, #444)';
@@ -696,8 +947,11 @@
     tooltip.replaceChildren();
     const stack = document.createElement('div');
     stack.className = 'flex w-38 flex-col gap-0.5 text-center';
+    stack.dataset.codexHelperUsageStack = '';
+    pinLayout(stack, stackLayout);
     const preview = document.createElement('div');
     preview.className = 'codex-helper-usage-preview';
+    pinLayout(preview, { display: 'flex', 'justify-content': 'center', float: 'none', position: 'static' });
     if (snapshot[key]) {
       const dial = makeDial(key, label, true);
       dial.removeAttribute('tabindex');
@@ -744,6 +998,16 @@
     primary: snapshot.primary || null,
     secondary: snapshot.secondary || null,
     availableResets,
+    ...(grokRenderer ? { usageSource: grokSource, usageReadAtMs: grokReadAtMs } : {}),
+    ...(grokRenderer ? { renderHealth: {
+      state: !document.querySelector('.sand-prompt-field') ? 'not-applicable'
+        : ![...instances.values()].some(instance => instance.bank.isConnected && instance.bank.getBoundingClientRect().width > 0)
+          || !snapshot.secondary ? 'waiting' : grokSource === 'cache' ? 'saved-reading' : 'ready',
+      detail: quotaUnavailableReason || (![...instances.values()].some(instance => instance.bank.isConnected)
+        ? 'Usage Dials could not attach to the Grok Bot composer.'
+        : grokSource === 'cache' ? `Showing Grok Bot's saved reading, not the live value: ${grokStoreProblem || 'live value unavailable.'}`
+          : 'Grok Bot usage is visible.'),
+    } } : {}),
     ...(t3Renderer ? { renderHealth: {
       state: !document.querySelector('[data-testid="composer-editor"]') ? 'not-applicable'
         : [...instances.values()].some(instance => instance.bank.isConnected && instance.bank.getBoundingClientRect().width > 0)
@@ -773,13 +1037,34 @@
   });
   observer.observe(document.documentElement, { childList: true, subtree: true, attributes: true, attributeFilter: ['aria-label'] });
   const interval = setInterval(reconcile, 2000);
+  // Grok Bot: a glance must show a current number. When the window gains focus or
+  // becomes visible, ask the refresh right away instead of waiting for the next tick.
+  const onGrokAttention = () => {
+    if (disposed || !grokRenderer) return;
+    try { if (document.visibilityState === 'hidden') return; } catch { /* treat as visible */ }
+    connectGrokStore();
+    nudgeGrokRefresh(readGrokLiveUsage(), true);
+    queueReconcile();
+  };
+  if (grokRenderer) {
+    window.addEventListener('focus', onGrokAttention);
+    document.addEventListener('visibilitychange', onGrokAttention);
+  }
 
   const cleanup = () => {
     disposed = true;
     observer.disconnect();
+    grokResizeObserver?.disconnect();
     unsubscribeAccount?.();
     accountClient = null;
+    try { unsubscribeGrok?.(); } catch { /* already gone */ }
+    grokStore = null;
+    grokStoreProblem = null;
     clearInterval(interval);
+    if (grokRenderer) {
+      window.removeEventListener('focus', onGrokAttention);
+      document.removeEventListener('visibilitychange', onGrokAttention);
+    }
     cancelAnimationFrame(frame);
     for (const instance of instances.values()) destroyInstance(instance);
     instances.clear();

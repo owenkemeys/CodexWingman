@@ -15,8 +15,10 @@ internal static class T3CodeLauncher
         var local = Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData);
         var programs = Environment.GetFolderPath(Environment.SpecialFolder.ProgramFiles);
         var candidates = T3CodeLaunchPolicy.CandidateExecutables(local, programs);
-        using var current = Process.GetCurrentProcess();
+        var currentSession = WindowProcessInfo.CurrentSession();
         var count = 0;
+        // One answer per process id per enumeration; a process usually owns several windows.
+        var isT3 = new Dictionary<uint, bool>();
         if (!EnumWindows((window, _) =>
             {
                 GetWindowThreadProcessId(window, out var processId);
@@ -24,17 +26,17 @@ internal static class T3CodeLauncher
                     || GetWindow(window, GetWindowCommand.Owner) != IntPtr.Zero
                     || GetWindowTextLength(window) <= 0)
                     return true;
-                try
+                if (!isT3.TryGetValue(processId, out var matches))
                 {
-                    using var process = Process.GetProcessById((int)processId);
-                    if (T3CodeLaunchPolicy.MatchesVisibleWindow(
-                        candidates, current.SessionId, process.MainModule?.FileName,
-                        process.SessionId, visible: true, owned: false, titled: true))
-                        count++;
+                    // Session first (cheap); the image path is only read for processes in this session.
+                    // A process that exited or is inaccessible has no session or path: not counted.
+                    var session = WindowProcessInfo.SessionOf(processId);
+                    matches = session == currentSession && T3CodeLaunchPolicy.MatchesVisibleWindow(
+                        candidates, currentSession, WindowProcessInfo.ImagePathOf(processId),
+                        session.Value, visible: true, owned: false, titled: true);
+                    isT3[processId] = matches;
                 }
-                catch (ArgumentException) { }
-                catch (InvalidOperationException) { }
-                catch (System.ComponentModel.Win32Exception) { }
+                if (matches) count++;
                 return true;
             }, IntPtr.Zero))
             throw new System.ComponentModel.Win32Exception(Marshal.GetLastWin32Error(),
@@ -93,7 +95,7 @@ internal static class T3CodeLauncher
             return port;
         }
         if (IsRunning(executable))
-            throw new InvalidOperationException("T3 Code is already running without a verified Helper endpoint. Use Repair T3 Code after saving work.");
+            throw new InvalidOperationException("T3 Code is already running without a verified Helper endpoint. Choose Repair in the T3 Code menu after saving work.");
         return await LaunchAsync(executable, runtimeStatePath, cancellationToken);
     }
 
@@ -205,12 +207,13 @@ internal static class T3CodeLauncher
     private static async Task<bool> HasT3PagesAsync(int port, CancellationToken cancellationToken) =>
         await CountT3PagesAsync(port, cancellationToken) > 0;
 
+    private static readonly HttpClient StatusHttp = new() { Timeout = TimeSpan.FromSeconds(1) };
+
     private static async Task<int> CountT3PagesAsync(int port, CancellationToken cancellationToken)
     {
         try
         {
-            using var http = new HttpClient { Timeout = TimeSpan.FromSeconds(1) };
-            return (await new T3CodeTargetSource(http, () => port).ListAsync(cancellationToken)).Count;
+            return (await new T3CodeTargetSource(StatusHttp, () => port, CdpConnectionPool.Shared).ListAsync(cancellationToken)).Count;
         }
         catch (HttpRequestException) { return 0; }
         catch (TaskCanceledException) when (!cancellationToken.IsCancellationRequested) { return 0; }

@@ -530,6 +530,7 @@ export function createBrowserFixture() {
       overflow: element.style.overflow ?? 'visible',
       overflowX: element.style.overflowX ?? element.style.overflow ?? 'visible',
       overflowY: element.style.overflowY ?? element.style.overflow ?? 'visible',
+      borderRadius: element.style.borderRadius ?? '0px',
     }),
     Date,
     Math,

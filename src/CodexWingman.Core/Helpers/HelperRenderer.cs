@@ -2,8 +2,10 @@ using System.Text.Json;
 
 namespace CodexWingman.Core.Helpers;
 
-public sealed class HelperRenderer
+public sealed class HelperRenderer(string appId = HelperAppIds.Codex)
 {
+    private readonly string appJson = JsonSerializer.Serialize(appId);
+
     private const string QueueName = "__codexWingmanHostActions";
     private const string AgentDerangementRiskId = "agent-derangement-risk";
     private const string AgentDerangementRiskLeaseRefresh = "window.__codexHelperAgentDerangementRiskLeaseExpiresAt=Date.now()+6000;\n";
@@ -29,7 +31,7 @@ public sealed class HelperRenderer
             + "const helperConfig=Object.freeze(" + helperConfig + ");\n"
             + "const childOperationToken=" + operationToken + ";let childCompletionSent=false;\n"
             + "const queue=Array.isArray(window." + QueueName + ")?window." + QueueName + ":(window." + QueueName + "=[]);\n"
-            + "let renderHealth=null;const wingman=Object.freeze({reportRenderHealth(value){renderHealth=value;},helperId,target:Object.freeze(" + target + "),completeChild(){if(childCompletionSent||childOperationToken===null)return false;childCompletionSent=true;queue.push({helperId,action:'wingman.completeChild',payload:{token:childOperationToken}});return true;},openChild(path,bootstrap=null){queue.push({helperId,action:'wingman.openChild',payload:{path,bootstrap}});},request(action,payload=null){queue.push({helperId:"
+            + "let renderHealth=null;const wingman=Object.freeze({reportRenderHealth(value){renderHealth=value;},helperId,app:" + appJson + ",target:Object.freeze(" + target + "),completeChild(){if(childCompletionSent||childOperationToken===null)return false;childCompletionSent=true;queue.push({helperId,action:'wingman.completeChild',payload:{token:childOperationToken}});return true;},openChild(path,bootstrap=null){queue.push({helperId,action:'wingman.openChild',payload:{path,bootstrap}});},request(action,payload=null){queue.push({helperId:"
             + helperId + ",action,payload});}});\n"
             + livenessLeaseRefresh + source + "\n"
             + "return renderHealth===null?null:{renderHealth};})()";
@@ -47,7 +49,7 @@ public sealed class HelperRenderer
             + "const helperId=" + helperId + ";const state=null;\n"
             + "const helperConfig=Object.freeze(" + helperConfig + ");\n"
             + "const queue=Array.isArray(window." + QueueName + ")?window." + QueueName + ":(window." + QueueName + "=[]);\n"
-            + "const wingman=Object.freeze({helperId,request(action,payload=null){queue.push({helperId:"
+            + "const wingman=Object.freeze({helperId,app:" + appJson + ",request(action,payload=null){queue.push({helperId:"
             + helperId + ",action,payload});}});\n"
             + "let removalError=null;try{\n" + source + "\n}catch(error){removalError=error;}finally{\n"
             + legacyUsageCleanup + "\n"

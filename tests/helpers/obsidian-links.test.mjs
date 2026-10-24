@@ -72,7 +72,7 @@ test('package declares the exact manifest/config contract and keeps the prefix o
     schemaVersion: 2,
     id: 'obsidian-links',
     name: 'Obsidian links',
-    version: '1.4.0',
+    version: '1.5.0',
     description: 'Turns configured Obsidian note paths in rendered messages into safe deep links.',
     refreshSeconds: 0,
     capabilities: ['system.openObsidianUri'],
@@ -80,13 +80,14 @@ test('package declares the exact manifest/config contract and keeps the prefix o
     targets: {
       codex: { apply: 'apply.js', remove: 'remove.js' },
       't3-code': { apply: 'apply.js', remove: 'remove.js' },
+      't3-web': { apply: 'apply.js', remove: 'remove.js' },
     },
   })
   assert.equal(apply.includes(prefix), false)
   assert.equal(remove.includes(prefix), false)
   assert.match(info, /^# Obsidian links$/m)
   assert.match(info, /Helper ID: `obsidian-links`/)
-  assert.match(info, /Manifest version: 1\.4\.0/)
+  assert.match(info, /Manifest version: 1\.5\.0/)
   assert.match(info, /Wait for Note/)
   assert.match(info, /## Purpose and behavior/)
   assert.match(info, /## Sharp edges and failure behavior/)

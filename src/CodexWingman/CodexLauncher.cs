@@ -91,9 +91,10 @@ internal static class CodexLauncher
 
     public static int GetOpenWindowCount()
     {
-        using var wingmanProcess = Process.GetCurrentProcess();
-        var currentSessionId = wingmanProcess.SessionId;
+        var currentSessionId = WindowProcessInfo.CurrentSession();
         var count = 0;
+        // One answer per process id per enumeration; a process usually owns several windows.
+        var isCodex = new Dictionary<uint, bool>();
         EnumWindows((window, _) =>
         {
             GetWindowThreadProcessId(window, out var processId);
@@ -101,17 +102,15 @@ internal static class CodexLauncher
                 || GetWindow(window, GetWindowCommand.Owner) != IntPtr.Zero
                 || GetWindowTextLength(window) <= 0)
                 return true;
-            try
+            if (!isCodex.TryGetValue(processId, out var matches))
             {
-                using var process = Process.GetProcessById((int)processId);
-                if (process.SessionId == currentSessionId
-                    && string.Equals(TryGetPackageFamilyName(process.Id), CodexLaunchPolicy.PackageFamilyName,
-                        StringComparison.OrdinalIgnoreCase))
-                    count++;
+                // A process that exited or is inaccessible has no session and no package name: not counted.
+                matches = WindowProcessInfo.SessionOf(processId) == currentSessionId
+                    && string.Equals(TryGetPackageFamilyName((int)processId), CodexLaunchPolicy.PackageFamilyName,
+                        StringComparison.OrdinalIgnoreCase);
+                isCodex[processId] = matches;
             }
-            catch (ArgumentException) { } // The window's process exited during enumeration.
-            catch (InvalidOperationException) { }
-            catch (System.ComponentModel.Win32Exception) { } // A foreign process is inaccessible.
+            if (matches) count++;
             return true;
         }, IntPtr.Zero);
         return count;
@@ -160,6 +159,9 @@ internal static class CodexLauncher
         return false;
     }
 
+    // Reused so status checks keep one pooled HTTP connection instead of a new client per check.
+    private static readonly HttpClient StatusHttp = new() { Timeout = TimeSpan.FromSeconds(1) };
+
     private static async Task<bool> IsEndpointReadyAsync(
         int port,
         CancellationToken cancellationToken,
@@ -167,9 +169,8 @@ internal static class CodexLauncher
     {
         try
         {
-            using var ownedHttp = http is null ? new HttpClient { Timeout = TimeSpan.FromSeconds(1) } : null;
-            var client = http ?? ownedHttp!;
-            var targets = await new HttpCodexTargetSource(client, port).ListAsync(cancellationToken);
+            var client = http ?? StatusHttp;
+            var targets = await HttpCodexTargetSource.Pooled(client, () => port, CodexTargetCatalog.SelectPages, CdpConnectionPool.Shared).ListAsync(cancellationToken);
             return targets.Count > 0;
         }
         catch (HttpRequestException) { return false; }

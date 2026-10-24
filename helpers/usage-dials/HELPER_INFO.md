@@ -1,7 +1,7 @@
 # Usage dials
 
-- Helper generation: native-slot-v26
-- Manifest version: 1.5.5
+- Helper generation: native-slot-v34
+- Manifest version: 1.7.0
 - Helper ID: `usage-dials`
 
 ## Purpose and behavior
@@ -12,6 +12,7 @@ This helper shows separate 5-hour and weekly account-usage dials beside Codex's 
 
 - `wingman.json`: package metadata, 60-second refresh cadence, entrypoints, and capability declaration.
 - `apply.js`: subscribes to native account state, normalizes current quota windows, and manages the dials and tooltip content in each renderer.
+- `backend.grok.js`: Grok Bot backend; returns Wingman's typed projection of Grok Bot's local weekly-usage cache.
 - `remove.js`: removes owned dials, styles, slots, tooltip sections, and the renderer controller.
 
 ## Capabilities
@@ -59,3 +60,21 @@ The composer-owned picker supplies its committed `activeInstanceId`, including u
 Resolve the refresh registry over the full committed editor ancestry; it can be nested inside the owning composer. Multiple distinct registries leave refresh unavailable.
 
 An optional external Grok companion (`tools/provider_usage_bridge.py`) retains the valid billing config that T3 discards when its percentage field is absent. Grok's own `credit_balance_from_config` and real `/usage` screen interpret that config as 0%. The companion applies this interpretation only to a successful unified-billing response with a valid current weekly/monthly period. Missing configs, invalid percentages and failed requests remain unavailable. The renderer accepts a snapshot only for the exact environment, provider instance and signed-in account, at most three minutes old; native nonempty quota wins. The configured `providerUsageFile` contains quota and its account identity, never an authentication key. Removing the companion or configuration restores native-only behavior. This keeps the fallback outside T3's release files.
+
+## T3 Code (web)
+
+The `t3-web` target runs the T3 renderer branch unchanged inside Wingman's own Chrome app window on the configured T3 web origin. Wingman passes `wingman.app = 't3-web'`; the helper then treats the page exactly like the desktop `t3code:` renderer. The native provider-refresh module is discovered on that same https origin only (`/assets/server-*.js` or `/assets/runtime-*.js`, at most eight), never on another host.
+
+## Grok Bot
+
+The `grok-bot` target shows one weekly dial in Grok Bot's composer, inside `.sand-prompt-actions-trailing` immediately before the send/mic cluster (`.sand-prompt-cta-cluster`). These are Grok Bot's own semantic class markers; its hashed style classes are never used. The dial is a small 16px ring inside a grey chip that matches Grok Bot's mic button (fill #282828, rim #343434, icon grey #979797; used arc #a3a3a3, a touch brighter). Usage ahead of the week's pace shows as a muted amber (#a9843c; muted red #b5564f at danger), the elapsed-but-unused marker as a quiet grey. The chip has the measured diameter of the round composer buttons (28px live) at the row's own 8px gap and follows them when they resize. The hover popup keeps the plain enlarged ring.
+
+Numbers come from Grok Bot's own live in-app usage store (see Grok Bot usage source below). Grok Bot's saved weekly-usage cache is only a labelled fallback: Wingman reads the `weekly-usage.cache` entry in `%APPDATA%\Grok Bot\sand-client-persistence` (read-only) and passes `percentUsed`, `nextResetMs` and `readAtMs` as `files.grokBotUsage`. Account ids, plan names and credentials are never passed. The dial shows the whole percent Grok Bot's account menu shows. Pacing assumes Grok Bot's weekly window is 7 days ending at `nextResetMs`. A saved reading older than 24 hours, past its own `expiresAtMs`, or missing, with no live store, shows a question mark with an explanation instead of a number. To keep the live value current the helper only asks Grok Bot's own throttled `refresh()`; Wingman itself makes no network calls to Grok Bot's servers, holds no Grok Bot credentials and never edits Grok Bot files. If Grok Bot renames its composer markers the dial waits and renderHealth reports `waiting`.
+
+## Grok Bot usage source
+
+In Grok Bot the weekly dial reads the app's live client store, the in-memory `weeklyUsage` value its account menu renders. Settings > Usage renders a different store (`usageSummary.sandUsagePercent`), which Grok Bot refreshes only when that page opens, so the two can differ by a few points between refreshes; the dial follows the account menu (checked in the Grok Bot 0.75.3 renderer, 2026-10-23). The helper finds that store once by its contract (`weeklyUsage` with `snapshots.get`, `snapshots.subscribe` and `refresh`) on a React provider anywhere in the page's tree. The search walks the whole tree, with no element budget, so a larger or reordered Grok Bot tree cannot hide the store. While the store is missing, it retries at most every 2 seconds and stops once found. It then subscribes to the store and redraws as soon as the app's value changes. More than one candidate store fails closed. Grok Bot itself refreshes that value only when its account menu or usage settings open, or after a send once the reading is 5 minutes old, so while the Grok Bot window has focus, or the dial's popup is open, the helper asks the app's own throttled `refresh()` at most every 5 minutes when the reading is older than that. The moment the window gains focus or becomes visible (`focus` / `visibilitychange` events), it asks right away instead of waiting for the next 2-second check, under the same 5-minute cap. A window that just sits visible but unfocused gets no further requests. That is the app's own request path; the helper makes no network call, and reads no credentials or storage.
+
+Grok Bot's saved weekly-usage cache (the `.blob` slice, passed in by the Wingman backend) is only a fallback, used when the live store is not available, and is visibly marked: the dial is dimmed, its spoken label ends "Saved reading, not live.", the popup says "Saved reading, 3 h ago (not live)", and the renderer reports `saved-reading` with the reason to the Host, so Wingman shows a problem instead of passing it off as live. The live value is labelled "Updated …". The Grok Bot dial shows the same whole percent as Grok Bot's account menu (rounded; anything above 0 and below 1 shows as 1%), so the two always read alike.
+
+The popup pins its own structural layout (column stack, one line per element, spacing, width) as inline `!important` declarations on Wingman's own nodes, which outrank every host stylesheet rule including `!important` ones, and restates text size in scoped rules, so a host page without Codex's utility classes, or with conflicting CSS, cannot run the lines together. The values match the utility classes Codex and T3 use, so the popup looks the same there.

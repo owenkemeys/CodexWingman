@@ -75,6 +75,76 @@ internal static class Program
             object refreshed = ((dynamic)shell).CreateShortcut(paths[0]);
             try { Equal("--launch=codex", (string)((dynamic)refreshed).Arguments, "normal profile clears trial argument"); }
             finally { Marshal.FinalReleaseComObject(refreshed); }
+            // T3 web gets its own Start shortcut and taskbar identity only when it can work on this PC.
+            var withWeb = LauncherShortcuts.Ensure(executable, profile, programs, includeT3Web: true);
+            Equal(4, withWeb.Length, "T3 web shortcut added when available");
+            Equal(LauncherShortcuts.T3WebShortcutName + ".lnk", Path.GetFileName(withWeb[3]), "T3 web shortcut name");
+            object webShortcut = ((dynamic)shell).CreateShortcut(withWeb[3]);
+            object webFolder = ((dynamic)explorer).NameSpace(programs);
+            object webItem = ((dynamic)webFolder).ParseName(Path.GetFileName(withWeb[3]));
+            try
+            {
+                Equal(WingmanLaunchOptions.ShortcutArguments(WingmanLaunchTarget.T3Web, profile), (string)((dynamic)webShortcut).Arguments, "T3 web shortcut arguments");
+                Equal(WingmanIdentity.AppUserModelId + ".T3Web", (string)((dynamic)webItem).ExtendedProperty("System.AppUserModel.ID"), "T3 web taskbar identity");
+                observed.Add(new { name = Path.GetFileName(withWeb[3]), arguments = (string)((dynamic)webShortcut).Arguments, appId = WingmanIdentity.AppUserModelId + ".T3Web" });
+            }
+            finally
+            {
+                Marshal.FinalReleaseComObject(webItem);
+                Marshal.FinalReleaseComObject(webFolder);
+                Marshal.FinalReleaseComObject(webShortcut);
+            }
+            // T3's own cached icon: the T3 web shortcut uses it (Wingman's until one is cached); the others keep Wingman's.
+            object webIconBefore = ((dynamic)shell).CreateShortcut(withWeb[3]);
+            try { Equal(executable + ",0", (string)((dynamic)webIconBefore).IconLocation, "Wingman icon until T3's is cached"); }
+            finally { Marshal.FinalReleaseComObject(webIconBefore); }
+            var t3Icon = Path.Combine(root, "t3-web", "app-icon.ico");
+            Directory.CreateDirectory(Path.GetDirectoryName(t3Icon)!);
+            File.WriteAllBytes(t3Icon, [0, 0, 1, 0, 0, 0]);
+            var withIcon = LauncherShortcuts.Ensure(executable, profile, programs, includeT3Web: true, t3WebIcon: t3Icon);
+            Equal(withWeb[3], withIcon[3], "T3 web shortcut path unchanged");
+            object webIcon = ((dynamic)shell).CreateShortcut(withIcon[3]);
+            object codexIcon = ((dynamic)shell).CreateShortcut(withIcon[0]);
+            object iconFolder = ((dynamic)explorer).NameSpace(programs);
+            object iconItem = ((dynamic)iconFolder).ParseName(Path.GetFileName(withIcon[3]));
+            try
+            {
+                Equal(t3Icon + ",0", (string)((dynamic)webIcon).IconLocation, "T3 web shortcut shows T3's icon");
+                Equal(executable, (string)((dynamic)webIcon).TargetPath, "T3 web shortcut target unchanged");
+                Equal(WingmanIdentity.AppUserModelId + ".T3Web", (string)((dynamic)iconItem).ExtendedProperty("System.AppUserModel.ID"), "T3 web identity unchanged with T3's icon");
+                Equal(executable + ",0", (string)((dynamic)codexIcon).IconLocation, "Codex shortcut keeps Wingman's icon");
+            }
+            finally
+            {
+                Marshal.FinalReleaseComObject(iconItem);
+                Marshal.FinalReleaseComObject(iconFolder);
+                Marshal.FinalReleaseComObject(codexIcon);
+                Marshal.FinalReleaseComObject(webIcon);
+            }
+            Equal(WingmanIdentity.AppUserModelId + ".Codex", WingmanLaunchOptions.AppUserModelIdFor(WingmanLaunchTarget.Codex), "Codex identity unchanged");
+            Equal(WingmanIdentity.AppUserModelId + ".T3Code", WingmanLaunchOptions.AppUserModelIdFor(WingmanLaunchTarget.T3Code), "T3 desktop identity unchanged");
+            Equal(WingmanIdentity.AppUserModelId, WingmanLaunchOptions.AppUserModelIdFor(WingmanLaunchTarget.Preferences), "preferences identity unchanged");
+
+            // Window grouping: Wingman can give another process's top-level windows its T3 web identity.
+            // Here the window is a test form in this process; on a real PC it is Wingman's own Chrome app window.
+            using (var form = new System.Windows.Forms.Form { Text = "Wingman window identity test", ShowInTaskbar = true, Opacity = 0.01 })
+            {
+                form.Show();
+                System.Windows.Forms.Application.DoEvents();
+                var webId = WingmanLaunchOptions.AppUserModelIdFor(WingmanLaunchTarget.T3Web);
+                var applied = WindowAppIdentity.Apply(Environment.ProcessId, webId,
+                    "\"" + executable + "\" --launch=t3-web", LauncherShortcuts.T3WebShortcutName, executable + ",0");
+                Equal(true, applied >= 1, "window identity applied to a visible top-level window");
+                Equal(webId, WindowAppIdentity.Read(form.Handle), "window carries the T3 web identity");
+                Equal(0, WindowAppIdentity.Apply(Environment.ProcessId, webId, "unused", "unused", executable + ",0"), "re-applying the same identity and icon is a no-op");
+                // T3's icon arrives later: an open window takes it and keeps its identity, then it's a no-op again.
+                var t3IconResource = Path.Combine(root, "t3-web", "app-icon.ico") + ",0";
+                Equal(true, WindowAppIdentity.Apply(Environment.ProcessId, webId,
+                    "\"" + executable + "\" --launch=t3-web", LauncherShortcuts.T3WebShortcutName, t3IconResource) >= 1, "a new icon is applied to an open window");
+                Equal(webId, WindowAppIdentity.Read(form.Handle), "identity kept after the icon update");
+                Equal(0, WindowAppIdentity.Apply(Environment.ProcessId, webId, "unused", "unused", t3IconResource), "re-applying after the icon update is a no-op");
+                form.Close();
+            }
             foreach (var trailingProfile in new[] { Path.GetPathRoot(root)!, profile + "\\" })
             {
                 var parsed = WingmanLaunchOptions.Parse(SplitCommandLine("Wingman.exe " +
@@ -87,6 +157,29 @@ internal static class Program
             }
             Equal("Wingman", TrayIconPresentation.TextFor(TrayIconState.Normal), "tray tooltip uses the renamed app");
             Equal("Wingman", TrayIconPresentation.TextFor(TrayIconState.Attention), "tray identity text stays stable during attention states");
+            // T3 Code (web) app icon: every size of the multi-size .ico is drawn from T3's 32 and 180 px PNGs.
+            static byte[] SourcePng(int size)
+            {
+                using var bitmap = new System.Drawing.Bitmap(size, size, System.Drawing.Imaging.PixelFormat.Format32bppArgb);
+                using (var graphics = System.Drawing.Graphics.FromImage(bitmap)) graphics.FillEllipse(System.Drawing.Brushes.SteelBlue, 2, 2, size - 4, size - 4);
+                using var stream = new MemoryStream();
+                bitmap.Save(stream, System.Drawing.Imaging.ImageFormat.Png);
+                return stream.ToArray();
+            }
+            var t3Sources = new List<byte[]> { SourcePng(180), SourcePng(32) };
+            var t3Ico = T3WebAppIcon.BuildIco(T3WebAppIcon.IcoSizes.Select(size => IconImages.ScaledPng(T3WebAppIcon.SourceFor(size, t3Sources)!, size)).ToList());
+            Equal("16,20,24,32,40,48,64,256", string.Join(",", T3WebAppIcon.IcoImageSizes(t3Ico)), "multi-size T3 web icon");
+            Equal(true, T3WebAppIcon.HasAllSizes(t3Ico), "complete icon is not rebuilt");
+            // System.Drawing reads the 16-64 px entries; the 256 px entry is PNG-compressed (read by the shell, not by
+            // System.Drawing), so its stored image is checked directly.
+            foreach (var size in T3WebAppIcon.IcoSizes.Where(size => size < 256))
+            {
+                using var icon = new System.Drawing.Icon(new MemoryStream(t3Ico), size, size);
+                Equal(size, icon.Width, $"Windows picks the {size} px image");
+            }
+            var last = 6 + 16 * (T3WebAppIcon.IcoSizes.Count - 1);
+            var largest = t3Ico.AsSpan(BitConverter.ToInt32(t3Ico, last + 12), BitConverter.ToInt32(t3Ico, last + 8)).ToArray();
+            Equal((256, 256), T3WebAppIcon.PngSize(largest)!.Value, "the 256 px entry is a 256 px PNG");
             NativeUpdaterTests.Run(root);
             Console.WriteLine(JsonSerializer.Serialize(new { status = "pass", shortcuts = observed }));
         }
