@@ -117,7 +117,7 @@ public sealed class T3PairingCoordinator(
             if (session.Authenticated && knownOrigin is not null && session.ExpiresAtUtc is { } expires
                 && (state is null || state.ExpiresAtUtc != expires))
                 Save(knownOrigin, label, state?.PairedAtUtc ?? expires - T3PairingPolicy.SessionLifetime, expires);
-            return new(T3PairingResult.AlreadyPaired, "T3 web is signed in.", session.ExpiresAtUtc ?? state?.ExpiresAtUtc);
+            return new(T3PairingResult.AlreadyPaired, "T3 Code (web) is signed in.", session.ExpiresAtUtc ?? state?.ExpiresAtUtc);
         }
 
         T3PairingLink link;
@@ -132,7 +132,7 @@ public sealed class T3PairingCoordinator(
             return new(T3PairingResult.Failed, $"Wingman could not get a T3 pairing link from {provider.Name}: {error.Message}");
         }
         if (!T3WebUrlPolicy.TryParsePairingLink(link.Url, knownOrigin, out var origin, out var credential))
-            return new(T3PairingResult.Failed, "The pairing link did not match the T3 web address, so Wingman did not use it.");
+            return new(T3PairingResult.Failed, "The pairing link did not match the T3 Code (web) address, so Wingman did not use it.");
 
         var paired = await page.ExchangePairingCredentialAsync(credential, cancellationToken);
         if (!paired.Authenticated)
@@ -141,7 +141,7 @@ public sealed class T3PairingCoordinator(
         var pairedAt = clock();
         var expiresAt = paired.ExpiresAtUtc ?? pairedAt + T3PairingPolicy.SessionLifetime;
         Save(origin, label, pairedAt, expiresAt);
-        var message = action == T3PairingAction.Pair ? "T3 web is paired." : "T3 web pairing was renewed.";
+        var message = action == T3PairingAction.Pair ? "T3 Code (web) is paired." : "T3 Code (web) pairing was renewed.";
         if (action == T3PairingAction.Pair && !session.Authenticated)
             await page.ReloadAsync(cancellationToken);
         if (state is not null || action == T3PairingAction.Renew)

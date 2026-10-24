@@ -24,6 +24,9 @@ internal static class AppTargetTests
         await BundledHelpersForNewTargetsAsync();
         MenuPolicy();
         TrayMenuTree();
+        AppNames();
+        AppLinesDropToClosed();
+        RepairAndStartupAreQuiet();
         OpenOnLaunchChoices();
         await PairingAsync();
         Console.WriteLine("App target tests passed");
@@ -318,8 +321,67 @@ internal static class AppTargetTests
         var closed = AppTargetMenuPolicy.Evaluate("Grok Bot", 0, false, null, null, false);
         True(closed.Label.StartsWith("Grok Bot", StringComparison.Ordinal), "menu label names the app: " + closed.Label);
         False(closed.Label.Contains("T3 Code", StringComparison.Ordinal) || closed.Details.Contains("T3 Code", StringComparison.Ordinal), "no T3 Code wording for Grok Bot");
-        var web = AppTargetMenuPolicy.Evaluate("T3 web", 1, true, null, new T3CodeConnectionReport(1, 1, 0), true);
-        True(web.Label.StartsWith("T3 web", StringComparison.Ordinal), "T3 web label: " + web.Label);
+        var web = AppTargetMenuPolicy.Evaluate(TrayMenuLayout.AppName(WingmanLaunchTarget.T3Web), 1, true, null, new T3CodeConnectionReport(1, 1, 0), true);
+        Equal("T3 Code (web): Needs repair", web.Label, "T3 Code (web) label");
+        True(web.Details.Contains("of 1 visible T3 Code (web) window", StringComparison.Ordinal), "counts live in Status details: " + web.Details);
+    }
+
+    /// <summary>One name per app, the same in the menu line, dialogs and balloons.</summary>
+    private static void AppNames()
+    {
+        Equal("Codex|T3 Code|T3 Code (web)|Grok Bot", string.Join("|", TrayMenuLayout.Apps.Select(TrayMenuLayout.AppName)), "app names");
+        var source = Path.Combine(RepositoryRoot(), "src");
+        foreach (var file in Directory.EnumerateFiles(source, "*.cs", SearchOption.AllDirectories))
+            foreach (var literal in System.Text.RegularExpressions.Regex.Matches(File.ReadAllText(file), "\"(?:[^\"\\\n]|\\.)*\"").Select(match => match.Value))
+                False(literal.Contains("T3 web", StringComparison.Ordinal) && !literal.StartsWith("\"[T3 web", StringComparison.Ordinal)
+                    && !literal.StartsWith("\"Wingman T3 web (", StringComparison.Ordinal),
+                    $"user-facing text says T3 Code (web), not T3 web: {Path.GetFileName(file)} {literal}");
+    }
+
+    /// <summary>Round 3b bug: the line read "T3 web: OK (1/1)" after the window had closed. Presence is live now.</summary>
+    private static void AppLinesDropToClosed()
+    {
+        var name = TrayMenuLayout.AppName(WingmanLaunchTarget.T3Web);
+        var lastCheck = new T3CodeConnectionReport(1, 1, 0);
+        var ready = new HelperHostReport(1, 1, 1, 0, []);
+        Equal(1, AppPresence.EndpointWindows(true, lastCheck), "endpoint up: the last check's window count stands");
+        Equal("T3 Code (web): OK", AppTargetMenuPolicy.Evaluate(name, AppPresence.EndpointWindows(true, lastCheck), true, ready, lastCheck, false).Label, "open and connected");
+        // The window closes: nothing listens on the port any more, but the last check still says 1 window.
+        Equal(0, AppPresence.EndpointWindows(false, lastCheck), "endpoint gone: no window, whatever the last check said");
+        Equal("T3 Code (web): Closed", AppTargetMenuPolicy.Evaluate(name, AppPresence.EndpointWindows(false, lastCheck), true, ready, lastCheck, false).Label,
+            "closed window reads Closed at once");
+        Equal("Grok Bot: Closed", AppTargetMenuPolicy.Evaluate("Grok Bot", 0, true, ready, lastCheck, false).Label, "same rule for Grok Bot");
+        Equal("T3 Code: Closed", T3CodeMenuPolicy.Evaluate(0, true, ready, lastCheck, false).Label, "same rule for T3 Code");
+        False(AppPresence.IsListening(null), "no port, nothing listening");
+        using (var listener = new System.Net.Sockets.TcpListener(System.Net.IPAddress.Loopback, 0))
+        {
+            listener.Start();
+            var port = ((System.Net.IPEndPoint)listener.LocalEndpoint).Port;
+            True(AppPresence.IsListening(port), "a listening loopback port is seen");
+            listener.Stop();
+            False(AppPresence.IsListening(port), "a stopped port is seen as closed");
+        }
+        // Wiring: the T3 Code (web) line counts windows live and every tick updates the lines before the busy gate.
+        var tray = File.ReadAllText(Path.Combine(RepositoryRoot(), "src", "CodexWingman", "TrayApplicationContext.cs"));
+        True(tray.Contains("AppPresence.EndpointWindows(AppPresence.IsListening(t3WebLauncher.Port())", StringComparison.Ordinal), "T3 Code (web) presence is live");
+        var tick = tray.IndexOf("private async Task RefreshTimerAsync()", StringComparison.Ordinal);
+        True(tick >= 0 && tray.IndexOf("RefreshAppLinePresence();", tick, StringComparison.Ordinal)
+            < tray.IndexOf("automaticRefreshGate.TryEnter", tick, StringComparison.Ordinal), "presence refresh runs even when the full refresh is skipped");
+    }
+
+    private static void RepairAndStartupAreQuiet()
+    {
+        Equal(T3CodeRepairStep.Reattached, T3CodeRepairPolicy.Decide(2, 2, false), "healthy T3 Code: Repair asks nothing");
+        Equal(T3CodeRepairStep.RestartForUnreachedWindows, T3CodeRepairPolicy.Decide(2, 1, false), "an unreached window: restart needed, ask");
+        Equal(T3CodeRepairStep.OpenRoute, T3CodeRepairPolicy.Decide(0, 0, false), "no window: open one");
+        Equal(T3CodeRepairStep.OpenRoute, T3CodeRepairPolicy.Decide(2, 0, true), "check failed: Open route (asks only if a restart is needed)");
+        var tray = File.ReadAllText(Path.Combine(RepositoryRoot(), "src", "CodexWingman", "TrayApplicationContext.cs"));
+        True(tray.Contains("EnsureT3WebReadyAsync(atStartup: true)", StringComparison.Ordinal) && tray.Contains("EnsureGrokBotReadyAsync(atStartup: true)", StringComparison.Ordinal),
+            "Open when Wingman starts uses the quiet start");
+        True(tray.Contains("atStartup ? () => false : ConfirmGrokBotRelaunch", StringComparison.Ordinal), "no relaunch question at startup");
+        True(tray.Contains("await CheckT3WebPairingAsync(interactive: false);\n    }\n\n    /// <summary>\n    /// Repair for Grok Bot.", StringComparison.Ordinal)
+            || tray.Replace("\r\n", "\n").Contains("await CheckT3WebPairingAsync(interactive: false);\n    }\n\n    /// <summary>\n    /// Repair for Grok Bot.", StringComparison.Ordinal),
+            "T3 Code (web) Repair shows a balloon only when the sign-in check failed");
     }
 
     private static TrayMenuNode Line(string text, IEnumerable<string>? items = null, string? tooltip = null) =>
@@ -329,7 +391,7 @@ internal static class AppTargetTests
     private static void TrayMenuTree()
     {
         var labels = TrayMenuLayout.AppFlyout.Select(TrayMenuLayout.Label).ToArray();
-        Equal("Open window|Repair|Status details...|-|Open on launch", string.Join("|", labels), "one short flyout, plain wording, fixed order");
+        Equal("Open window|Repair|Status details...|-|Open when Wingman starts", string.Join("|", labels), "one short flyout, plain wording, fixed order");
         False(labels.Any(label => label.Contains("Codex", StringComparison.Ordinal) || label.Contains("T3", StringComparison.Ordinal)
             || label.Contains("Grok", StringComparison.Ordinal)), "flyout wording names no app, so it is identical for every app");
         False(labels.Any(label => label.Contains("sign-in", StringComparison.OrdinalIgnoreCase) || label.Contains("pin", StringComparison.OrdinalIgnoreCase)),
@@ -344,7 +406,7 @@ internal static class AppTargetTests
         // The live tray (AppFlyoutMenu) builds every line from the same layout; this is the tree it produces.
         var tree = new List<TrayMenuNode>
         {
-            Line("Codex: OK (2/2)"), Line("T3 Code: Not ready"), Line("T3 web: OK (1/1)"), Line("Grok Bot: OK (1/1)"),
+            Line("Codex: Closed"), Line("T3 Code: Not ready"), Line("T3 Code (web): OK"), Line("Grok Bot: OK"),
             new("-"), new("Helpers enabled", Checked: true), new("Manage helpers", Children: [new("Usage Dials", "Usage Dials 1.0")]),
             new("-"), new("About"), new("Check for Updates"), new("Close"),
         };
@@ -356,13 +418,18 @@ internal static class AppTargetTests
         True(lines.All(line => line.ToolTip is null), "no first-layer tooltips");
 
         var withTooltip = tree.ToList();
-        withTooltip[3] = Line("Grok Bot: OK (1/1)", tooltip: "Grok Bot: OK (1/1)\n\nGrok Bot is open.");
+        withTooltip[3] = Line("Grok Bot: OK", tooltip: "Grok Bot: OK\n\nGrok Bot is open.");
         True(TrayMenuCheck.Problems(withTooltip).Any(problem => problem.Contains("tooltip", StringComparison.Ordinal)), "a first-layer tooltip is caught");
         var extraItem = tree.ToList();
-        extraItem[2] = Line("T3 web: OK (1/1)", labels.Append("Check T3 sign-in now"));
-        True(TrayMenuCheck.Problems(extraItem).Any(problem => problem.Contains("T3 web", StringComparison.Ordinal)), "an extra flyout item is caught");
+        extraItem[2] = Line("T3 Code (web): OK", labels.Append("Check T3 sign-in now"));
+        True(TrayMenuCheck.Problems(extraItem).Any(problem => problem.Contains("T3 Code (web)", StringComparison.Ordinal)), "an extra flyout item is caught");
+        var counted = tree.ToList();
+        counted[0] = Line("Codex: OK (2/2)");
+        True(TrayMenuCheck.Problems(counted).Any(problem => problem.Contains("plain state", StringComparison.Ordinal)), "a count on the line is caught");
+        Equal("Codex: Closed", TrayMenuLayout.LineText(WingmanLaunchTarget.Codex, "Closed"), "line text");
+        True(TrayMenuCheck.IsLineText("T3 Code (web): Needs repair") && !TrayMenuCheck.IsLineText("T3 web: OK"), "line text check");
         var reordered = tree.ToList();
-        reordered[0] = Line("Codex: OK (2/2)", [labels[1], labels[0], .. labels[2..]]);
+        reordered[0] = Line("Codex: Closed", [labels[1], labels[0], .. labels[2..]]);
         True(TrayMenuCheck.Problems(reordered).Count > 0, "a different order is caught");
 
         // Structural guard on the tray source: lines come only from AppFlyoutMenu and nothing sets a status tooltip.

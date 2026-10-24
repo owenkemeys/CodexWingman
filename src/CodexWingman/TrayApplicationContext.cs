@@ -114,10 +114,11 @@ internal sealed class TrayApplicationContext : ApplicationContext
         t3WebLauncher = new T3WebLauncher(settingsDirectory, () => HelperSettingsStore.Load(settingsPath), ReservedPorts);
         grokLauncher = new GrokBotLauncher(settingsDirectory, ReservedPorts);
         AppTargetController? t3WebReference = null;
-        t3Web = t3WebReference = new AppTargetController("T3 web", WingmanLaunchTarget.T3Web, userHelpersRoot, initializedSettings.Path,
+        t3Web = t3WebReference = new AppTargetController(TrayMenuLayout.AppName(WingmanLaunchTarget.T3Web), WingmanLaunchTarget.T3Web, userHelpersRoot, initializedSettings.Path,
             new T3WebTargetSource(targetHttp, t3WebLauncher.Port, t3WebLauncher.Origin, cdpPool), evaluator, HelperAppIds.T3Web,
-            t3WebLauncher.Port, () => t3WebReference?.Connections?.Discovered ?? 0);
-        grok = new AppTargetController("Grok Bot", WingmanLaunchTarget.GrokBot, userHelpersRoot, initializedSettings.Path,
+            // Live: Closed as soon as nothing listens on Wingman's T3 Code (web) port, not the last check's page count.
+            t3WebLauncher.Port, () => AppPresence.EndpointWindows(AppPresence.IsListening(t3WebLauncher.Port()), t3WebReference?.Connections));
+        grok = new AppTargetController(TrayMenuLayout.AppName(WingmanLaunchTarget.GrokBot), WingmanLaunchTarget.GrokBot, userHelpersRoot, initializedSettings.Path,
             new GrokBotTargetSource(targetHttp, grokLauncher.Port, cdpPool), evaluator, HelperAppIds.GrokBot,
             grokLauncher.Port, () => grokLauncher.OpenWindowCount(),
             roots => new HelperBackend(roots, log: message => Debug.WriteLine($"[Grok Bot Helper backend] {message}"),
@@ -169,7 +170,7 @@ internal sealed class TrayApplicationContext : ApplicationContext
             exitItem,
         ]);
         SynchronizeAppLines();
-        menu.Opening += (_, _) => SynchronizeAppLines();
+        menu.Opening += (_, _) => { SynchronizeAppLines(); RefreshAppLinePresence(); };
 
         var extractedIcon = Icon.ExtractAssociatedIcon(Application.ExecutablePath);
         trayIcons = new TrayIconSet(extractedIcon ?? SystemIcons.Application);
@@ -250,10 +251,12 @@ internal sealed class TrayApplicationContext : ApplicationContext
         }
         await ReconcileAppTargetsAsync();
         var startupSettings = HelperSettingsStore.Load(settingsPath);
+        // "Open when Wingman starts" never shows a dialog: an app that is already running without Wingman's
+        // connection is left alone and its line reads Needs repair; a failure shows on the line too.
         if (launchOptions.OpenOnStartup(WingmanLaunchTarget.T3Web, startupSettings) && t3WebLauncher.IsAvailable())
-            await EnsureT3WebReadyAsync();
+            await EnsureT3WebReadyAsync(atStartup: true);
         if (launchOptions.OpenOnStartup(WingmanLaunchTarget.GrokBot, startupSettings) && grokLauncher.IsInstalled())
-            await EnsureGrokBotReadyAsync();
+            await EnsureGrokBotReadyAsync(atStartup: true);
         if (busy || exiting) return;
         SetBusy(true, "Starting Codex...");
         try
@@ -317,6 +320,24 @@ internal sealed class TrayApplicationContext : ApplicationContext
         }
     }
 
+    /// <summary>
+    /// Cheap live re-check of each app line: windows are counted now, so a closed app reads Closed at once.
+    /// The full Helper check (every refresh while Wingman is not busy) still decides OK and Needs repair.
+    /// </summary>
+    private void RefreshAppLinePresence()
+    {
+        if (exiting) return;
+        try
+        {
+            SetT3MenuStatus();
+            t3Web.SetMenuStatus();
+            grok.SetMenuStatus();
+            if (CodexLauncher.GetOpenWindowCount() == 0)
+                codexMenuItem.Text = TrayMenuLayout.LineText(WingmanLaunchTarget.Codex, "Closed");
+        }
+        catch (Exception error) { Debug.WriteLine($"[App line presence] {error.Message}"); }
+    }
+
     /// <summary>App lines show only for apps on this PC (or already running with Wingman).</summary>
     private void SynchronizeAppLines()
     {
@@ -328,7 +349,7 @@ internal sealed class TrayApplicationContext : ApplicationContext
         t3CodeMenuItem.Visible = TrayMenuLayout.ShowAppLine(WingmanLaunchTarget.T3Code,
             GetT3Port() is not null || Safe(T3CodeLauncher.IsInstalled, "T3 Code"));
         t3Web.Menu.Visible = TrayMenuLayout.ShowAppLine(WingmanLaunchTarget.T3Web,
-            t3Web.HasEndpoint || Safe(t3WebLauncher.IsAvailable, "T3 web"));
+            t3Web.HasEndpoint || Safe(t3WebLauncher.IsAvailable, "T3 Code (web)"));
         grok.Menu.Visible = TrayMenuLayout.ShowAppLine(WingmanLaunchTarget.GrokBot,
             grok.HasEndpoint || Safe(grokLauncher.IsInstalled, "Grok Bot"));
     }
@@ -483,6 +504,7 @@ internal sealed class TrayApplicationContext : ApplicationContext
         try
         {
             SynchronizeAppLines();
+            RefreshAppLinePresence();
             var nodes = AppFlyoutMenu.Snapshot(menu.Items);
             var dump = new
             {
@@ -578,6 +600,9 @@ internal sealed class TrayApplicationContext : ApplicationContext
 
     private async Task RefreshTimerAsync()
     {
+        // App lines drop to Closed when their app closes even while the full check below is skipped
+        // (Wingman busy with an operation or showing a dialog).
+        RefreshAppLinePresence();
         if (!automaticRefreshGate.TryEnter(busy, exiting)) return;
         try
         {
@@ -705,12 +730,25 @@ internal sealed class TrayApplicationContext : ApplicationContext
         SetBusy(true, repair ? "Repairing T3 Code..." : "Opening T3 Code...");
         try
         {
-            if (repair)
+            // Repair, like every app's: with Wingman's connection, re-attach quietly; ask before closing
+            // T3 Code only when windows are open that Wingman cannot reach (a restart is the only fix).
+            var quietRepair = false;
+            if (repair && GetT3Port() is not null)
             {
-                if (!ConfirmT3Restart()) return;
-                await T3CodeLauncher.RestartWithDebuggingAsync(t3RuntimeStatePath, deadline.Token);
+                await ReconcileT3Async(() => t3HelperHost.ResumeAndReconcileAsync(deadline.Token), deadline.Token);
+                var windows = T3CodeLauncher.GetOpenWindowCount();
+                var reached = t3CheckFailed || lastT3Connections is null ? 0
+                    : Math.Min(lastT3Connections.Connected, lastT3Report?.TargetsDiscovered ?? 0);
+                quietRepair = T3CodeRepairPolicy.Decide(windows, reached, t3CheckFailed) switch
+                {
+                    T3CodeRepairStep.Reattached => true,
+                    T3CodeRepairStep.RestartForUnreachedWindows => ConfirmT3Restart()
+                        ? await RestartT3ForRepairAsync(deadline.Token)
+                        : throw new OperationCanceledException(),
+                    _ => false,
+                };
             }
-            else
+            if (!quietRepair)
             {
                 var acquisition = await T3CodeLauncher.OpenHookReadyWindowAsync(
                     t3RuntimeStatePath, activePort, deadline.Token);
@@ -724,6 +762,10 @@ internal sealed class TrayApplicationContext : ApplicationContext
             if (t3CheckFailed)
                 throw new InvalidOperationException("T3 Code started, but its Helpers could not be checked.");
             SynchronizeHelpersMenu();
+        }
+        catch (OperationCanceledException) when (!deadline.IsCancellationRequested)
+        {
+            SetT3MenuStatus();
         }
         catch (Exception error)
         {
@@ -739,6 +781,12 @@ internal sealed class TrayApplicationContext : ApplicationContext
         }
     }
 
+    private async Task<bool> RestartT3ForRepairAsync(CancellationToken cancellationToken)
+    {
+        await T3CodeLauncher.RestartWithDebuggingAsync(t3RuntimeStatePath, cancellationToken);
+        return true;
+    }
+
     private static bool ConfirmT3Restart() => MessageBox.Show(
         "Wingman will close this session's T3 Code windows and relaunch T3 Code with Helpers. Save your work first. Codex will be left alone. Continue?",
         "Repair T3 Code", MessageBoxButtons.YesNo, MessageBoxIcon.Warning,
@@ -746,12 +794,12 @@ internal sealed class TrayApplicationContext : ApplicationContext
 
     private T3PairingLink? pendingT3WebLink;
 
-    private async Task EnsureT3WebReadyAsync()
+    private async Task EnsureT3WebReadyAsync(bool atStartup = false)
     {
         if (busy || exiting) return;
         using var deadline = new CancellationTokenSource(TimeSpan.FromMinutes(3));
         activeInteractiveOperation = deadline;
-        SetBusy(true, "Opening T3 web...");
+        SetBusy(true, "Opening T3 Code (web)...");
         try
         {
             var (_, prefetched) = await t3WebLauncher.OpenAsync(deadline.Token);
@@ -768,8 +816,10 @@ internal sealed class TrayApplicationContext : ApplicationContext
         {
             Debug.WriteLine($"[T3 web launch] {error}");
             t3Web.CheckFailed = true;
+            t3Web.Note = "Last attempt to open it failed: " + error.Message;
             t3Web.SetMenuStatus();
-            MessageBox.Show(error.Message, "T3 web needs attention", MessageBoxButtons.OK, MessageBoxIcon.Warning);
+            if (!atStartup)
+                MessageBox.Show(error.Message, "T3 Code (web) needs attention", MessageBoxButtons.OK, MessageBoxIcon.Warning);
         }
         finally
         {
@@ -797,7 +847,7 @@ internal sealed class TrayApplicationContext : ApplicationContext
             if (pages.Count == 0)
             {
                 nextPairingCheckUtc = DateTime.UtcNow + TimeSpan.FromMinutes(1);
-                if (interactive) MessageBox.Show("Choose Open window in the T3 web menu first.", "T3 web sign-in", MessageBoxButtons.OK, MessageBoxIcon.Information);
+                if (interactive) MessageBox.Show("Choose Open window in the T3 Code (web) menu first.", "T3 Code (web) sign-in", MessageBoxButtons.OK, MessageBoxIcon.Information);
                 return;
             }
             var provider = (IT3PairingLinkProvider?)t3WebLauncher.PairingProvider() ?? new UnavailablePairingProvider();
@@ -809,7 +859,7 @@ internal sealed class TrayApplicationContext : ApplicationContext
         catch (Exception error)
         {
             Debug.WriteLine($"[T3 web pairing] {error}");
-            outcome = new(T3PairingResult.Failed, "Wingman could not check the T3 web sign-in: " + error.Message);
+            outcome = new(T3PairingResult.Failed, "Wingman could not check the T3 Code (web) sign-in: " + error.Message);
         }
         finally
         {
@@ -825,7 +875,7 @@ internal sealed class TrayApplicationContext : ApplicationContext
         t3Web.SetMenuStatus();
         if (outcome.Result == T3PairingResult.Failed || interactive || forceRenew)
         {
-            tray.BalloonTipTitle = "T3 web sign-in";
+            tray.BalloonTipTitle = "T3 Code (web) sign-in";
             tray.BalloonTipText = outcome.Message;
             tray.ShowBalloonTip(4000);
         }
@@ -866,12 +916,12 @@ internal sealed class TrayApplicationContext : ApplicationContext
         using (var deadline = new CancellationTokenSource(TimeSpan.FromMinutes(2)))
         {
             activeInteractiveOperation = deadline;
-            SetBusy(true, "Repairing T3 web...");
+            SetBusy(true, "Repairing T3 Code (web)...");
             try
             {
                 await t3Web.ReconcileAsync(() => t3Web.Host.ResumeAndReconcileAsync(deadline.Token), deadline.Token);
                 if (t3Web.CheckFailed)
-                    throw new InvalidOperationException("T3 web is open, but its Helpers could not be checked.");
+                    throw new InvalidOperationException("T3 Code (web) is open, but its Helpers could not be checked.");
                 SynchronizeHelpersMenu();
             }
             catch (Exception error)
@@ -879,7 +929,7 @@ internal sealed class TrayApplicationContext : ApplicationContext
                 Debug.WriteLine($"[T3 web repair] {error}");
                 t3Web.CheckFailed = true;
                 t3Web.SetMenuStatus();
-                MessageBox.Show(error.Message, "T3 web needs attention", MessageBoxButtons.OK, MessageBoxIcon.Warning);
+                MessageBox.Show(error.Message, "T3 Code (web) needs attention", MessageBoxButtons.OK, MessageBoxIcon.Warning);
             }
             finally
             {
@@ -887,8 +937,9 @@ internal sealed class TrayApplicationContext : ApplicationContext
                 SetBusy(false);
             }
         }
+        // Sign-in is checked now too; like the automatic check, it says something only when it failed.
         nextPairingCheckUtc = DateTime.MinValue;
-        await CheckT3WebPairingAsync(interactive: true);
+        await CheckT3WebPairingAsync(interactive: false);
     }
 
     /// <summary>
@@ -927,7 +978,7 @@ internal sealed class TrayApplicationContext : ApplicationContext
         }
     }
 
-    private async Task EnsureGrokBotReadyAsync()
+    private async Task EnsureGrokBotReadyAsync(bool atStartup = false)
     {
         if (busy || exiting) return;
         using var deadline = new CancellationTokenSource(TimeSpan.FromMinutes(2));
@@ -935,7 +986,12 @@ internal sealed class TrayApplicationContext : ApplicationContext
         SetBusy(true, "Opening Grok Bot...");
         try
         {
-            if (!await grokLauncher.OpenAsync(ConfirmGrokBotRelaunch, deadline.Token)) return;
+            // At startup Wingman never asks to relaunch: a Grok Bot running without Wingman's port stays as it is.
+            if (!await grokLauncher.OpenAsync(atStartup ? () => false : ConfirmGrokBotRelaunch, deadline.Token))
+            {
+                grok.SetMenuStatus();
+                return;
+            }
             grok.Menu.Visible = true;
             await grok.ReconcileAsync(() => grok.Host.ResumeAndReconcileAsync(deadline.Token), deadline.Token);
             if (grok.CheckFailed)
@@ -947,7 +1003,8 @@ internal sealed class TrayApplicationContext : ApplicationContext
             Debug.WriteLine($"[Grok Bot launch] {error}");
             grok.CheckFailed = true;
             grok.SetMenuStatus();
-            MessageBox.Show(error.Message, "Grok Bot needs attention", MessageBoxButtons.OK, MessageBoxIcon.Warning);
+            if (!atStartup)
+                MessageBox.Show(error.Message, "Grok Bot needs attention", MessageBoxButtons.OK, MessageBoxIcon.Warning);
         }
         finally
         {
@@ -1475,14 +1532,15 @@ internal sealed class TrayApplicationContext : ApplicationContext
 
     private void SetCodexMenu(ConnectionHealthSnapshot health, bool forceProblem = false)
     {
-        var label = forceProblem ? "Problem" : health.State switch
+        var label = forceProblem ? "Needs repair" : health.State switch
         {
             ConnectionHealthState.Working => "OK",
             ConnectionHealthState.CodexClosed => "Closed",
             ConnectionHealthState.HelpersPaused => "Paused",
-            _ => "Problem",
+            _ => "Needs repair",
         };
-        codexMenuItem.Text = $"Codex: {label} ({health.Windows}/{health.VisibleWindows})";
+        // The app and its state only; the window counts are in Status details....
+        codexMenuItem.Text = TrayMenuLayout.LineText(WingmanLaunchTarget.Codex, label);
     }
 
     private void ShowCurrentStatusBalloon()

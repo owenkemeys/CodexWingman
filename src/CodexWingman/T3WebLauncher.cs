@@ -72,16 +72,16 @@ internal sealed class T3WebLauncher(string wingmanDataRoot, Func<HelperSettings>
     /// </summary>
     public async Task<(int Port, T3PairingLink? Prefetched)> OpenAsync(CancellationToken cancellationToken)
     {
-        var chrome = FindChrome() ?? throw new FileNotFoundException("Google Chrome is needed for T3 web and was not found.");
+        var chrome = FindChrome() ?? throw new FileNotFoundException("Google Chrome is needed for T3 Code (web) and was not found.");
         T3PairingLink? prefetched = null;
         var origin = Origin();
         if (origin is null)
         {
             var provider = PairingProvider()
-                ?? throw new InvalidOperationException("Wingman does not know the T3 web address yet and no pairing folder is reachable.");
+                ?? throw new InvalidOperationException("Wingman does not know the T3 Code (web) address yet and no pairing folder is reachable.");
             prefetched = await provider.CreateLinkAsync(new(null, PairingLabel(), "first-run"), cancellationToken);
             if (!T3WebUrlPolicy.TryParsePairingLink(prefetched.Url, null, out var linkOrigin, out _))
-                throw new InvalidDataException("The pairing link was not a T3 web pairing link.");
+                throw new InvalidDataException("The pairing link was not a T3 Code (web) pairing link.");
             origin = discoveredOrigin = linkOrigin;
         }
 
@@ -111,7 +111,7 @@ internal sealed class T3WebLauncher(string wingmanDataRoot, Func<HelperSettings>
             }
             await Task.Delay(250, cancellationToken);
         }
-        throw new TimeoutException("Chrome did not open Wingman's T3 web window with a local Helper endpoint.");
+        throw new TimeoutException("Chrome did not open Wingman's T3 Code (web) window with a local Helper endpoint.");
     }
 
     /// <summary>Re-applies Wingman's T3 web taskbar identity to the Chrome app windows of Wingman's own profile.</summary>
@@ -167,7 +167,7 @@ internal sealed class T3WebLauncher(string wingmanDataRoot, Func<HelperSettings>
     {
         foreach (var port in T3WebLaunchPolicy.CandidatePorts(remembered, reservedPorts().Where(port => port != remembered)))
             if (IsFree(port)) return port;
-        throw new IOException("No free local port was available for T3 web.");
+        throw new IOException("No free local port was available for T3 Code (web).");
     }
 
     private static bool IsFree(int port)

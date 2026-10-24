@@ -73,7 +73,7 @@ public sealed class T3WebTargetSource(HttpClient httpClient, Func<int?> portProv
         var port = portProvider();
         var origin = originProvider();
         if (port is null || origin is null) return Task.FromResult<IReadOnlyList<CodexTarget>>([]);
-        if (port is < 1 or > 65535) throw new InvalidOperationException("Invalid T3 web debugging port.");
+        if (port is < 1 or > 65535) throw new InvalidOperationException("Invalid T3 Code (web) debugging port.");
         return new HttpCodexTargetSource(
             httpClient, () => port.Value, () => new ClientWebSocketCdpSocket(),
             targets => T3WebTargetCatalog.SelectPages(targets, origin), pool).ListAsync(cancellationToken);
@@ -122,7 +122,7 @@ public static class T3WebLaunchPolicy
         if (port is < 1024 or > 65535) throw new ArgumentOutOfRangeException(nameof(port));
         if (!Path.IsPathFullyQualified(dataDirectory)) throw new ArgumentException("Chrome data folder must be absolute.", nameof(dataDirectory));
         if (!startUrl.Scheme.Equals(Uri.UriSchemeHttps, StringComparison.OrdinalIgnoreCase))
-            throw new ArgumentException("T3 web must open an https URL.", nameof(startUrl));
+            throw new ArgumentException("T3 Code (web) must open an https URL.", nameof(startUrl));
         return
         [
             "--user-data-dir=" + dataDirectory,
