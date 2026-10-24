@@ -2304,39 +2304,39 @@ static async Task TestTargetAppIsolation()
     Equal("t3", T3CodeTargetCatalog.SelectPages(targets).Single().Id,
         "T3 discovery selects only the production T3 desktop page");
     var twoConnected = new T3CodeConnectionReport(2, 2, 0);
-    Equal("T3 Code: Closed (0/0)", T3CodeMenuPolicy.Evaluate(0, false, null, null, false).Label,
+    Equal("T3 Code: Closed", T3CodeMenuPolicy.Evaluate(0, false, null, null, false).Label,
         "T3 menu counts closed visible windows");
-    Equal("T3 Code: Problem (0/3)", T3CodeMenuPolicy.Evaluate(3, false, null, null, false).Label,
+    Equal("T3 Code: Needs repair", T3CodeMenuPolicy.Evaluate(3, false, null, null, false).Label,
         "visible T3 windows without an endpoint need repair");
-    Equal("T3 Code: Problem (2/3)", T3CodeMenuPolicy.Evaluate(
+    Equal("T3 Code: Needs repair", T3CodeMenuPolicy.Evaluate(
         3, true, new HelperHostReport(1, 2, 2, 0, []), twoConnected, false).Label,
         "partial T3 coverage uses visible-window denominator");
-    Equal("T3 Code: OK (2/2)", T3CodeMenuPolicy.Evaluate(
+    Equal("T3 Code: OK", T3CodeMenuPolicy.Evaluate(
         2, true, new HelperHostReport(1, 2, 2, 0, []), twoConnected, false).Label,
         "complete T3 coverage reports all visible windows");
-    Equal("T3 Code: No Helpers (0/2)", T3CodeMenuPolicy.Evaluate(
+    Equal("T3 Code: No Helpers", T3CodeMenuPolicy.Evaluate(
         2, true, new HelperHostReport(0, 2, 0, 0, []), twoConnected, false,
         hasEnabledHelpers: false).Label,
         "an endpoint alone does not claim that T3 windows have Helpers");
-    Equal("T3 Code: OK (1/1)", T3CodeMenuPolicy.Evaluate(
+    Equal("T3 Code: OK", T3CodeMenuPolicy.Evaluate(
         1, true, new HelperHostReport(1, 3, 3, 0, []), new T3CodeConnectionReport(3, 3, 0), false).Label,
         "extra renderer pages never inflate visible T3 window count");
-    Equal("T3 Code: Problem (1/2)", T3CodeMenuPolicy.Evaluate(
+    Equal("T3 Code: Needs repair", T3CodeMenuPolicy.Evaluate(
         2, true, new HelperHostReport(1, 1, 1, 0, []), twoConnected, false).Label,
         "newly probed renderers not yet reconciled cannot inflate coverage");
-    Equal("T3 Code: Problem (2/2)", T3CodeMenuPolicy.Evaluate(
+    Equal("T3 Code: Needs repair", T3CodeMenuPolicy.Evaluate(
         2, true, new HelperHostReport(1, 2, 1, 1, []), twoConnected, false).Label,
         "failed Helper keeps complete T3 window coverage in problem state");
-    Equal("T3 Code: Problem (2/2)", T3CodeMenuPolicy.Evaluate(
+    Equal("T3 Code: Needs repair", T3CodeMenuPolicy.Evaluate(
         2, true, new HelperHostReport(1, 2, 2, 0, [new HelperDiagnostic("helper", "invalid manifest")]), twoConnected, false).Label,
         "Helper catalog diagnostic keeps complete T3 window coverage in problem state");
-    Equal("T3 Code: Problem (1/2)", T3CodeMenuPolicy.Evaluate(
+    Equal("T3 Code: Needs repair", T3CodeMenuPolicy.Evaluate(
         2, true, new HelperHostReport(1, 2, 1, 1, []), new T3CodeConnectionReport(2, 1, 1), false).Label,
         "unresponsive renderer does not count as a hooked T3 window");
-    Equal("T3 Code: Problem (0/2)", T3CodeMenuPolicy.Evaluate(
+    Equal("T3 Code: Needs repair", T3CodeMenuPolicy.Evaluate(
         2, true, new HelperHostReport(1, 2, 2, 0, []), twoConnected, true).Label,
         "failed T3 status check does not claim coverage");
-    Equal("T3 Code: Paused (0/2)", T3CodeMenuPolicy.Evaluate(
+    Equal("T3 Code: Paused", T3CodeMenuPolicy.Evaluate(
         2, true, null, null, false, helpersSuspended: true).Label,
         "paused T3 Helpers do not claim hooked windows");
     Equal("T3 Code: Status unavailable", T3CodeMenuPolicy.Evaluate(null, true, null, null, true).Label,
@@ -2457,13 +2457,13 @@ static async Task TestTargetAppIsolation()
         var waitingReport = await readinessHost.ReconcileAsync();
         var waitingMenu = T3CodeMenuPolicy.Evaluate(1, true, waitingReport, new(1, 1, 0), false);
         Equal(0, waitingReport.Failed, "successful evaluation can still report unavailable usage");
-        Equal("T3 Code: Problem (1/1)", waitingMenu.Label, "connection does not conceal renderer waiting state");
+        Equal("T3 Code: Needs repair", waitingMenu.Label, "connection does not conceal renderer waiting state");
         Equal(true, waitingMenu.Details.Contains("out of date", StringComparison.Ordinal), "tray explains data readiness without a restart recommendation");
         using var readyJson = JsonDocument.Parse("{\"renderHealth\":{\"state\":\"ready\"}}");
         readinessEvaluator.ValueResultFactory = (_, expression) => expression.Contains("t3-code-script", StringComparison.Ordinal)
             ? readyJson.RootElement.Clone() : null;
         var readyReport = await readinessHost.ReconcileAsync();
-        Equal("T3 Code: OK (1/1)", T3CodeMenuPolicy.Evaluate(1, true, readyReport, new(1, 1, 0), false).Label,
+        Equal("T3 Code: OK", T3CodeMenuPolicy.Evaluate(1, true, readyReport, new(1, 1, 0), false).Label,
             "fresh renderer readiness clears waiting diagnostics on the next reconciliation");
         await codexHost.SetEnabledAsync("legacy-codex-helper", false);
         await t3Host.SetEnabledAsync("t3-only-helper", false);
