@@ -360,6 +360,17 @@ internal static class AppTargetTests
         Equal(180, (int)ico[22], "180 px entry");
         Equal(6 + 32, BitConverter.ToInt32(ico, 6 + 12), "first image right after the directory");
         Equal(0, (int)T3WebAppIcon.BuildIco([Png(256)])[6], "256 px is stored as 0");
+        Equal("16,20,24,32,40,48,64,256", string.Join(",", T3WebAppIcon.IcoSizes), "multi-size icon set");
+        Equal(32, T3WebAppIcon.PngSize(T3WebAppIcon.SourceFor(16, [Png(180), Png(32)])!)!.Value.Width, "small sizes come from the 32 px PNG");
+        Equal(180, T3WebAppIcon.PngSize(T3WebAppIcon.SourceFor(40, [Png(180), Png(32)])!)!.Value.Width, "larger sizes from the 180 px PNG");
+        Equal(180, T3WebAppIcon.PngSize(T3WebAppIcon.SourceFor(256, [Png(180), Png(32)])!)!.Value.Width, "beyond the largest, the largest");
+        True(T3WebAppIcon.SourceFor(16, []) is null, "no source without images");
+        Equal("32,180", string.Join(",", T3WebAppIcon.IcoImageSizes(ico)), "declared image sizes");
+        True(!T3WebAppIcon.HasAllSizes(ico), "an older two-size cache is rebuilt");
+        var full = T3WebAppIcon.BuildIco(T3WebAppIcon.IcoSizes.Select(Png).ToList());
+        True(T3WebAppIcon.HasAllSizes(full) && full[4] == 8, "eight-size icon is complete");
+        True(T3WebAppIcon.BuildIco([Png(32), Png(32)])[4] == 1, "one entry per size");
+        True(T3WebAppIcon.IcoImageSizes([1, 2, 3]).Count == 0, "not an icon");
         True(T3WebAppIcon.NeedsRefresh(null, DateTime.UtcNow) && T3WebAppIcon.NeedsRefresh(DateTime.UtcNow.AddDays(-8), DateTime.UtcNow)
             && !T3WebAppIcon.NeedsRefresh(DateTime.UtcNow.AddDays(-1), DateTime.UtcNow), "weekly refresh");
         Equal(Path.Combine("root", "t3-web", "app-icon.ico"), T3WebAppIcon.IconPath("root"), "cache path");

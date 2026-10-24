@@ -303,7 +303,7 @@ test('Usage Dials package declares explicit Codex, T3 desktop, T3 web and Grok B
     schemaVersion: 2,
     id: 'usage-dials',
     name: 'Usage dials',
-    version: '1.6.0',
+    version: '1.7.0',
     description: 'Shows provider usage limits beside the composer model picker or context dial, in Codex, T3 Code (desktop or web) and Grok Bot.',
     refreshSeconds: 60,
     capabilities: ['files.providerUsage', 'files.grokBotUsage'],
@@ -687,8 +687,8 @@ test('renderer replaces a stale Usage Dials controller during a Helper upgrade',
     executeRenderer(apply, fixture, { state: {} })
     await fixture.flush()
     assert.equal(cleaned, 1)
-    assert.equal(fixture.window.__codexHelperUsageDials?.version, 'native-slot-v33')
-    assert.equal(fixture.window.__codexHelperUsageDials?.status().fallbackStrategy, 'native-slot-v33')
+    assert.equal(fixture.window.__codexHelperUsageDials?.version, 'native-slot-v34')
+    assert.equal(fixture.window.__codexHelperUsageDials?.status().fallbackStrategy, 'native-slot-v34')
     assert.equal(native.wrapper.nextElementSibling?.getAttribute('data-codex-helper'), 'usage-dials')
   } finally {
     fixture.window.__codexHelperUsageDials?.cleanup()

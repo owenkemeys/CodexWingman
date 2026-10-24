@@ -157,6 +157,24 @@ internal static class Program
             }
             Equal("Wingman", TrayIconPresentation.TextFor(TrayIconState.Normal), "tray tooltip uses the renamed app");
             Equal("Wingman", TrayIconPresentation.TextFor(TrayIconState.Attention), "tray identity text stays stable during attention states");
+            // T3 Code (web) app icon: every size of the multi-size .ico is drawn from T3's 32 and 180 px PNGs.
+            static byte[] SourcePng(int size)
+            {
+                using var bitmap = new System.Drawing.Bitmap(size, size, System.Drawing.Imaging.PixelFormat.Format32bppArgb);
+                using (var graphics = System.Drawing.Graphics.FromImage(bitmap)) graphics.FillEllipse(System.Drawing.Brushes.SteelBlue, 2, 2, size - 4, size - 4);
+                using var stream = new MemoryStream();
+                bitmap.Save(stream, System.Drawing.Imaging.ImageFormat.Png);
+                return stream.ToArray();
+            }
+            var t3Sources = new List<byte[]> { SourcePng(180), SourcePng(32) };
+            var t3Ico = T3WebAppIcon.BuildIco(T3WebAppIcon.IcoSizes.Select(size => IconImages.ScaledPng(T3WebAppIcon.SourceFor(size, t3Sources)!, size)).ToList());
+            Equal("16,20,24,32,40,48,64,256", string.Join(",", T3WebAppIcon.IcoImageSizes(t3Ico)), "multi-size T3 web icon");
+            Equal(true, T3WebAppIcon.HasAllSizes(t3Ico), "complete icon is not rebuilt");
+            foreach (var size in T3WebAppIcon.IcoSizes)
+            {
+                using var icon = new System.Drawing.Icon(new MemoryStream(t3Ico), size, size);
+                Equal(size, icon.Width, $"Windows picks the {size} px image");
+            }
             NativeUpdaterTests.Run(root);
             Console.WriteLine(JsonSerializer.Serialize(new { status = "pass", shortcuts = observed }));
         }
