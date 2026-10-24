@@ -6,26 +6,21 @@ Wingman is the user-facing name. Existing `CodexWingman` executable, settings, a
 
 ```text
 Codex: OK (2/2) >
-    Open a hooked window
-    Repair Codex
-    View status details...
+    Open window
+    Repair
+    Status details...
     ──────────────────────
     [x] Open on launch
-T3 Code: Problem (1/3) >
-    Open a hooked window
-    Repair T3 Code
-    View status details...
+T3 Code: Problem (1/3) >        (shown only when T3 Code is installed)
+    Open window
+    Repair
+    Status details...
     ──────────────────────
     [ ] Open on launch
-T3 web: OK (1/1) >
-    Open T3 web with Wingman
-    View status details...
-    Check T3 sign-in now
-Grok Bot: OK (1/1) >
-    Open Grok Bot with Wingman
-    View status details...
-    ──────────────────────
-    [ ] Taskbar pin opens Grok Bot through Wingman
+T3 web: OK (1/1) >              (shown only with Chrome and a T3 address or pairing folder)
+    (same five items)
+Grok Bot: OK (1/1) >            (shown only when Grok Bot is installed)
+    (same five items)
 ──────────────────────────
 [x] Helpers enabled
 Manage helpers >
@@ -35,9 +30,11 @@ Check for Updates
 Close Wingman
 ```
 
+Every app line has the same flyout, in the same order with the same wording (`TrayMenuLayout`, built by `AppFlyoutMenu`); what each item does is app-specific. App lines have no tooltip: status detail lives only in `Status details...`. Repair per app: Codex and T3 Code propose a graceful restart with debugging when needed; T3 web (Wingman's own Chrome) never closes anything, it opens Wingman's window if none, re-attaches Helpers and checks the sign-in now; Grok Bot re-attaches Helpers when hooked, otherwise the same asked-for relaunch as Open window. Automatic or setup-only actions are development commands, not menu items: `--t3-web-check-sign-in` (renewal itself is automatic), `--t3-web-renew-now`, `--grok-bot-pin` (asks, then retargets or restores the existing pin), and `--dump-menu` (writes the live tray tree and its contract check to `menu-dump.json` beside `settings.json`).
+
 The counts are *hooked visible windows / visible windows for that app*, never CDP endpoints or background pages. The T3 denominator comes from visible, titled, top-level windows belonging to recognized T3 executables in the current session; the numerator is capped at that count using only renderer connections that answer a CDP evaluation. A discovered page whose connection fails does not count. `OK` requires equal counts and current Helper reconciliation without failures. `Problem` covers partial coverage, failed Helpers, or a window that cannot be connected. A closed app displays `Closed (0/0)`. Unknown discovery displays `Checking` or `Status unavailable`, not `OK`. The detail view names the affected app and a concrete recovery action without exposing CDP IDs. Keep the menu rows stable during passive polling so a click cannot move under the pointer. The T3 renderer-to-native-window correspondence still requires a live Windows trial before the counts can be treated as verified coverage.
 
-`Open on launch` is per app. Existing Codex startup behavior migrates to checked; T3 Code defaults unchecked until its launcher has passed a Windows trial. Starting Wingman opens checked apps only. Unchecking a target does not close an already open window. `Open a hooked window` opens or reuses that app's own window route and verifies a new or reused visible target; it does not merely open an ordinary unhooked window. `Repair` can propose a graceful target restart when needed, with an app-specific explanation, and must not stop the other target. The global Helpers switch removes or reapplies Wingman-owned UI in both apps while target discovery and status remain available.
+`Open on launch` is per app and saved in `settings.json` (`openCodexOnLaunch`, `openT3CodeOnLaunch`, `t3Web.openOnLaunch`, `openGrokBotOnLaunch`). Existing Codex startup behavior migrates to checked; T3 Code, T3 web and Grok Bot default unchecked. Starting Wingman opens checked apps only. Unchecking a target does not close an already open window. `Open window` opens or reuses that app's own hooked window route and verifies a new or reused visible target; it does not merely open an ordinary unhooked window. `Repair` can propose a graceful target restart when needed, with an app-specific explanation, and must not stop the other target. The global Helpers switch removes or reapplies Wingman-owned UI in both apps while target discovery and status remain available.
 
 ## Host boundary
 
@@ -77,6 +74,7 @@ Two more app targets follow the same `AppTarget` contract, each with its own app
 - 2026-10-22: T3 web uses Wingman's own Chrome data folder. This is deliberate and applies to T3 web only; the Codex rule to keep the normal-profile hook-ready design and not create a disposable profile is unchanged. Chrome refuses a debugging port on its default data folder, and copying the user's Chrome cookies is not allowed. Do not "fix" this back to the normal Chrome profile.
 - 2026-10-22: T3 web sign-in is renewed by one-time pairing links before the fixed 30-day expiry, never by cookie copying; the previous Wingman session is revoked by label after a renewal.
 - 2026-10-22: Grok Bot gets a relaunch with a localhost-only port and a composer dial; no patching, no extension, no floating window, no server calls of Wingman's own. Pins are never forced; retargeting the existing Grok Bot pin is opt-in with a backup. Autostart stays off.
+- 2026-10-23 (round 3): from `native-slot-v33` the Grok Bot dial has the same diameter as Grok Bot's round composer buttons (mic, voice chat): it measures them on every pass (plus a ResizeObserver on their cluster), crops the dial canvas so the ring spans that diameter, and drops its extra margin so it sits at the row's own 8px gap. Live 2026-10-23: buttons 28px.
 - 2026-10-23: the Grok Bot dial reads Grok Bot's live in-app store (`weeklyUsage`, what its account menu shows), with the saved cache only as a labelled fallback, and nudges Grok Bot's own throttled `refresh()` only while its window has focus or the dial popup is open (lead decision under the owner's earlier decision on technical tradeoffs). From `native-slot-v32` it also asks at once when the window gains focus or becomes visible (focus / visibilitychange), so a glance shows a current number; the 5-minute cap is unchanged. Settings > Usage uses a separate store that can lag by a few points; the dial follows the account menu.
 
 These targets are source- and fixture-tested only until a Windows trial shows the real windows grouping under their identities, Grok Bot keeping its sign-in after the relaunch, the dial in the real Grok Bot and T3 web composers, and pairing end to end.

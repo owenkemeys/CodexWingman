@@ -95,7 +95,7 @@ internal static class T3CodeLauncher
             return port;
         }
         if (IsRunning(executable))
-            throw new InvalidOperationException("T3 Code is already running without a verified Helper endpoint. Use Repair T3 Code after saving work.");
+            throw new InvalidOperationException("T3 Code is already running without a verified Helper endpoint. Choose Repair in the T3 Code menu after saving work.");
         return await LaunchAsync(executable, runtimeStatePath, cancellationToken);
     }
 

@@ -23,6 +23,8 @@ internal static class AppTargetTests
         GrokUsageCache();
         await BundledHelpersForNewTargetsAsync();
         MenuPolicy();
+        TrayMenuTree();
+        OpenOnLaunchChoices();
         await PairingAsync();
         Console.WriteLine("App target tests passed");
     }
@@ -318,6 +320,113 @@ internal static class AppTargetTests
         False(closed.Label.Contains("T3 Code", StringComparison.Ordinal) || closed.Details.Contains("T3 Code", StringComparison.Ordinal), "no T3 Code wording for Grok Bot");
         var web = AppTargetMenuPolicy.Evaluate("T3 web", 1, true, null, new T3CodeConnectionReport(1, 1, 0), true);
         True(web.Label.StartsWith("T3 web", StringComparison.Ordinal), "T3 web label: " + web.Label);
+    }
+
+    private static TrayMenuNode Line(string text, IEnumerable<string>? items = null, string? tooltip = null) =>
+        new(text, tooltip, Children: (items ?? TrayMenuLayout.AppFlyout.Select(TrayMenuLayout.Label))
+            .Select(item => new TrayMenuNode(item)).ToList());
+
+    private static void TrayMenuTree()
+    {
+        var labels = TrayMenuLayout.AppFlyout.Select(TrayMenuLayout.Label).ToArray();
+        Equal("Open window|Repair|Status details...|-|Open on launch", string.Join("|", labels), "one short flyout, plain wording, fixed order");
+        False(labels.Any(label => label.Contains("Codex", StringComparison.Ordinal) || label.Contains("T3", StringComparison.Ordinal)
+            || label.Contains("Grok", StringComparison.Ordinal)), "flyout wording names no app, so it is identical for every app");
+        False(labels.Any(label => label.Contains("sign-in", StringComparison.OrdinalIgnoreCase) || label.Contains("pin", StringComparison.OrdinalIgnoreCase)),
+            "automatic sign-in renewal and the taskbar pin are not menu items");
+        Equal("Codex,T3Code,T3Web,GrokBot", string.Join(",", TrayMenuLayout.Apps), "app lines top to bottom");
+        False(TrayMenuLayout.ShowAppLine(WingmanLaunchTarget.T3Code, installed: false), "T3 Code line hidden when T3 Code is not installed");
+        True(TrayMenuLayout.ShowAppLine(WingmanLaunchTarget.T3Code, installed: true), "T3 Code line shown when installed");
+        False(TrayMenuLayout.ShowAppLine(WingmanLaunchTarget.GrokBot, installed: false), "Grok Bot line hidden when not installed");
+        False(TrayMenuLayout.ShowAppLine(WingmanLaunchTarget.T3Web, installed: false), "T3 web line hidden without Chrome and an address");
+        True(TrayMenuLayout.ShowAppLine(WingmanLaunchTarget.Codex, installed: false), "Codex is Wingman's base app and always shows");
+
+        // The live tray (AppFlyoutMenu) builds every line from the same layout; this is the tree it produces.
+        var tree = new List<TrayMenuNode>
+        {
+            Line("Codex: OK (2/2)"), Line("T3 Code: Not ready"), Line("T3 web: OK (1/1)"), Line("Grok Bot: OK (1/1)"),
+            new("-"), new("Helpers enabled", Checked: true), new("Manage helpers", Children: [new("Usage Dials", "Usage Dials 1.0")]),
+            new("-"), new("About"), new("Check for Updates"), new("Close"),
+        };
+        Equal(0, TrayMenuCheck.Problems(tree).Count, "contract holds: " + string.Join("; ", TrayMenuCheck.Problems(tree)));
+        var lines = TrayMenuCheck.AppLines(tree);
+        Equal(4, lines.Count, "four app lines");
+        True(lines.All(line => line.Children!.Select(child => child.Text).SequenceEqual(lines[0].Children!.Select(child => child.Text))),
+            "every app line has the identical item list");
+        True(lines.All(line => line.ToolTip is null), "no first-layer tooltips");
+
+        var withTooltip = tree.ToList();
+        withTooltip[3] = Line("Grok Bot: OK (1/1)", tooltip: "Grok Bot: OK (1/1)\n\nGrok Bot is open.");
+        True(TrayMenuCheck.Problems(withTooltip).Any(problem => problem.Contains("tooltip", StringComparison.Ordinal)), "a first-layer tooltip is caught");
+        var extraItem = tree.ToList();
+        extraItem[2] = Line("T3 web: OK (1/1)", labels.Append("Check T3 sign-in now"));
+        True(TrayMenuCheck.Problems(extraItem).Any(problem => problem.Contains("T3 web", StringComparison.Ordinal)), "an extra flyout item is caught");
+        var reordered = tree.ToList();
+        reordered[0] = Line("Codex: OK (2/2)", [labels[1], labels[0], .. labels[2..]]);
+        True(TrayMenuCheck.Problems(reordered).Count > 0, "a different order is caught");
+
+        // Structural guard on the tray source: lines come only from AppFlyoutMenu and nothing sets a status tooltip.
+        var source = Path.Combine(RepositoryRoot(), "src", "CodexWingman");
+        var tray = File.ReadAllText(Path.Combine(source, "TrayApplicationContext.cs"));
+        Equal(4, CountOf(tray, "new AppFlyoutMenu("), "the tray builds all four app lines with AppFlyoutMenu");
+        False(tray.Contains("DropDownItems.AddRange([", StringComparison.Ordinal) && tray.Contains("Menu.DropDownItems", StringComparison.Ordinal),
+            "no extra items are added to an app line");
+        foreach (var file in Directory.GetFiles(source, "*.cs"))
+        {
+            var text = File.ReadAllText(file);
+            var name = Path.GetFileName(file);
+            var allowed = name switch { "AppFlyoutMenu.cs" => 1, "TrayApplicationContext.cs" => 2, _ => 0 };
+            Equal(allowed, CountOf(text, "ToolTipText ="), name + ": only the helper items keep a tooltip (their own name or fault)");
+        }
+        Equal(2, CountOf(tray, "ToolTipText = helper.Diagnostic ??"), "helper item tooltips are the name/version or the fault");
+    }
+
+    private static int CountOf(string text, string value)
+    {
+        var count = 0;
+        for (var index = text.IndexOf(value, StringComparison.Ordinal); index >= 0; index = text.IndexOf(value, index + value.Length, StringComparison.Ordinal)) count++;
+        return count;
+    }
+
+    private static void OpenOnLaunchChoices()
+    {
+        var settings = HelperSettings.Default with { OpenCodexOnLaunch = false };
+        foreach (var app in TrayMenuLayout.Apps)
+        {
+            False(settings.OpensOnLaunch(app), app + " starts off");
+            var on = settings.WithOpenOnLaunch(app, true);
+            True(on.OpensOnLaunch(app), app + " Open on launch turns on");
+            True(TrayMenuLayout.Apps.Where(other => other != app).All(other => !on.OpensOnLaunch(other)), app + " changes only its own choice");
+            True(WingmanLaunchOptions.Parse([]).OpenOnStartup(app, on), app + " opens on a plain launch when chosen");
+            False(WingmanLaunchOptions.Parse(["--launch=codex"]).OpenOnStartup(app == WingmanLaunchTarget.Codex ? WingmanLaunchTarget.GrokBot : app, on),
+                app + ": a launcher for another app opens only that app");
+            False(on.WithOpenOnLaunch(app, false).OpensOnLaunch(app), app + " turns off again");
+        }
+        True(HelperSettings.Default.T3Web is null && HelperSettings.Default.WithOpenOnLaunch(WingmanLaunchTarget.T3Web, true).T3Web?.OpenOnLaunch == true,
+            "T3 web choice saves even before any T3 web settings exist (zero setup)");
+        Throws<ArgumentOutOfRangeException>(() => HelperSettings.Default.WithOpenOnLaunch(WingmanLaunchTarget.Preferences, true), "only apps have the choice");
+
+        var path = Path.Combine(Path.GetTempPath(), "wingman-launch-" + Guid.NewGuid().ToString("N"), "settings.json");
+        try
+        {
+            var saved = HelperSettings.Default.WithOpenOnLaunch(WingmanLaunchTarget.T3Web, true).WithOpenOnLaunch(WingmanLaunchTarget.GrokBot, true);
+            HelperSettingsStore.Save(path, saved);
+            var loaded = HelperSettingsStore.Load(path);
+            True(loaded.OpensOnLaunch(WingmanLaunchTarget.T3Web) && loaded.OpensOnLaunch(WingmanLaunchTarget.GrokBot), "T3 web and Grok Bot choices persist in settings");
+        }
+        finally
+        {
+            var directory = Path.GetDirectoryName(path)!;
+            if (Directory.Exists(directory)) Directory.Delete(directory, true);
+        }
+
+        Equal(WingmanCommand.DumpMenu, WingmanLaunchOptions.Parse(["--dump-menu"]).Command, "menu dump command parses");
+        Equal(WingmanCommand.T3WebCheckSignIn, WingmanLaunchOptions.Parse(["--t3-web-check-sign-in"]).Command, "sign-in check moved to a development command");
+        Equal(WingmanCommand.GrokBotPin, WingmanLaunchOptions.Parse(["--grok-bot-pin"]).Command, "pin choice moved to a development command");
+        Equal(WingmanLaunchOptions.Commands.Count, WingmanLaunchOptions.Commands.Select(WingmanLaunchOptions.CommandEventName).Distinct().Count(), "each command its own event");
+        Equal(WingmanIdentity.ActivationEventName + ".Command.Close", WingmanLaunchOptions.CommandEventName(WingmanCommand.Close), "existing close event name unchanged (swap.ps1)");
+        Equal(WingmanIdentity.ActivationEventName + ".Command.T3WebRenewNow", WingmanLaunchOptions.CommandEventName(WingmanCommand.T3WebRenewNow), "existing renew event name unchanged");
+        Equal(Path.Combine("C:\\data", "menu-dump.json"), WingmanLaunchOptions.MenuDumpPath("C:\\data"), "menu dump beside settings");
     }
 
     private static async Task PairingAsync()

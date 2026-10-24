@@ -6,7 +6,7 @@ namespace CodexWingman;
 
 /// <summary>
 /// One extra Helper target in the tray (T3 web or Grok Bot): its own Helper host on its own local
-/// debugging port, a status row, and an "Open" action. Native Codex and T3 desktop are not involved.
+/// debugging port, a status line, and the shared app flyout. Native Codex and T3 desktop are not involved.
 /// </summary>
 internal sealed class AppTargetController
 {
@@ -34,18 +34,17 @@ internal sealed class AppTargetController
             log: message => Debug.WriteLine($"[{name} Helper] {message}"), backendFactory: backendFactory, appId: appId);
         probe = new AppTargetConnectionProbe(targetSource, evaluator);
         Menu = new ToolStripMenuItem($"{name}: Not ready");
-        OpenItem = new ToolStripMenuItem($"Open {name} with Wingman");
-        DetailsItem = new ToolStripMenuItem("View status details...", null, (_, _) =>
-            MessageBox.Show(Status().Details, $"{name} status", MessageBoxButtons.OK, MessageBoxIcon.Information));
-        Menu.DropDownItems.AddRange([OpenItem, DetailsItem]);
     }
+
+    public void ShowStatusDetails() =>
+        MessageBox.Show(Status().Details, $"{Name} status", MessageBoxButtons.OK, MessageBoxIcon.Information);
 
     public string Name { get; }
     public WingmanLaunchTarget Target { get; }
     public HelperHost Host { get; }
     public ToolStripMenuItem Menu { get; }
-    public ToolStripMenuItem OpenItem { get; }
-    public ToolStripMenuItem DetailsItem { get; }
+    /// <summary>The shared flyout, attached by the tray once it knows the actions.</summary>
+    public AppFlyoutMenu? Flyout { get; set; }
     public HelperHostReport? Report { get; private set; }
     public T3CodeConnectionReport? Connections { get; private set; }
     public bool CheckFailed { get; set; }
@@ -107,9 +106,9 @@ internal sealed class AppTargetController
     public void SetMenuStatus()
     {
         var status = Status();
+        // Status detail lives in the flyout's status item only; the app line has no tooltip.
         Menu.Text = status.Label;
-        Menu.ToolTipText = status.Details;
     }
 
-    public void SetBusy(bool value) => OpenItem.Enabled = !value;
+    public void SetBusy(bool value) => Flyout?.SetBusy(value);
 }

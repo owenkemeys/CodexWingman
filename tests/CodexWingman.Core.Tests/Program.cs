@@ -229,7 +229,7 @@ Equal(false, degradedHealth.DiagnosticText.Contains("fixture", StringComparison.
 Equal(true, degradedHealth.DiagnosticText.Contains("What to do:", StringComparison.Ordinal), "degraded user details give a concrete next action");
 Equal(true,
     degradedHealth.DiagnosticText.IndexOf("reload Helpers", StringComparison.OrdinalIgnoreCase)
-        < degradedHealth.DiagnosticText.IndexOf("Repair Codex and Helpers", StringComparison.Ordinal),
+        < degradedHealth.DiagnosticText.IndexOf("Repair in the Codex menu", StringComparison.Ordinal),
     "degraded Helper health recommends reload before Codex repair");
 
 var workingHealth = ConnectionHealthPolicy.Evaluate(

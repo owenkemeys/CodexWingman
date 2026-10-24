@@ -74,7 +74,7 @@ internal sealed class GrokBotLauncher(string wingmanDataRoot, Func<IEnumerable<i
         {
             cancellationToken.ThrowIfCancellationRequested();
             if (DateTime.UtcNow > closeDeadline)
-                throw new TimeoutException("Grok Bot did not close, so Wingman left it running. Close it yourself, then use Open Grok Bot with Wingman again.");
+                throw new TimeoutException("Grok Bot did not close, so Wingman left it running. Close it yourself, then choose Open window in the Grok Bot menu again.");
             await Task.Delay(250, cancellationToken);
         }
 

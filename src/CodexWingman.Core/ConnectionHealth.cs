@@ -50,8 +50,8 @@ public static class ConnectionHealthPolicy
                 ConnectionHealthState.NeedsRepair,
                 "Status: Needs repair",
                 hookState == CodexHookState.OpenButCannotHook
-                    ? "Codex is open, but Wingman cannot connect to its windows.\n\nWhat to do: Choose Repair Codex and Helpers."
-                    : "Wingman could not check the Codex windows.\n\nWhat to do: Choose Repair Codex and Helpers.",
+                    ? "Codex is open, but Wingman cannot connect to its windows.\n\nWhat to do: Choose Repair in the Codex menu."
+                    : "Wingman could not check the Codex windows.\n\nWhat to do: Choose Repair in the Codex menu.",
                 0,
                 "No windows hooked",
                 CanRepair: true,
@@ -76,7 +76,7 @@ public static class ConnectionHealthPolicy
             return new(
                 ConnectionHealthState.NeedsRepair,
                 "Status: Needs repair",
-                "Wingman is connected to Codex, but no usable windows were found.\n\nWhat to do: Choose Repair Codex and Helpers.",
+                "Wingman is connected to Codex, but no usable windows were found.\n\nWhat to do: Choose Repair in the Codex menu.",
                 0,
                 FormatWindowSummary(0, totalWindows),
                 CanRepair: true,
@@ -89,7 +89,7 @@ public static class ConnectionHealthPolicy
             return new(
                 ConnectionHealthState.Degraded,
                 "Status: Needs attention",
-                "Some Helpers are not working in every hooked window.\n\nWhat to do: Reload Helpers. If the problem remains, choose Repair Codex and Helpers.",
+                "Some Helpers are not working in every hooked window.\n\nWhat to do: Reload Helpers. If the problem remains, choose Repair in the Codex menu.",
                 windows,
                 FormatWindowSummary(windows, totalWindows),
                 CanRepair: true,

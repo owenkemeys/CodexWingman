@@ -1,5 +1,5 @@
 (() => {
-  const controllerVersion = 'native-slot-v32';
+  const controllerVersion = 'native-slot-v33';
   // Wingman names the app it injected into; the legacy embedded Codex renderer has no wingman object.
   const wingmanApp = typeof wingman === 'undefined' ? null : wingman?.app;
   const t3Renderer = window.location?.protocol === 't3code:' || wingmanApp === 't3-web';
@@ -472,9 +472,12 @@
        Scope the palette to both the miniature and its separate hover preview. */
     [data-codex-helper-dial][data-wingman-app="t3-code"] { color: #000; }
     .dark [data-codex-helper-dial][data-wingman-app="t3-code"] { color: #fff; }
-    /* Grok Bot: inherit the composer icon colour, like the native attach and mic controls beside it. */
-    [data-codex-helper="usage-dials"][data-wingman-app="grok-bot"] { height: 32px; margin-right: 4px; }
-    [data-codex-helper-dial][data-wingman-app="grok-bot"] { height: 32px; }
+    /* Grok Bot: inherit the composer icon colour, like the native attach and mic controls beside it.
+       The dial is as wide as Grok Bot's round mic/voice buttons (sized inline from a live measurement)
+       and sits at the row's own gap from them, the same spacing those buttons have. */
+    [data-codex-helper="usage-dials"][data-wingman-app="grok-bot"] { height: 32px; }
+    [data-codex-helper-dial][data-wingman-app="grok-bot"] { width: 28px; height: 32px; }
+    [data-codex-helper-dial][data-wingman-app="grok-bot"] svg { width: 28px; height: 28px; }
     /* Keep the original composer circle; only the enlarged popup uses an outline. */
     .codex-helper-usage-preview [data-codex-helper-dial] .codex-helper-unused { stroke-width: 2px; vector-effect: non-scaling-stroke; }
     .codex-helper-usage-shared { opacity: .6; }
@@ -651,7 +654,9 @@
     dial.setAttribute('role', 'img');
     dial.setAttribute('tabindex', '0');
     const svg = document.createElementNS(svgNamespace, 'svg');
-    svg.setAttribute('viewBox', '0 0 20 20');
+    // Grok Bot crops the canvas padding so the ring itself spans the full
+    // size, the same diameter as the round composer buttons beside it.
+    svg.setAttribute('viewBox', grokRenderer ? '2 2 16 16' : '0 0 20 20');
     svg.setAttribute('aria-hidden', 'true');
     const background = makeSegment('background', 'codex-helper-background', true);
     const unused = makeSegment('unused', 'codex-helper-unused', false, preview);
@@ -769,10 +774,43 @@
     parent.children.splice(Math.max(0, index), 0, node);
   };
 
+  // Grok Bot: diameter of the composer's own round buttons (mic, voice chat),
+  // measured on every pass so the dial follows the composer when it resizes.
+  const grokRoundButtonDiameter = (cluster) => {
+    for (const button of cluster?.querySelectorAll?.('button') || []) {
+      if (!isVisible(button)) continue;
+      const rect = button.getBoundingClientRect();
+      if (rect.width < 12 || rect.width > 64 || Math.abs(rect.width - rect.height) > 1) continue;
+      const radius = parseFloat(getComputedStyle(button).borderRadius || '0');
+      if (Number.isFinite(radius) && radius * 2 >= rect.width - 1) return Math.round(rect.width * 100) / 100;
+    }
+    return null;
+  };
+  let grokResizeObserver = null;
+  const observedGrokClusters = new WeakSet();
+  const sizeGrokDials = (instance) => {
+    const diameter = grokRoundButtonDiameter(instance.wrapper);
+    if (diameter !== null) {
+      const size = `${diameter}px`;
+      for (const dial of [instance.primary, instance.secondary]) {
+        if (dial.style.width !== size) dial.style.width = size;
+        const svg = dial.querySelector('svg');
+        if (svg && svg.style.width !== size) { svg.style.width = size; svg.style.height = size; }
+      }
+      instance.bank.dataset.wingmanDialDiameter = String(diameter);
+    }
+    if (!grokResizeObserver && typeof ResizeObserver === 'function') grokResizeObserver = new ResizeObserver(() => queueReconcile());
+    if (grokResizeObserver && instance.wrapper && !observedGrokClusters.has(instance.wrapper)) {
+      observedGrokClusters.add(instance.wrapper);
+      grokResizeObserver.observe(instance.wrapper);
+    }
+  };
+
   const updateInstance = (instance) => {
     if (t3Renderer) setAttributeIfChanged(instance.bank, 'aria-label', `${providerLabel} usage`);
     renderDial(instance.primary, snapshot.primary, (t3Renderer || grokRenderer) && !snapshot.primary && !snapshot.secondary);
     renderDial(instance.secondary, snapshot.secondary);
+    if (grokRenderer) sizeGrokDials(instance);
     if (!instance.wrapper?.parentElement) return;
     if (t3Renderer || grokRenderer) {
       if (instance.bank.parentElement !== instance.wrapper.parentElement || instance.bank.nextElementSibling !== instance.wrapper)
@@ -993,6 +1031,7 @@
   const cleanup = () => {
     disposed = true;
     observer.disconnect();
+    grokResizeObserver?.disconnect();
     unsubscribeAccount?.();
     accountClient = null;
     try { unsubscribeGrok?.(); } catch { /* already gone */ }
