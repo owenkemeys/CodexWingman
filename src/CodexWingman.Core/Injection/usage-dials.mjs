@@ -1,5 +1,5 @@
 (() => {
-  const controllerVersion = 'native-slot-v33';
+  const controllerVersion = 'native-slot-v34';
   // Wingman names the app it injected into; the legacy embedded Codex renderer has no wingman object.
   const wingmanApp = typeof wingman === 'undefined' ? null : wingman?.app;
   const t3Renderer = window.location?.protocol === 't3code:' || wingmanApp === 't3-web';
@@ -478,6 +478,17 @@
     [data-codex-helper="usage-dials"][data-wingman-app="grok-bot"] { height: 32px; }
     [data-codex-helper-dial][data-wingman-app="grok-bot"] { width: 28px; height: 32px; }
     [data-codex-helper-dial][data-wingman-app="grok-bot"] svg { width: 28px; height: 28px; }
+    /* Grok Bot (from native-slot-v34, Owen's option B): a small 16px ring inside a grey chip that
+       matches the mic button beside it (fill #282828, rim #343434, icon grey #979797). The used arc is
+       a touch brighter than the icon grey; ahead of pace shows as an equally muted amber (red only at
+       danger), and the unused-until-now marker stays a quiet grey. The popup keeps the plain ring. */
+    [data-codex-helper-dial][data-wingman-dial-style="chip"] { --codex-helper-usage-neutral: #a3a3a3; }
+    [data-codex-helper-dial][data-wingman-dial-style="chip"][data-state="warning"] { --codex-helper-usage-alert: #a9843c; }
+    [data-codex-helper-dial][data-wingman-dial-style="chip"][data-state="danger"] { --codex-helper-usage-alert: #b5564f; }
+    [data-codex-helper-dial][data-wingman-dial-style="chip"] .codex-helper-chip { fill: #282828; stroke: #343434; stroke-width: 1; }
+    [data-codex-helper-dial][data-wingman-dial-style="chip"] .codex-helper-background { stroke: #3d3d3d; opacity: 1; }
+    [data-codex-helper-dial][data-wingman-dial-style="chip"] .codex-helper-unused { stroke: #5a5a5a; opacity: 1; }
+    [data-codex-helper-dial][data-wingman-dial-style="chip"] text { fill: #979797; }
     /* Keep the original composer circle; only the enlarged popup uses an outline. */
     .codex-helper-usage-preview [data-codex-helper-dial] .codex-helper-unused { stroke-width: 2px; vector-effect: non-scaling-stroke; }
     .codex-helper-usage-shared { opacity: .6; }
@@ -654,10 +665,22 @@
     dial.setAttribute('role', 'img');
     dial.setAttribute('tabindex', '0');
     const svg = document.createElementNS(svgNamespace, 'svg');
-    // Grok Bot crops the canvas padding so the ring itself spans the full
-    // size, the same diameter as the round composer buttons beside it.
-    svg.setAttribute('viewBox', grokRenderer ? '2 2 16 16' : '0 0 20 20');
+    // Grok Bot: the canvas is a 28-unit chip around the 20-unit ring canvas, so
+    // the chip spans the measured diameter of the round composer buttons beside
+    // it (28px: one unit per pixel) and the ring inside it is 16px across.
+    const grokChip = grokRenderer && !preview;
+    svg.setAttribute('viewBox', grokChip ? '-4 -4 28 28' : '0 0 20 20');
     svg.setAttribute('aria-hidden', 'true');
+    if (grokChip) {
+      dial.dataset.wingmanDialStyle = 'chip';
+      const chip = document.createElementNS(svgNamespace, 'circle');
+      chip.setAttribute('class', 'codex-helper-chip');
+      chip.setAttribute('data-segment', 'chip');
+      chip.setAttribute('cx', '10');
+      chip.setAttribute('cy', '10');
+      chip.setAttribute('r', '13.5');
+      svg.appendChild(chip);
+    }
     const background = makeSegment('background', 'codex-helper-background', true);
     const unused = makeSegment('unused', 'codex-helper-unused', false, preview);
     const within = makeSegment('within', 'codex-helper-within');

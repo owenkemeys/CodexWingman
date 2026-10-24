@@ -12,6 +12,33 @@ public static class T3WebAppIcon
 {
     public static readonly TimeSpan RefreshAfter = TimeSpan.FromDays(7);
 
+    /// <summary>The sizes the cached .ico holds, so Windows never has to rescale for the taskbar, Start, Alt+Tab or Explorer.</summary>
+    public static readonly IReadOnlyList<int> IcoSizes = [16, 20, 24, 32, 40, 48, 64, 256];
+
+    /// <summary>
+    /// The downloaded PNG to draw a given icon size from: the smallest one at least that size (a downscale keeps
+    /// it sharp), else the largest. Null when there are no images.
+    /// </summary>
+    public static byte[]? SourceFor(int size, IReadOnlyList<byte[]> pngs)
+    {
+        var sized = pngs.Select(png => (Png: png, Width: PngSize(png)?.Width ?? 0)).Where(item => item.Width > 0).ToList();
+        if (sized.Count == 0) return null;
+        return (sized.Where(item => item.Width >= size).OrderBy(item => item.Width).FirstOrDefault() is { Png: not null } larger
+            ? larger : sized.OrderByDescending(item => item.Width).First()).Png;
+    }
+
+    /// <summary>The image widths an .ico declares (256 for a stored 0), or empty when the bytes are not an .ico.</summary>
+    public static IReadOnlyList<int> IcoImageSizes(byte[] ico)
+    {
+        if (!IsIco(ico)) return [];
+        var count = ico[4] | ico[5] << 8;
+        if (ico.Length < 6 + 16 * count) return [];
+        return Enumerable.Range(0, count).Select(i => ico[6 + 16 * i] == 0 ? 256 : ico[6 + 16 * i]).ToList();
+    }
+
+    /// <summary>True when a cached .ico already holds every size in <see cref="IcoSizes"/> (older caches are rebuilt).</summary>
+    public static bool HasAllSizes(byte[] ico) => IcoImageSizes(ico).Order().SequenceEqual(IcoSizes);
+
     public static string IconPath(string wingmanDataRoot) => Path.Combine(wingmanDataRoot, "t3-web", "app-icon.ico");
 
     /// <summary>True when the cached icon is missing or older than <see cref="RefreshAfter"/>.</summary>
@@ -62,11 +89,15 @@ public static class T3WebAppIcon
         return (BigEndian(png, 16), BigEndian(png, 20));
     }
 
-    /// <summary>An .ico holding the PNG images as they are (Windows Vista and later read PNG icon entries).</summary>
+    /// <summary>
+    /// An .ico holding the PNG images as they are (Windows Vista and later read PNG icon entries), smallest first;
+    /// one entry per size.
+    /// </summary>
     public static byte[] BuildIco(IReadOnlyList<byte[]> pngs)
     {
         var images = pngs.Select(png => (Png: png, Size: PngSize(png) ?? throw new InvalidDataException("Not a PNG icon.")))
             .Where(image => image.Size.Width is > 0 and <= 256 && image.Size.Height is > 0 and <= 256)
+            .GroupBy(image => image.Size.Width).Select(group => group.First())
             .OrderBy(image => image.Size.Width).ToList();
         if (images.Count == 0) throw new InvalidDataException("No icon of 256 pixels or less.");
         using var stream = new MemoryStream();

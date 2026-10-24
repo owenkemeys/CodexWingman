@@ -29,6 +29,8 @@ internal sealed class T3WebLauncher(string wingmanDataRoot, Func<HelperSettings>
     {
         var cached = File.Exists(AppIconPath) ? AppIconPath : null;
         var written = cached is null ? (DateTime?)null : File.GetLastWriteTimeUtc(AppIconPath);
+        // A cache from before the multi-size icon (only the downloaded sizes) is rebuilt at once.
+        if (cached is not null && !HasAllSizes(cached)) written = null;
         if (!T3WebAppIcon.NeedsRefresh(written, DateTime.UtcNow) || DateTime.UtcNow < nextIconAttemptUtc || Origin() is not { } origin)
             return (cached, false);
         nextIconAttemptUtc = DateTime.UtcNow + TimeSpan.FromMinutes(10);
@@ -45,7 +47,9 @@ internal sealed class T3WebLauncher(string wingmanDataRoot, Func<HelperSettings>
                 var bytes = await IconHttp.GetByteArrayAsync(url, cancellationToken);
                 if (T3WebAppIcon.PngSize(bytes) is not null) pngs.Add(bytes);
             }
-            var ico = T3WebAppIcon.BuildIco(pngs);
+            var ico = T3WebAppIcon.BuildIco(T3WebAppIcon.IcoSizes
+                .Select(size => IconImages.ScaledPng(T3WebAppIcon.SourceFor(size, pngs) ?? throw new InvalidDataException("No PNG icon."), size))
+                .ToList());
             if (cached is not null && File.ReadAllBytes(cached).AsSpan().SequenceEqual(ico))
             {
                 File.SetLastWriteTimeUtc(AppIconPath, DateTime.UtcNow);
@@ -64,6 +68,12 @@ internal sealed class T3WebLauncher(string wingmanDataRoot, Func<HelperSettings>
             Debug.WriteLine($"[T3 web icon] {error.Message}");
             return (cached, false);
         }
+    }
+
+    private static bool HasAllSizes(string path)
+    {
+        try { return T3WebAppIcon.HasAllSizes(File.ReadAllBytes(path)); }
+        catch (Exception error) when (error is IOException or UnauthorizedAccessException) { return true; }
     }
 
     /// <summary>The T3 web origin: local setting first, then the origin remembered from the last pairing.</summary>

@@ -1,7 +1,7 @@
 # Usage dials
 
-- Helper generation: native-slot-v33
-- Manifest version: 1.6.0
+- Helper generation: native-slot-v34
+- Manifest version: 1.7.0
 - Helper ID: `usage-dials`
 
 ## Purpose and behavior
@@ -67,7 +67,7 @@ The `t3-web` target runs the T3 renderer branch unchanged inside Wingman's own C
 
 ## Grok Bot
 
-The `grok-bot` target shows one weekly dial in Grok Bot's composer, inside `.sand-prompt-actions-trailing` immediately before the send/mic cluster (`.sand-prompt-cta-cluster`). These are Grok Bot's own semantic class markers; its hashed style classes are never used. The dial keeps the Codex/T3 geometry and pacing colours and inherits the composer icon colour.
+The `grok-bot` target shows one weekly dial in Grok Bot's composer, inside `.sand-prompt-actions-trailing` immediately before the send/mic cluster (`.sand-prompt-cta-cluster`). These are Grok Bot's own semantic class markers; its hashed style classes are never used. The dial is a small 16px ring inside a grey chip that matches Grok Bot's mic button (fill #282828, rim #343434, icon grey #979797; used arc #a3a3a3, a touch brighter). Usage ahead of the week's pace shows as a muted amber (#a9843c; muted red #b5564f at danger), the elapsed-but-unused marker as a quiet grey. The chip has the measured diameter of the round composer buttons (28px live) at the row's own 8px gap and follows them when they resize. The hover popup keeps the plain enlarged ring.
 
 Numbers come from Grok Bot's own live in-app usage store (see Grok Bot usage source below). Grok Bot's saved weekly-usage cache is only a labelled fallback: Wingman reads the `weekly-usage.cache` entry in `%APPDATA%\Grok Bot\sand-client-persistence` (read-only) and passes `percentUsed`, `nextResetMs` and `readAtMs` as `files.grokBotUsage`. Account ids, plan names and credentials are never passed. The dial shows the whole percent Grok Bot's account menu shows. Pacing assumes Grok Bot's weekly window is 7 days ending at `nextResetMs`. A saved reading older than 24 hours, past its own `expiresAtMs`, or missing, with no live store, shows a question mark with an explanation instead of a number. To keep the live value current the helper only asks Grok Bot's own throttled `refresh()`; Wingman itself makes no network calls to Grok Bot's servers, holds no Grok Bot credentials and never edits Grok Bot files. If Grok Bot renames its composer markers the dial waits and renderHealth reports `waiting`.
 

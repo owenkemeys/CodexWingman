@@ -269,7 +269,16 @@ test('Grok Bot: the dial has the same diameter as the round composer buttons and
     assert.equal(weekly.style.width, '28px')
     assert.equal(svg.style.width, '28px')
     assert.equal(svg.style.height, '28px')
-    assert.equal(svg.getAttribute('viewBox'), '2 2 16 16', 'the ring itself spans the full diameter')
+    assert.equal(svg.getAttribute('viewBox'), '-4 -4 28 28', 'the chip spans the full diameter; the ring inside it is 16 of 28 units')
+    assert.equal(weekly.dataset.wingmanDialStyle, 'chip', 'option B: ring in a mic-style grey chip')
+    const chip = svg.querySelector('[data-segment="chip"]')
+    assert.ok(chip && svg.children[0] === chip, 'the chip is painted under the ring')
+    assert.equal(chip.getAttribute('r'), '13.5', '28px chip with its 1px rim inside the edge')
+    assert.equal(svg.querySelector('[data-segment="background"]').getAttribute('r'), '7', 'ring radius 7 (16px across with its 2px stroke)')
+    const css = fixture.document.querySelector('[data-codex-helper-style="usage-dials"]').textContent
+    assert.match(css, /\[data-wingman-dial-style="chip"\] \.codex-helper-chip \{ fill: #282828; stroke: #343434; stroke-width: 1; \}/)
+    assert.match(css, /\[data-wingman-dial-style="chip"\] \{ --codex-helper-usage-neutral: #a3a3a3; \}/)
+    assert.match(css, /\[data-wingman-dial-style="chip"\]\[data-state="warning"\] \{ --codex-helper-usage-alert: #a9843c; \}/)
     assert.equal(bank.dataset.wingmanDialDiameter, '28')
     for (const button of [mic, send]) button._rect = { left: 640, top: 698, width: 36, height: 36 }
     controller.update({ grokBot: { available: true, percentUsed: 40, nextResetMs: Date.now() + 86400000, readAtMs: Date.now() } })
