@@ -170,11 +170,16 @@ internal static class Program
             var t3Ico = T3WebAppIcon.BuildIco(T3WebAppIcon.IcoSizes.Select(size => IconImages.ScaledPng(T3WebAppIcon.SourceFor(size, t3Sources)!, size)).ToList());
             Equal("16,20,24,32,40,48,64,256", string.Join(",", T3WebAppIcon.IcoImageSizes(t3Ico)), "multi-size T3 web icon");
             Equal(true, T3WebAppIcon.HasAllSizes(t3Ico), "complete icon is not rebuilt");
-            foreach (var size in T3WebAppIcon.IcoSizes)
+            // System.Drawing reads the 16-64 px entries; the 256 px entry is PNG-compressed (read by the shell, not by
+            // System.Drawing), so its stored image is checked directly.
+            foreach (var size in T3WebAppIcon.IcoSizes.Where(size => size < 256))
             {
                 using var icon = new System.Drawing.Icon(new MemoryStream(t3Ico), size, size);
                 Equal(size, icon.Width, $"Windows picks the {size} px image");
             }
+            var last = 6 + 16 * (T3WebAppIcon.IcoSizes.Count - 1);
+            var largest = t3Ico.AsSpan(BitConverter.ToInt32(t3Ico, last + 12), BitConverter.ToInt32(t3Ico, last + 8)).ToArray();
+            Equal((256, 256), T3WebAppIcon.PngSize(largest)!.Value, "the 256 px entry is a 256 px PNG");
             NativeUpdaterTests.Run(root);
             Console.WriteLine(JsonSerializer.Serialize(new { status = "pass", shortcuts = observed }));
         }
