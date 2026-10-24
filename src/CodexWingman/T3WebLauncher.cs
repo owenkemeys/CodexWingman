@@ -17,6 +17,54 @@ internal sealed class T3WebLauncher(string wingmanDataRoot, Func<HelperSettings>
     public string RuntimePath { get; } = T3WebLaunchPolicy.RuntimePath(wingmanDataRoot);
     public string DataDirectory { get; } = T3WebLaunchPolicy.DataDirectory(wingmanDataRoot);
     public string PairingStatePath { get; } = T3WebLaunchPolicy.PairingStatePath(wingmanDataRoot);
+    public string AppIconPath { get; } = T3WebAppIcon.IconPath(wingmanDataRoot);
+    private static readonly HttpClient IconHttp = new() { Timeout = TimeSpan.FromSeconds(10) };
+    private DateTime nextIconAttemptUtc = DateTime.MinValue;
+
+    /// <summary>
+    /// T3's own icon, cached from the site's public web app manifest (refreshed weekly; a failed fetch is
+    /// retried after 10 minutes). Returns the .ico path or null when none is cached yet, and whether it changed.
+    /// </summary>
+    public async Task<(string? Path, bool Changed)> EnsureAppIconAsync(CancellationToken cancellationToken = default)
+    {
+        var cached = File.Exists(AppIconPath) ? AppIconPath : null;
+        var written = cached is null ? (DateTime?)null : File.GetLastWriteTimeUtc(AppIconPath);
+        if (!T3WebAppIcon.NeedsRefresh(written, DateTime.UtcNow) || DateTime.UtcNow < nextIconAttemptUtc || Origin() is not { } origin)
+            return (cached, false);
+        nextIconAttemptUtc = DateTime.UtcNow + TimeSpan.FromMinutes(10);
+        try
+        {
+            string? html = null;
+            try { html = await IconHttp.GetStringAsync(origin, cancellationToken); }
+            catch (HttpRequestException) { }
+            var manifestUrl = T3WebAppIcon.ManifestUrl(html, origin);
+            var manifest = await IconHttp.GetStringAsync(manifestUrl, cancellationToken);
+            var pngs = new List<byte[]>();
+            foreach (var url in T3WebAppIcon.PngIcons(manifest, manifestUrl).Take(4))
+            {
+                var bytes = await IconHttp.GetByteArrayAsync(url, cancellationToken);
+                if (T3WebAppIcon.PngSize(bytes) is not null) pngs.Add(bytes);
+            }
+            var ico = T3WebAppIcon.BuildIco(pngs);
+            if (cached is not null && File.ReadAllBytes(cached).AsSpan().SequenceEqual(ico))
+            {
+                File.SetLastWriteTimeUtc(AppIconPath, DateTime.UtcNow);
+                return (cached, false);
+            }
+            Directory.CreateDirectory(Path.GetDirectoryName(AppIconPath)!);
+            var temporary = AppIconPath + ".tmp";
+            File.WriteAllBytes(temporary, ico);
+            File.Move(temporary, AppIconPath, overwrite: true);
+            return (AppIconPath, true);
+        }
+        catch (Exception error) when (error is HttpRequestException or IOException or UnauthorizedAccessException
+            or InvalidDataException or System.Text.Json.JsonException
+            || (error is OperationCanceledException && !cancellationToken.IsCancellationRequested))
+        {
+            Debug.WriteLine($"[T3 web icon] {error.Message}");
+            return (cached, false);
+        }
+    }
 
     /// <summary>The T3 web origin: local setting first, then the origin remembered from the last pairing.</summary>
     public Uri? Origin()
@@ -125,12 +173,25 @@ internal sealed class T3WebLauncher(string wingmanDataRoot, Func<HelperSettings>
             || (error is OperationCanceledException && !cancellationToken.IsCancellationRequested))
         { return 0; }
         if (CdpBrowserCommand.BrowserProcessId(result) is not { } pid) return 0;
+        // T3's own icon (not Wingman's) for the Start shortcut the taskbar matches by AppUserModelID, and for the
+        // window's relaunch icon, so the running button and a pin made from it both show T3.
+        var (icon, changed) = await EnsureAppIconAsync(cancellationToken);
+        if (changed && icon is not null)
+        {
+            try { LauncherShortcuts.EnsureT3Web(wingmanExecutable, profileOverride, icon); }
+            catch (Exception error) when (error is IOException or UnauthorizedAccessException or System.Runtime.InteropServices.COMException or NotSupportedException)
+            { Debug.WriteLine($"[T3 web shortcut icon] {error.Message}"); }
+        }
         return WindowAppIdentity.Apply(pid,
             WingmanLaunchOptions.AppUserModelIdFor(WingmanLaunchTarget.T3Web),
             "\"" + wingmanExecutable + "\" " + WingmanLaunchOptions.ShortcutArguments(WingmanLaunchTarget.T3Web, profileOverride),
             LauncherShortcuts.T3WebShortcutName,
-            wingmanExecutable + ",0");
+            T3WebIconResource(wingmanExecutable, icon));
     }
+
+    /// <summary>The icon resource for T3 Code (web): T3's cached icon, or Wingman's until one is cached.</summary>
+    public static string T3WebIconResource(string wingmanExecutable, string? appIcon) =>
+        (appIcon is not null && File.Exists(appIcon) ? appIcon : wingmanExecutable) + ",0";
 
     /// <summary>Brings the existing T3 web window to the front (restoring it if minimized) through its own DevTools.</summary>
     private static async Task<bool> ActivateAsync(int port, CodexTarget page, CancellationToken cancellationToken)

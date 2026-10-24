@@ -25,6 +25,7 @@ internal static class AppTargetTests
         MenuPolicy();
         TrayMenuTree();
         AppNames();
+        T3WebIcon();
         AppLinesDropToClosed();
         RepairAndStartupAreQuiet();
         OpenOnLaunchChoices();
@@ -326,6 +327,54 @@ internal static class AppTargetTests
         True(web.Details.Contains("of 1 visible T3 Code (web) window", StringComparison.Ordinal), "counts live in Status details: " + web.Details);
     }
 
+    private static byte[] Png(int size)
+    {
+        var png = new byte[33];
+        new byte[] { 0x89, 0x50, 0x4E, 0x47, 0x0D, 0x0A, 0x1A, 0x0A, 0, 0, 0, 13, (byte)'I', (byte)'H', (byte)'D', (byte)'R' }.CopyTo(png, 0);
+        png[18] = (byte)(size >> 8); png[19] = (byte)size; png[22] = (byte)(size >> 8); png[23] = (byte)size;
+        return png;
+    }
+
+    /// <summary>Round 3d: T3 Code (web) shows T3's own icon, from the site's public manifest, cached as an .ico.</summary>
+    private static void T3WebIcon()
+    {
+        var origin = new Uri(Origin);
+        // The manifest T3 serves (shape as on the trial host, 2026-10-23).
+        const string manifest = """
+            { "name": "T3 Code", "icons": [
+              { "src": "/favicon-32x32.png", "sizes": "32x32", "type": "image/png" },
+              { "src": "/apple-touch-icon.png", "sizes": "180x180", "type": "image/png" },
+              { "src": "/mask.png", "sizes": "512x512", "type": "image/png", "purpose": "maskable" },
+              { "src": "https://other.example/evil.png", "sizes": "256x256", "type": "image/png" } ] }
+            """;
+        Equal(new Uri(origin, "/manifest.webmanifest"), T3WebAppIcon.ManifestUrl("<link rel=\"manifest\" href=\"/manifest.webmanifest\" />", origin), "manifest link");
+        Equal(new Uri(origin, "/manifest.webmanifest"), T3WebAppIcon.ManifestUrl(null, origin), "default manifest path");
+        Equal(new Uri(origin, "/manifest.webmanifest"), T3WebAppIcon.ManifestUrl("<link rel=\"manifest\" href=\"https://other.example/m.json\">", origin), "other-origin manifest ignored");
+        var icons = T3WebAppIcon.PngIcons(manifest, new Uri(origin, "/manifest.webmanifest"));
+        Equal("/apple-touch-icon.png|/favicon-32x32.png", string.Join("|", icons.Select(icon => icon.AbsolutePath)), "PNG app icons, largest first; maskable and other origins skipped");
+        True(T3WebAppIcon.PngSize(Png(180)) == (180, 180), "PNG size from IHDR");
+        True(T3WebAppIcon.PngSize([1, 2, 3]) is null, "not a PNG");
+        var ico = T3WebAppIcon.BuildIco([Png(180), Png(32)]);
+        True(T3WebAppIcon.IsIco(ico) && ico[4] == 2, "an .ico with two images");
+        Equal(32, (int)ico[6], "smallest image first");
+        Equal(180, (int)ico[22], "180 px entry");
+        Equal(6 + 32, BitConverter.ToInt32(ico, 6 + 12), "first image right after the directory");
+        Equal(0, (int)T3WebAppIcon.BuildIco([Png(256)])[6], "256 px is stored as 0");
+        True(T3WebAppIcon.NeedsRefresh(null, DateTime.UtcNow) && T3WebAppIcon.NeedsRefresh(DateTime.UtcNow.AddDays(-8), DateTime.UtcNow)
+            && !T3WebAppIcon.NeedsRefresh(DateTime.UtcNow.AddDays(-1), DateTime.UtcNow), "weekly refresh");
+        Equal(Path.Combine("root", "t3-web", "app-icon.ico"), T3WebAppIcon.IconPath("root"), "cache path");
+        // Wiring: the Start shortcut (matched by AppUserModelID) and the window's relaunch icon both use T3's icon.
+        var source = Path.Combine(RepositoryRoot(), "src", "CodexWingman");
+        var shortcuts = File.ReadAllText(Path.Combine(source, "LauncherShortcuts.cs"));
+        True(shortcuts.Contains("item.Target == WingmanLaunchTarget.T3Web ? T3WebLauncher.T3WebIconResource(executable, t3WebIcon)", StringComparison.Ordinal),
+            "T3 Code (web) Start shortcut uses T3's icon");
+        var launcher = File.ReadAllText(Path.Combine(source, "T3WebLauncher.cs"));
+        True(launcher.Contains("T3WebIconResource(wingmanExecutable, icon));", StringComparison.Ordinal), "window relaunch icon is T3's");
+        var identity = File.ReadAllText(Path.Combine(source, "WindowAppIdentity.cs"));
+        True(identity.Contains("if (hasId) Clear(store, idKey);", StringComparison.Ordinal), "an open window picks up the new icon");
+        Equal("CodexWingman.Desktop.v1.T3Web", WingmanLaunchOptions.AppUserModelIdFor(WingmanLaunchTarget.T3Web), "AppUserModelID unchanged, so grouping and pins keep working");
+    }
+
     /// <summary>One name per app, the same in the menu line, dialogs and balloons.</summary>
     private static void AppNames()
     {
@@ -388,7 +437,8 @@ internal static class AppTargetTests
     }
 
     private static TrayMenuNode Line(string text, IEnumerable<string>? items = null, string? tooltip = null) =>
-        new(text, tooltip, Children: (items ?? TrayMenuLayout.AppFlyout.Select(TrayMenuLayout.Label))
+        new(text, tooltip, Children: (items ?? (TrayMenuCheck.AppOf(text) is { } app ? TrayMenuLayout.FlyoutLabels(app)
+                : TrayMenuLayout.AppFlyout.Select(TrayMenuLayout.Label)))
             .Select(item => new TrayMenuNode(item)).ToList());
 
     private static void TrayMenuTree()
@@ -416,8 +466,20 @@ internal static class AppTargetTests
         Equal(0, TrayMenuCheck.Problems(tree).Count, "contract holds: " + string.Join("; ", TrayMenuCheck.Problems(tree)));
         var lines = TrayMenuCheck.AppLines(tree);
         Equal(4, lines.Count, "four app lines");
-        True(lines.All(line => line.Children!.Select(child => child.Text).SequenceEqual(lines[0].Children!.Select(child => child.Text))),
-            "every app line has the identical item list");
+        // Identical flyouts, except Codex's first item: "New window" (it opens an additional Codex window).
+        True(lines.Skip(1).All(line => line.Children!.Select(child => child.Text).SequenceEqual(labels)),
+            "T3 Code, T3 Code (web) and Grok Bot have the identical item list");
+        Equal("New window|Repair|Status details...|-|Open when Wingman starts", string.Join("|", lines[0].Children!.Select(child => child.Text)),
+            "Codex differs only in its first label");
+        Equal(1, lines[0].Children!.Select(child => child.Text).Zip(labels).Count(pair => pair.First != pair.Second), "exactly one label differs");
+        foreach (var app in TrayMenuLayout.Apps.Where(app => app != WingmanLaunchTarget.Codex))
+            Equal("Open window", TrayMenuLayout.Label(app, AppFlyoutItem.OpenWindow), TrayMenuLayout.AppName(app) + " keeps Open window");
+        var codexOpenWindow = tree.ToList();
+        codexOpenWindow[0] = Line("Codex: Closed", labels);
+        True(TrayMenuCheck.Problems(codexOpenWindow).Any(problem => problem.Contains("Codex", StringComparison.Ordinal)), "Codex with Open window is caught");
+        var grokNewWindow = tree.ToList();
+        grokNewWindow[3] = Line("Grok Bot: Running", TrayMenuLayout.FlyoutLabels(WingmanLaunchTarget.Codex));
+        True(TrayMenuCheck.Problems(grokNewWindow).Any(problem => problem.Contains("Grok Bot", StringComparison.Ordinal)), "New window on another app is caught");
         True(lines.All(line => line.ToolTip is null), "no first-layer tooltips");
 
         var withTooltip = tree.ToList();
@@ -435,7 +497,7 @@ internal static class AppTargetTests
         True(TrayMenuLayout.LineStates.Contains("Running") && TrayMenuLayout.LineStates.Contains("Closed") && TrayMenuLayout.LineStates.Contains("Needs repair")
             && !TrayMenuLayout.LineStates.Contains("OK"), "line states: Running, Closed, Needs repair (no OK)");
         var reordered = tree.ToList();
-        reordered[0] = Line("Codex: Closed", [labels[1], labels[0], .. labels[2..]]);
+        reordered[2] = Line("T3 Code (web): Running", [labels[1], labels[0], .. labels[2..]]);
         True(TrayMenuCheck.Problems(reordered).Count > 0, "a different order is caught");
 
         // Structural guard on the tray source: lines come only from AppFlyoutMenu and nothing sets a status tooltip.

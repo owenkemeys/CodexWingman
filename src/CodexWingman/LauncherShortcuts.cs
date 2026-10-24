@@ -12,7 +12,8 @@ internal static class LauncherShortcuts
     /// Creates or refreshes Wingman's Start shortcuts. The T3 web shortcut is added only when T3 web can
     /// work on this PC. Shortcuts are never pinned; pinning stays the user's choice.
     /// </summary>
-    public static string[] Ensure(string executable, string? localAppData = null, string? programsFolder = null, bool includeT3Web = false)
+    public static string[] Ensure(string executable, string? localAppData = null, string? programsFolder = null, bool includeT3Web = false,
+        string? t3WebIcon = null)
     {
         executable = Path.GetFullPath(executable);
         if (!File.Exists(executable) || !Directory.Exists(Path.Combine(Path.GetDirectoryName(executable)!, "Helpers")))
@@ -33,8 +34,29 @@ internal static class LauncherShortcuts
         return shortcuts.Select(item => Save(Path.Combine(programsFolder, item.Name + ".lnk"),
             executable, item.Target == WingmanLaunchTarget.Preferences
                 ? WingmanLaunchOptions.RelaunchArguments(localAppData)
-                : WingmanLaunchOptions.ShortcutArguments(item.Target, localAppData), item.Name, item.Id)).ToArray();
+                : WingmanLaunchOptions.ShortcutArguments(item.Target, localAppData), item.Name, item.Id,
+            item.Target == WingmanLaunchTarget.T3Web ? T3WebLauncher.T3WebIconResource(executable, t3WebIcon) : executable + ",0")).ToArray();
     }
+
+    /// <summary>
+    /// Re-saves only the T3 Code (web) Start shortcut (same path, target and AppUserModelID) with T3's icon,
+    /// then tells the shell that shortcut changed so the taskbar re-reads its icon.
+    /// </summary>
+    public static string EnsureT3Web(string executable, string? localAppData, string t3WebIcon)
+    {
+        executable = Path.GetFullPath(executable);
+        var programsFolder = Environment.GetFolderPath(Environment.SpecialFolder.Programs);
+        var path = Save(Path.Combine(programsFolder, T3WebShortcutName + ".lnk"), executable,
+            WingmanLaunchOptions.ShortcutArguments(WingmanLaunchTarget.T3Web, localAppData), T3WebShortcutName,
+            WingmanLaunchOptions.AppUserModelIdFor(WingmanLaunchTarget.T3Web), T3WebLauncher.T3WebIconResource(executable, t3WebIcon));
+        var pointer = Marshal.StringToHGlobalUni(path);
+        try { SHChangeNotify(0x00002000 /* SHCNE_UPDATEITEM */, 0x0005 /* SHCNF_PATHW */, pointer, IntPtr.Zero); }
+        finally { Marshal.FreeHGlobal(pointer); }
+        return path;
+    }
+
+    [DllImport("shell32.dll")]
+    private static extern void SHChangeNotify(int eventId, uint flags, IntPtr item1, IntPtr item2);
 
     /// <summary>True when this profile has a T3 web address or a reachable pairing folder (set up or found via the sync share).</summary>
     public static bool T3WebAvailable(string? localAppData)
@@ -63,7 +85,7 @@ internal static class LauncherShortcuts
             ? Path.GetFullPath(profile) : null;
     }
 
-    private static string Save(string path, string executable, string arguments, string name, string appId)
+    private static string Save(string path, string executable, string arguments, string name, string appId, string iconLocation)
     {
         var temporary = Path.Combine(Path.GetDirectoryName(path)!, ".wingman-" + Guid.NewGuid().ToString("N") + ".lnk");
         object? shell = null;
@@ -78,7 +100,7 @@ internal static class LauncherShortcuts
             writable.TargetPath = executable;
             writable.Arguments = arguments;
             writable.WorkingDirectory = Path.GetDirectoryName(executable);
-            writable.IconLocation = executable + ",0";
+            writable.IconLocation = iconLocation;
             writable.Description = name + " with Wingman Helpers";
             writable.Save();
 

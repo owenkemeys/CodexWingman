@@ -41,11 +41,15 @@ internal static class WindowAppIdentity
         try
         {
             var idKey = new PropertyKey(AppUserModelFormat, 5);
-            if (CurrentString(store, idKey) == appId) return false;
-            // Relaunch properties first: Windows reads them when the ID is set.
+            var iconKey = new PropertyKey(AppUserModelFormat, 3);
+            var hasId = CurrentString(store, idKey) == appId;
+            if (hasId && CurrentString(store, iconKey) == iconResource) return false;
+            // Relaunch properties first: Windows reads them when the ID is set. When only the icon changed,
+            // the ID is cleared and set again so the taskbar re-reads them (the button regroups in place).
             Set(store, new PropertyKey(AppUserModelFormat, 2), relaunchCommand);
-            Set(store, new PropertyKey(AppUserModelFormat, 3), iconResource);
+            Set(store, iconKey, iconResource);
             Set(store, new PropertyKey(AppUserModelFormat, 4), displayName);
+            if (hasId) Clear(store, idKey);
             Set(store, idKey, appId);
             return true;
         }
@@ -61,6 +65,12 @@ internal static class WindowAppIdentity
             return variant.Type == 31 && variant.Pointer != IntPtr.Zero ? Marshal.PtrToStringUni(variant.Pointer) : null;
         }
         finally { PropVariantClear(ref variant); }
+    }
+
+    private static void Clear(IPropertyStore store, PropertyKey key)
+    {
+        var empty = default(PropVariant);
+        store.SetValue(in key, in empty);
     }
 
     private static void Set(IPropertyStore store, PropertyKey key, string value)

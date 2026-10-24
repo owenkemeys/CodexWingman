@@ -102,7 +102,9 @@ internal static class Program
     private static void EnsureShortcuts(WingmanLaunchOptions options)
     {
         var profile = LauncherShortcuts.CurrentProfileOverride(options);
-        LauncherShortcuts.Ensure(Application.ExecutablePath, profile, includeT3Web: LauncherShortcuts.T3WebAvailable(options.LocalAppData));
+        var dataRoot = Path.GetDirectoryName(HelperSettingsStore.DefaultPath(options.LocalAppData))!;
+        LauncherShortcuts.Ensure(Application.ExecutablePath, profile, includeT3Web: LauncherShortcuts.T3WebAvailable(options.LocalAppData),
+            t3WebIcon: T3WebAppIcon.IconPath(dataRoot));
     }
 
     [DllImport("shell32.dll", CharSet = CharSet.Unicode)]

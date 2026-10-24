@@ -136,17 +136,17 @@ internal sealed class TrayApplicationContext : ApplicationContext
         openHelpersFolderItem = new ToolStripMenuItem("Open Helpers folder", null, OpenHelpersFolderClicked);
         reloadHelpersItem = new ToolStripMenuItem("Reload helpers", null, ReloadHelpersClicked);
         RebuildHelpersMenu();
-        // Every app line gets the same flyout (TrayMenuLayout): Open window, Repair, Status details...,
-        // separator, Open on launch. What each action does is app-specific.
-        codexFlyout = new AppFlyoutMenu(codexMenuItem, OpenWindowClicked, RepairClicked, StatusDetailsClicked,
+        // Every app line gets the same flyout (TrayMenuLayout): Open window (Codex: New window), Repair,
+        // Status details..., separator, Open when Wingman starts. What each action does is app-specific.
+        codexFlyout = new AppFlyoutMenu(WingmanLaunchTarget.Codex, codexMenuItem, OpenWindowClicked, RepairClicked, StatusDetailsClicked,
             settings.OpensOnLaunch(WingmanLaunchTarget.Codex));
-        t3Flyout = new AppFlyoutMenu(t3CodeMenuItem, T3OpenWindowClicked, T3RepairClicked, T3StatusDetailsClicked,
+        t3Flyout = new AppFlyoutMenu(WingmanLaunchTarget.T3Code, t3CodeMenuItem, T3OpenWindowClicked, T3RepairClicked, T3StatusDetailsClicked,
             settings.OpensOnLaunch(WingmanLaunchTarget.T3Code));
         SetT3MenuStatus();
-        t3Web.Flyout = new AppFlyoutMenu(t3Web.Menu, async (_, _) => await EnsureT3WebReadyAsync(), async (_, _) => await RepairT3WebAsync(),
+        t3Web.Flyout = new AppFlyoutMenu(WingmanLaunchTarget.T3Web, t3Web.Menu, async (_, _) => await EnsureT3WebReadyAsync(), async (_, _) => await RepairT3WebAsync(),
             (_, _) => t3Web.ShowStatusDetails(), settings.OpensOnLaunch(WingmanLaunchTarget.T3Web));
         t3Web.SetMenuStatus();
-        grok.Flyout = new AppFlyoutMenu(grok.Menu, async (_, _) => await EnsureGrokBotReadyAsync(), async (_, _) => await RepairGrokBotAsync(),
+        grok.Flyout = new AppFlyoutMenu(WingmanLaunchTarget.GrokBot, grok.Menu, async (_, _) => await EnsureGrokBotReadyAsync(), async (_, _) => await RepairGrokBotAsync(),
             (_, _) => grok.ShowStatusDetails(), settings.OpensOnLaunch(WingmanLaunchTarget.GrokBot));
         grok.SetMenuStatus();
         foreach (var (app, flyout) in new[] { (WingmanLaunchTarget.Codex, codexFlyout), (WingmanLaunchTarget.T3Code, t3Flyout),
