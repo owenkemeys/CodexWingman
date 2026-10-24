@@ -136,7 +136,13 @@ internal static class Program
                     "\"" + executable + "\" --launch=t3-web", LauncherShortcuts.T3WebShortcutName, executable + ",0");
                 Equal(true, applied >= 1, "window identity applied to a visible top-level window");
                 Equal(webId, WindowAppIdentity.Read(form.Handle), "window carries the T3 web identity");
-                Equal(0, WindowAppIdentity.Apply(Environment.ProcessId, webId, "unused", "unused", "unused"), "re-applying is a no-op");
+                Equal(0, WindowAppIdentity.Apply(Environment.ProcessId, webId, "unused", "unused", executable + ",0"), "re-applying the same identity and icon is a no-op");
+                // T3's icon arrives later: an open window takes it and keeps its identity, then it's a no-op again.
+                var t3IconResource = Path.Combine(root, "t3-web", "app-icon.ico") + ",0";
+                Equal(true, WindowAppIdentity.Apply(Environment.ProcessId, webId,
+                    "\"" + executable + "\" --launch=t3-web", LauncherShortcuts.T3WebShortcutName, t3IconResource) >= 1, "a new icon is applied to an open window");
+                Equal(webId, WindowAppIdentity.Read(form.Handle), "identity kept after the icon update");
+                Equal(0, WindowAppIdentity.Apply(Environment.ProcessId, webId, "unused", "unused", t3IconResource), "re-applying after the icon update is a no-op");
                 form.Close();
             }
             foreach (var trailingProfile in new[] { Path.GetPathRoot(root)!, profile + "\\" })
