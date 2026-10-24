@@ -8,11 +8,11 @@ namespace CodexWingman;
 /// </summary>
 internal sealed class AppFlyoutMenu
 {
-    public AppFlyoutMenu(ToolStripMenuItem line, EventHandler open, EventHandler repair, EventHandler status, bool openOnLaunch)
+    public AppFlyoutMenu(WingmanLaunchTarget app, ToolStripMenuItem line, EventHandler open, EventHandler repair, EventHandler status, bool openOnLaunch)
     {
         Line = line;
         Line.ToolTipText = null;
-        OpenItem = new ToolStripMenuItem(TrayMenuLayout.Label(AppFlyoutItem.OpenWindow), null, open);
+        OpenItem = new ToolStripMenuItem(TrayMenuLayout.Label(app, AppFlyoutItem.OpenWindow), null, open);
         RepairItem = new ToolStripMenuItem(TrayMenuLayout.Label(AppFlyoutItem.Repair), null, repair);
         StatusItem = new ToolStripMenuItem(TrayMenuLayout.Label(AppFlyoutItem.StatusDetails), null, status);
         OpenOnLaunchItem = new ToolStripMenuItem(TrayMenuLayout.Label(AppFlyoutItem.OpenOnLaunch))

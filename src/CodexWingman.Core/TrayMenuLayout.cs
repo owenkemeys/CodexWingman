@@ -32,6 +32,17 @@ public static class TrayMenuLayout
         _ => throw new ArgumentOutOfRangeException(nameof(item)),
     };
 
+    /// <summary>
+    /// The label for one app's flyout item. Identical for every app except one: Codex's first item is
+    /// "New window", because it opens an additional native Codex window (Codex's own new-window action);
+    /// the other apps' "Open window" brings their window forward or opens one if none.
+    /// </summary>
+    public static string Label(WingmanLaunchTarget app, AppFlyoutItem item) =>
+        app == WingmanLaunchTarget.Codex && item == AppFlyoutItem.OpenWindow ? "New window" : Label(item);
+
+    public static IReadOnlyList<string> FlyoutLabels(WingmanLaunchTarget app) =>
+        AppFlyout.Select(item => Label(app, item)).ToArray();
+
     /// <summary>The app lines, top to bottom.</summary>
     public static IReadOnlyList<WingmanLaunchTarget> Apps { get; } =
         [WingmanLaunchTarget.Codex, WingmanLaunchTarget.T3Code, WingmanLaunchTarget.T3Web, WingmanLaunchTarget.GrokBot];
@@ -80,7 +91,14 @@ public static class TrayMenuCheck
     public static IReadOnlyList<TrayMenuNode> AppLines(IReadOnlyList<TrayMenuNode> root) =>
         root.Where(node => AppLinePrefixes.Any(prefix => node.Text.StartsWith(prefix, StringComparison.Ordinal))
             || node.Children?.Any(child => child.Text == TrayMenuLayout.Label(AppFlyoutItem.OpenWindow)
+                || child.Text == TrayMenuLayout.Label(WingmanLaunchTarget.Codex, AppFlyoutItem.OpenWindow)
                 || child.Text == TrayMenuLayout.Label(AppFlyoutItem.OpenOnLaunch)) == true).ToList();
+
+    /// <summary>The app a line belongs to, from its "&lt;app name&gt;:" prefix (longest name first).</summary>
+    public static WingmanLaunchTarget? AppOf(string text) => TrayMenuLayout.Apps
+        .OrderByDescending(app => TrayMenuLayout.AppName(app).Length)
+        .Select(app => (WingmanLaunchTarget?)app)
+        .FirstOrDefault(app => text.StartsWith(TrayMenuLayout.AppName(app!.Value) + ":", StringComparison.Ordinal));
 
     /// <summary>True for "&lt;app name&gt;: &lt;state&gt;" with one of the known app names and line states.</summary>
     public static bool IsLineText(string text) => TrayMenuLayout.Apps.Any(app =>
@@ -92,13 +110,15 @@ public static class TrayMenuCheck
         var problems = new List<string>();
         foreach (var node in root.Where(node => !string.IsNullOrEmpty(node.ToolTip)))
             problems.Add($"First-layer item \"{node.Text}\" has a tooltip.");
-        var expected = TrayMenuLayout.AppFlyout.Select(TrayMenuLayout.Label).ToArray();
         var lines = AppLines(root);
         if (lines.Count == 0) problems.Add("No app line found.");
         foreach (var line in lines)
         {
             if (!IsLineText(line.Text))
                 problems.Add($"\"{line.Text}\" is not an app name and a plain state (e.g. \"Codex: Closed\").");
+            // Same flyout for every app; only Codex's first item reads "New window".
+            var expected = AppOf(line.Text) is { } app ? TrayMenuLayout.FlyoutLabels(app)
+                : TrayMenuLayout.AppFlyout.Select(TrayMenuLayout.Label).ToArray();
             var actual = (line.Children ?? []).Select(child => child.Text).ToArray();
             if (!actual.SequenceEqual(expected))
                 problems.Add($"\"{line.Text}\" flyout is [{string.Join(" | ", actual)}], expected [{string.Join(" | ", expected)}].");
