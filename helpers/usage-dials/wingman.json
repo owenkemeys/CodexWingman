@@ -2,10 +2,13 @@
   "schemaVersion": 2,
   "id": "usage-dials",
   "name": "Usage dials",
-  "version": "1.5.5",
-  "description": "Shows provider usage limits beside the composer model picker or context dial.",
+  "version": "1.7.0",
+  "description": "Shows provider usage limits beside the composer model picker or context dial, in Codex, T3 Code (desktop or web) and Grok Bot.",
   "refreshSeconds": 60,
-  "capabilities": ["files.providerUsage"],
+  "capabilities": [
+    "files.providerUsage",
+    "files.grokBotUsage"
+  ],
   "targets": {
     "codex": {
       "apply": "apply.js",
@@ -13,6 +16,16 @@
     },
     "t3-code": {
       "backend": "backend.js",
+      "apply": "apply.js",
+      "remove": "remove.js"
+    },
+    "t3-web": {
+      "backend": "backend.js",
+      "apply": "apply.js",
+      "remove": "remove.js"
+    },
+    "grok-bot": {
+      "backend": "backend.grok.js",
       "apply": "apply.js",
       "remove": "remove.js"
     }

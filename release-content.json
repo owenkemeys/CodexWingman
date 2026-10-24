@@ -1,6 +1,9 @@
 {
-  "version": "2.0.1",
+  "version": "2.1.0",
   "highlights": [
-    "Show Wingman as the application name in Windows executable details and process descriptions."
+    "Open T3 Code in its own browser app window (T3 Code (web)), paired with your T3 server and shown with T3's own icon.",
+    "Add Grok Bot as a Helper target, with a weekly usage dial beside its composer buttons.",
+    "Show every app in one tray menu with plain Running or Closed states and a New window or Open command.",
+    "Bring an existing T3 Code (web) window forward instead of opening a second one."
   ]
 }

@@ -19,6 +19,12 @@ public static class HelperAppIds
 {
     public const string Codex = "codex";
     public const string T3Code = "t3-code";
+    /// <summary>The T3 web client in Wingman's own Chrome app window (an https origin from local settings).</summary>
+    public const string T3Web = "t3-web";
+    /// <summary>The Grok Bot desktop app, relaunched once with a localhost-only debugging port.</summary>
+    public const string GrokBot = "grok-bot";
+
+    public static bool IsKnown(string? value) => value is Codex or T3Code or T3Web or GrokBot;
 }
 
 public sealed record HelperEntrypoints(

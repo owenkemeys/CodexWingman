@@ -10,6 +10,14 @@ class LocalSetup(unittest.TestCase):
  def tearDown(self):self.temp.cleanup()
  def vault(self,name='Notes',parent=None):
   p=(parent or self.root)/name;(p/'.obsidian').mkdir(parents=True);return p
+ def test_t3_web_settings_are_explicit_https_only_and_preserve_others(self):
+  self.settings.write_text(json.dumps({'customSetting':'keep','t3Web':{'openOnLaunch':True}}))
+  _,new,_=setup.plan(self.settings,self.registry,t3_web_url='https://t3.example-tailnet.ts.net:8443/x?y=1',t3_pairing_folder='R:/ops/sync-share/requests/t3-pairing')
+  self.assertEqual(new['t3Web'],{'openOnLaunch':True,'url':'https://t3.example-tailnet.ts.net:8443','pairing':{'provider':'shared-folder','folder':'R:/ops/sync-share/requests/t3-pairing'}})
+  self.assertEqual(new['customSetting'],'keep')
+  with self.assertRaises(ValueError):setup.plan(self.settings,self.registry,t3_web_url='http://t3.example-tailnet.ts.net:8443')
+  _,untouched,_=setup.plan(self.settings,self.registry)
+  self.assertEqual(untouched['t3Web'],{'openOnLaunch':True})
  def test_no_vault_disables_only_optional_integration(self):
   old,new,notices=setup.plan(self.settings,self.registry)
   self.assertFalse(new['helperEnabled']['obsidian-links']);self.assertTrue(new['usageDialsEnabled'])

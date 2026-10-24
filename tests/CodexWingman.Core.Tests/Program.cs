@@ -49,6 +49,26 @@ static void TestWingmanLaunchOptions()
     Equal(string.Empty, WingmanLaunchOptions.RelaunchArguments(null), "normal updates omit empty native arguments");
     Equal("--launch=t3-code \"--local-app-data=" + Path.GetFullPath(profile) + "\"",
         WingmanLaunchOptions.ShortcutArguments(WingmanLaunchTarget.T3Code, profile), "shortcut quotes its settings profile");
+    Equal(WingmanCommand.T3WebRenewNow, WingmanLaunchOptions.Parse(["--t3-web-renew-now"]).Command, "renew command parses");
+    Equal(WingmanCommand.Close, WingmanLaunchOptions.Parse(["--close"]).Command, "close command parses");
+    Equal(WingmanCommand.None, WingmanLaunchOptions.Parse(["--launch=t3-web"]).Command, "launchers carry no command");
+    Throws<ArgumentException>(() => WingmanLaunchOptions.Parse(["--close", "--t3-web-renew-now"]), "one command at a time");
+    Equal(false, WingmanLaunchOptions.CommandEventName(WingmanCommand.Close) == WingmanLaunchOptions.CommandEventName(WingmanCommand.T3WebRenewNow),
+        "each command has its own event");
+    var channelRoot = Path.Combine(Path.GetTempPath(), "wingman-channel-" + Guid.NewGuid().ToString("N"));
+    Directory.CreateDirectory(channelRoot);
+    try
+    {
+        Equal(false, DevelopmentChannel.IsDevelopmentBuild(channelRoot), "no manifest is not a development build");
+        File.WriteAllText(Path.Combine(channelRoot, "development.json"), "{\"schema\":\"wingman.development-package.v1\",\"channel\":\"development\"}");
+        Equal(true, DevelopmentChannel.IsDevelopmentBuild(channelRoot), "development package enables test hooks");
+        File.WriteAllText(Path.Combine(channelRoot, "release.json"), "{}");
+        Equal(false, DevelopmentChannel.IsDevelopmentBuild(channelRoot), "a stable release never enables test hooks");
+        File.Delete(Path.Combine(channelRoot, "release.json"));
+        File.WriteAllText(Path.Combine(channelRoot, "development.json"), "{\"schema\":\"wingman.development-package.v1\",\"channel\":\"stable\"}");
+        Equal(false, DevelopmentChannel.IsDevelopmentBuild(channelRoot), "other channels never enable test hooks");
+    }
+    finally { Directory.Delete(channelRoot, true); }
     Throws<ArgumentException>(() => WingmanLaunchOptions.Parse(["--launch=other"]), "unknown app rejected");
     Throws<ArgumentException>(() => WingmanLaunchOptions.Parse(["--launch=codex", "--launch=t3-code"]), "ambiguous target rejected");
     Throws<ArgumentException>(() => WingmanLaunchOptions.Parse(["--local-app-data=relative"]), "relative settings profile rejected");
@@ -156,6 +176,7 @@ await TestReleaseDiscoveryAsync();
 TestSealedReleasePackage();
 await TestTargetAppIsolation();
 TestT3CodeLaunchPolicy();
+await AppTargetTests.RunAsync();
 Equal("CodexWingman.Desktop.Singleton.v1", WingmanIdentity.SingleInstanceName, "stable single-instance identity");
 Equal("CodexWingman.Desktop.Activate.v1", WingmanIdentity.ActivationEventName, "stable activation identity");
 Equal("Wingman", WingmanIdentity.RunningMenuText, "concise Wingman menu heading");
@@ -208,7 +229,7 @@ Equal(false, degradedHealth.DiagnosticText.Contains("fixture", StringComparison.
 Equal(true, degradedHealth.DiagnosticText.Contains("What to do:", StringComparison.Ordinal), "degraded user details give a concrete next action");
 Equal(true,
     degradedHealth.DiagnosticText.IndexOf("reload Helpers", StringComparison.OrdinalIgnoreCase)
-        < degradedHealth.DiagnosticText.IndexOf("Repair Codex and Helpers", StringComparison.Ordinal),
+        < degradedHealth.DiagnosticText.IndexOf("Repair in the Codex menu", StringComparison.Ordinal),
     "degraded Helper health recommends reload before Codex repair");
 
 var workingHealth = ConnectionHealthPolicy.Evaluate(
@@ -519,6 +540,40 @@ await ThrowsAsync<TimeoutException>(
 boundedEvaluation.Stop();
 Equal(true, boundedEvaluation.Elapsed < TimeSpan.FromSeconds(1), "production CDP timeout promptly returns control");
 Equal(true, neverReplySocket.AbortCalled, "timed-out CDP socket is aborted before disposal");
+
+// Pooled CDP: one persistent connection per endpoint, multiplexed by id, reopened after failure.
+{
+    var sockets = new List<EchoCdpWebSocket>();
+    using var pool = new CdpConnectionPool(() => { var socket = new EchoCdpWebSocket(); lock (sockets) sockets.Add(socket); return socket; },
+        TimeSpan.FromMinutes(2), sweep: false);
+    var pooledEvaluator = new PooledCdpEvaluator(pool, TimeSpan.FromSeconds(2));
+    var target = selectedTargets[0];
+    for (var round = 0; round < 25; round++)
+        Equal("echo", (await pooledEvaluator.EvaluateValueAsync(target, "window.__fixture"))?.GetString(), "pooled evaluation returns the value");
+    var parallel = await Task.WhenAll(Enumerable.Range(0, 20).Select(_ => pooledEvaluator.EvaluateValueAsync(target, "1")));
+    Equal(20, parallel.Count(value => value?.GetString() == "echo"), "parallel commands each get their own reply");
+    Equal(1, pool.OpenedCount, "45 commands share one connection");
+    Equal(true, sockets[0].SentIds.Distinct().Count() == sockets[0].SentIds.Count, "command ids are unique on a connection");
+    sockets[0].Fail();
+    await Task.Delay(50);
+    Equal("echo", (await pooledEvaluator.EvaluateValueAsync(target, "1"))?.GetString(), "a dropped connection is replaced on the next command");
+    Equal(2, pool.OpenedCount, "failure reopens exactly one connection");
+    pool.CloseIdle(DateTime.UtcNow + TimeSpan.FromMinutes(3));
+    Equal(0, pool.OpenCount, "idle connections close");
+    Equal(true, sockets[1].AbortCalled, "closing an idle connection aborts its socket");
+    await ThrowsAsync<InvalidOperationException>(
+        () => new PooledCdpEvaluator(pool).EvaluateValueAsync(target, "throw"), "renderer exceptions surface through the pool");
+}
+{
+    var silent = new List<NeverReplyCdpWebSocket>();
+    using var pool = new CdpConnectionPool(() => { var socket = new NeverReplyCdpWebSocket(); silent.Add(socket); return socket; }, sweep: false);
+    var pooledEvaluator = new PooledCdpEvaluator(pool, TimeSpan.FromMilliseconds(40));
+    await ThrowsAsync<TimeoutException>(() => pooledEvaluator.EvaluateValueAsync(selectedTargets[0], "1"), "pooled command times out");
+    Equal(1, pool.OpenCount, "one timeout keeps the connection");
+    await ThrowsAsync<TimeoutException>(() => pooledEvaluator.EvaluateValueAsync(selectedTargets[0], "1"), "pooled command times out again");
+    Equal(0, pool.OpenCount, "consecutive timeouts retire a silent connection");
+    Equal(true, silent[0].AbortCalled, "the silent socket is aborted");
+}
 
 var targetSource = new FakeTargetSource(selectedTargets);
 var evaluator = new FakeEvaluator("b");
@@ -2249,39 +2304,39 @@ static async Task TestTargetAppIsolation()
     Equal("t3", T3CodeTargetCatalog.SelectPages(targets).Single().Id,
         "T3 discovery selects only the production T3 desktop page");
     var twoConnected = new T3CodeConnectionReport(2, 2, 0);
-    Equal("T3 Code: Closed (0/0)", T3CodeMenuPolicy.Evaluate(0, false, null, null, false).Label,
+    Equal("T3 Code: Closed", T3CodeMenuPolicy.Evaluate(0, false, null, null, false).Label,
         "T3 menu counts closed visible windows");
-    Equal("T3 Code: Problem (0/3)", T3CodeMenuPolicy.Evaluate(3, false, null, null, false).Label,
+    Equal("T3 Code: Needs repair", T3CodeMenuPolicy.Evaluate(3, false, null, null, false).Label,
         "visible T3 windows without an endpoint need repair");
-    Equal("T3 Code: Problem (2/3)", T3CodeMenuPolicy.Evaluate(
+    Equal("T3 Code: Needs repair", T3CodeMenuPolicy.Evaluate(
         3, true, new HelperHostReport(1, 2, 2, 0, []), twoConnected, false).Label,
         "partial T3 coverage uses visible-window denominator");
-    Equal("T3 Code: OK (2/2)", T3CodeMenuPolicy.Evaluate(
+    Equal("T3 Code: Running", T3CodeMenuPolicy.Evaluate(
         2, true, new HelperHostReport(1, 2, 2, 0, []), twoConnected, false).Label,
         "complete T3 coverage reports all visible windows");
-    Equal("T3 Code: No Helpers (0/2)", T3CodeMenuPolicy.Evaluate(
+    Equal("T3 Code: No Helpers", T3CodeMenuPolicy.Evaluate(
         2, true, new HelperHostReport(0, 2, 0, 0, []), twoConnected, false,
         hasEnabledHelpers: false).Label,
         "an endpoint alone does not claim that T3 windows have Helpers");
-    Equal("T3 Code: OK (1/1)", T3CodeMenuPolicy.Evaluate(
+    Equal("T3 Code: Running", T3CodeMenuPolicy.Evaluate(
         1, true, new HelperHostReport(1, 3, 3, 0, []), new T3CodeConnectionReport(3, 3, 0), false).Label,
         "extra renderer pages never inflate visible T3 window count");
-    Equal("T3 Code: Problem (1/2)", T3CodeMenuPolicy.Evaluate(
+    Equal("T3 Code: Needs repair", T3CodeMenuPolicy.Evaluate(
         2, true, new HelperHostReport(1, 1, 1, 0, []), twoConnected, false).Label,
         "newly probed renderers not yet reconciled cannot inflate coverage");
-    Equal("T3 Code: Problem (2/2)", T3CodeMenuPolicy.Evaluate(
+    Equal("T3 Code: Needs repair", T3CodeMenuPolicy.Evaluate(
         2, true, new HelperHostReport(1, 2, 1, 1, []), twoConnected, false).Label,
         "failed Helper keeps complete T3 window coverage in problem state");
-    Equal("T3 Code: Problem (2/2)", T3CodeMenuPolicy.Evaluate(
+    Equal("T3 Code: Needs repair", T3CodeMenuPolicy.Evaluate(
         2, true, new HelperHostReport(1, 2, 2, 0, [new HelperDiagnostic("helper", "invalid manifest")]), twoConnected, false).Label,
         "Helper catalog diagnostic keeps complete T3 window coverage in problem state");
-    Equal("T3 Code: Problem (1/2)", T3CodeMenuPolicy.Evaluate(
+    Equal("T3 Code: Needs repair", T3CodeMenuPolicy.Evaluate(
         2, true, new HelperHostReport(1, 2, 1, 1, []), new T3CodeConnectionReport(2, 1, 1), false).Label,
         "unresponsive renderer does not count as a hooked T3 window");
-    Equal("T3 Code: Problem (0/2)", T3CodeMenuPolicy.Evaluate(
+    Equal("T3 Code: Needs repair", T3CodeMenuPolicy.Evaluate(
         2, true, new HelperHostReport(1, 2, 2, 0, []), twoConnected, true).Label,
         "failed T3 status check does not claim coverage");
-    Equal("T3 Code: Paused (0/2)", T3CodeMenuPolicy.Evaluate(
+    Equal("T3 Code: Paused", T3CodeMenuPolicy.Evaluate(
         2, true, null, null, false, helpersSuspended: true).Label,
         "paused T3 Helpers do not claim hooked windows");
     Equal("T3 Code: Status unavailable", T3CodeMenuPolicy.Evaluate(null, true, null, null, true).Label,
@@ -2402,13 +2457,13 @@ static async Task TestTargetAppIsolation()
         var waitingReport = await readinessHost.ReconcileAsync();
         var waitingMenu = T3CodeMenuPolicy.Evaluate(1, true, waitingReport, new(1, 1, 0), false);
         Equal(0, waitingReport.Failed, "successful evaluation can still report unavailable usage");
-        Equal("T3 Code: Problem (1/1)", waitingMenu.Label, "connection does not conceal renderer waiting state");
+        Equal("T3 Code: Needs repair", waitingMenu.Label, "connection does not conceal renderer waiting state");
         Equal(true, waitingMenu.Details.Contains("out of date", StringComparison.Ordinal), "tray explains data readiness without a restart recommendation");
         using var readyJson = JsonDocument.Parse("{\"renderHealth\":{\"state\":\"ready\"}}");
         readinessEvaluator.ValueResultFactory = (_, expression) => expression.Contains("t3-code-script", StringComparison.Ordinal)
             ? readyJson.RootElement.Clone() : null;
         var readyReport = await readinessHost.ReconcileAsync();
-        Equal("T3 Code: OK (1/1)", T3CodeMenuPolicy.Evaluate(1, true, readyReport, new(1, 1, 0), false).Label,
+        Equal("T3 Code: Running", T3CodeMenuPolicy.Evaluate(1, true, readyReport, new(1, 1, 0), false).Label,
             "fresh renderer readiness clears waiting diagnostics on the next reconciliation");
         await codexHost.SetEnabledAsync("legacy-codex-helper", false);
         await t3Host.SetEnabledAsync("t3-only-helper", false);
@@ -2829,4 +2884,40 @@ sealed class ForbiddenUsageSessionFiles : IHelperSessionFiles
     public string[] Roots() { AccessCount++; throw new IOException("Session storage must not be queried"); }
     public string[] ListFiles(string root, CancellationToken token) { AccessCount++; throw new IOException("Session storage must not be queried"); }
     public string ReadText(string path, CancellationToken token) { AccessCount++; throw new IOException("Session storage must not be queried"); }
+}
+
+sealed class EchoCdpWebSocket : ICdpWebSocket
+{
+    private readonly System.Threading.Channels.Channel<byte[]?> replies = System.Threading.Channels.Channel.CreateUnbounded<byte[]?>();
+    public List<int> SentIds { get; } = [];
+    public bool AbortCalled { get; private set; }
+    public WebSocketState State { get; private set; } = WebSocketState.None;
+
+    public Task ConnectAsync(Uri uri, CancellationToken cancellationToken) { State = WebSocketState.Open; return Task.CompletedTask; }
+
+    public ValueTask SendAsync(ReadOnlyMemory<byte> payload, WebSocketMessageType messageType, bool endOfMessage, CancellationToken cancellationToken)
+    {
+        using var request = JsonDocument.Parse(payload);
+        var id = request.RootElement.GetProperty("id").GetInt32();
+        var expression = request.RootElement.GetProperty("params").TryGetProperty("expression", out var value) ? value.GetString() : null;
+        lock (SentIds) SentIds.Add(id);
+        // An unrelated event first, then the reply, as Chrome may interleave.
+        replies.Writer.TryWrite(Encoding.UTF8.GetBytes("{\"method\":\"Inspector.event\",\"params\":{}}"));
+        replies.Writer.TryWrite(Encoding.UTF8.GetBytes(expression == "throw"
+            ? "{\"id\":" + id + ",\"result\":{\"exceptionDetails\":{\"text\":\"fixture\"}}}"
+            : "{\"id\":" + id + ",\"result\":{\"result\":{\"type\":\"string\",\"value\":\"echo\"}}}"));
+        return ValueTask.CompletedTask;
+    }
+
+    public async ValueTask<ValueWebSocketReceiveResult> ReceiveAsync(Memory<byte> buffer, CancellationToken cancellationToken)
+    {
+        var next = await replies.Reader.ReadAsync(cancellationToken);
+        if (next is null) throw new WebSocketException("fixture connection dropped");
+        next.CopyTo(buffer);
+        return new(next.Length, WebSocketMessageType.Text, true);
+    }
+
+    public void Fail() => replies.Writer.TryWrite(null);
+    public void Abort() { AbortCalled = true; State = WebSocketState.Aborted; replies.Writer.TryWrite(null); }
+    public void Dispose() { if (State != WebSocketState.Aborted) State = WebSocketState.Closed; }
 }
