@@ -1,0 +1,16 @@
+{
+  "files": {
+    "src/CodexWingman.Core/Apps/T3Pairing.cs": {
+      "why": "optional sync-receipt folder lookup (docs/T3_WEB_PAIRING.md)",
+      "max": { "c50c1f76378372b811851af6230221ca44432a50fd6ee4428dce87fe71cedb3a": 2, "f469e10e7da8c5b793e207961641122c4243efe6fb06302f421cb7350161620a": 1 }
+    },
+    "tests/CodexWingman.Core.Tests/AppTargetTests.cs": {
+      "why": "test of the optional sync-receipt folder lookup",
+      "max": { "c50c1f76378372b811851af6230221ca44432a50fd6ee4428dce87fe71cedb3a": 3, "f469e10e7da8c5b793e207961641122c4243efe6fb06302f421cb7350161620a": 1 }
+    },
+    "*CodexWingman.Core.dll": {
+      "why": "the two path constants of the optional sync-receipt lookup, compiled",
+      "max": { "c50c1f76378372b811851af6230221ca44432a50fd6ee4428dce87fe71cedb3a": 2, "f469e10e7da8c5b793e207961641122c4243efe6fb06302f421cb7350161620a": 1 }
+    }
+  }
+}
