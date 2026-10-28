@@ -442,6 +442,13 @@ internal static class AppTargetTests
         True(tray.Contains("EnsureT3WebReadyAsync(atStartup: true)", StringComparison.Ordinal) && tray.Contains("EnsureGrokBotReadyAsync(atStartup: true)", StringComparison.Ordinal),
             "Open when Wingman starts uses the quiet start");
         True(tray.Contains("atStartup ? () => false : ConfirmGrokBotRelaunch", StringComparison.Ordinal), "no relaunch question at startup");
+        True(tray.Contains("launcherActivations.Register(activationEvent, WingmanLaunchTarget.Preferences);", StringComparison.Ordinal)
+            && !tray.Contains("QueueLauncherActivation(WingmanLaunchTarget.Codex)", StringComparison.Ordinal),
+            "the general Wingman event is the Preferences target, never Codex");
+        True(tray.Contains("LauncherActivationPolicy.AppsFor(launchOptions.Target, startupSettings)", StringComparison.Ordinal)
+            && !tray.Contains("codexFlyout.OpenOnLaunchItem.Checked)", StringComparison.Ordinal)
+            && !tray.Contains("if (t3Flyout.OpenOnLaunchItem.Checked)", StringComparison.Ordinal),
+            "startup opens the apps from the same policy as a later general launch");
         True(tray.Contains("await CheckT3WebPairingAsync(interactive: false);\n    }\n\n    /// <summary>\n    /// Repair for Grok Bot.", StringComparison.Ordinal)
             || tray.Replace("\r\n", "\n").Contains("await CheckT3WebPairingAsync(interactive: false);\n    }\n\n    /// <summary>\n    /// Repair for Grok Bot.", StringComparison.Ordinal),
             "T3 Code (web) Repair shows a balloon only when the sign-in check failed");

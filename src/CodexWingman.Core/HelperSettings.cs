@@ -18,6 +18,17 @@ public sealed record HelperSettings(
         [],
         new Dictionary<string, bool>(StringComparer.Ordinal) { ["json-debug"] = false });
 
+    /// <summary>
+    /// Used when settings.json exists but can't be read and no earlier reading is known: the defaults, except that
+    /// Wingman opens no app on its own. An unreadable file must never turn an app's Open when Wingman starts on.
+    /// </summary>
+    public static HelperSettings UnreadableFallback { get; } = Default with
+    {
+        OpenCodexOnLaunch = false,
+        OpenT3CodeOnLaunch = false,
+        OpenGrokBotOnLaunch = false,
+    };
+
     /// <summary>The tray's "Open on launch" choice for one app.</summary>
     public bool OpensOnLaunch(WingmanLaunchTarget app) => app switch
     {
@@ -110,15 +121,41 @@ public static class HelperSettingsStore
         return new InitializedHelperSettings(path, HelperSettings.Default);
     }
 
+    private static readonly System.Collections.Concurrent.ConcurrentDictionary<string, HelperSettings> LastGood =
+        new(StringComparer.OrdinalIgnoreCase);
+
+    /// <summary>
+    /// Reads settings. A missing file gives the defaults. A file that exists but can't be read or parsed gives the
+    /// last settings this process read or saved for that path, or, if there are none, <see cref="HelperSettings.UnreadableFallback"/>.
+    /// </summary>
     public static HelperSettings Load(string? path = null)
     {
         path ??= DefaultPath();
         try
         {
             if (!File.Exists(path)) return HelperSettings.Default;
-            var value = JsonSerializer.Deserialize<HelperSettings>(File.ReadAllText(path), JsonOptions);
-            return value is null
-                ? HelperSettings.Default
+            var value = Parse(File.ReadAllText(path));
+            if (value is null) return Unreadable(path, "empty");
+            LastGood[Path.GetFullPath(path)] = value;
+            return value;
+        }
+        catch (JsonException) { return Unreadable(path, nameof(JsonException)); }
+        catch (IOException) { return Unreadable(path, nameof(IOException)); }
+        catch (UnauthorizedAccessException) { return Unreadable(path, nameof(UnauthorizedAccessException)); }
+    }
+
+    private static HelperSettings Unreadable(string path, string reason)
+    {
+        var known = LastGood.TryGetValue(Path.GetFullPath(path), out var lastGood);
+        WingmanLog.Write("settings-unreadable", ("reason", reason), ("using", known ? "last-good" : "safe-defaults"));
+        return known ? lastGood! : HelperSettings.UnreadableFallback;
+    }
+
+    private static HelperSettings? Parse(string json)
+    {
+        var value = JsonSerializer.Deserialize<HelperSettings>(json, JsonOptions);
+        return value is null
+                ? null
                 : new HelperSettings(
                     value.UsageDialsEnabled,
                     value.AdditionalSessionRoots ?? [],
@@ -129,10 +166,6 @@ public static class HelperSettingsStore
                     value.OpenT3CodeOnLaunch,
                     value.T3Web,
                     value.OpenGrokBotOnLaunch);
-        }
-        catch (JsonException) { return HelperSettings.Default; }
-        catch (IOException) { return HelperSettings.Default; }
-        catch (UnauthorizedAccessException) { return HelperSettings.Default; }
     }
 
     public static void Save(string path, HelperSettings settings)
@@ -146,6 +179,7 @@ public static class HelperSettingsStore
         {
             File.WriteAllText(temporary, JsonSerializer.Serialize(settings, JsonOptions));
             File.Move(temporary, path, overwrite: true);
+            LastGood[Path.GetFullPath(path)] = settings;
         }
         finally
         {

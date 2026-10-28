@@ -139,6 +139,7 @@ internal static class CodexLauncher
             ActivateOptions.None,
             out _);
         Marshal.ThrowExceptionForHR(result);
+        WingmanLog.Write("codex-launch", ("port", port));
 
         if (!await WaitForEndpointAsync(port, cancellationToken))
             throw new TimeoutException($"Codex did not expose localhost CDP on port {port}");

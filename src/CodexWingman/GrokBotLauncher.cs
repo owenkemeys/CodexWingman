@@ -60,6 +60,7 @@ internal sealed class GrokBotLauncher(string wingmanDataRoot, Func<IEnumerable<i
             if (running.Length > 0)
             {
                 if (!confirmRelaunch()) return false;
+                WingmanLog.Write("grok-bot-close", ("processes", running.Length), ("forced", false));
                 foreach (var process in running)
                 {
                     try { if (SafeMainWindow(process) != IntPtr.Zero) process.CloseMainWindow(); }
@@ -87,6 +88,7 @@ internal sealed class GrokBotLauncher(string wingmanDataRoot, Func<IEnumerable<i
         foreach (var argument in GrokBotLaunchPolicy.Arguments(port)) start.ArgumentList.Add(argument);
         using (Process.Start(start) ?? throw new InvalidOperationException("Grok Bot did not start.")) { }
         AppRuntimePortFile.Write(RuntimePath, port);
+        WingmanLog.Write("grok-bot-start", ("port", port));
         var deadline = DateTime.UtcNow + EndpointTimeout;
         while (DateTime.UtcNow < deadline)
         {

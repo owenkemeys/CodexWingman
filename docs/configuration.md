@@ -55,6 +55,12 @@ Environment variables in additional roots are expanded when the helper starts. D
 %USERPROFILE%\.codex\archived_sessions
 ```
 
+`Open when Wingman starts` (the `open…OnLaunch` values) decides which apps the plain Wingman entry opens, both when it starts Wingman and when Wingman is already running; with none ticked it opens no app.
+
+If settings.json exists but can't be read or parsed, Wingman uses the settings it last read or saved while running; with none, it uses the defaults with every `Open when Wingman starts` off, so an unreadable file never opens an app.
+
+Wingman writes a small event log to `%LOCALAPPDATA%\CodexWingman\logs\wingman.log` (rolled once to `wingman.1.log` at 256 KB). Lines hold the time, an event name and app-level values such as the launch target, process ID, port or app version; never paths, window titles, page addresses or message text.
+
 On first launch, CodexWingman imports an existing `%LOCALAPPDATA%\CodexHelper\settings.json` only when the new settings file does not yet exist. It leaves the legacy file untouched.
 
 The tray menu persists every Helper's checked state in `helperEnabled`. `usageDialsEnabled` remains for compatibility with older settings. Edit the JSON only to add or remove nonstandard session stores, then restart CodexWingman.

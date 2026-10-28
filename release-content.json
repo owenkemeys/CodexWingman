@@ -1,9 +1,9 @@
 {
-  "version": "2.1.0",
+  "version": "2.1.1",
   "highlights": [
-    "Open T3 Code in its own browser app window (T3 Code (web)), paired with your T3 server and shown with T3's own icon.",
-    "Add Grok Bot as a Helper target, with a weekly usage dial beside its composer buttons.",
-    "Show every app in one tray menu with plain Running or Closed states and a New window or Open command.",
-    "Bring an existing T3 Code (web) window forward instead of opening a second one."
+    "The plain Wingman entry opens exactly the apps ticked Open when Wingman starts, whether or not Wingman is already running, and nothing when none is ticked.",
+    "An app's own launcher opens only that app, and a second click while Wingman is opening an app doesn't open it twice.",
+    "Unreadable settings never turn on Open when Wingman starts; Wingman keeps the last settings it read.",
+    "Wingman keeps a small local event log to help trace launch problems."
   ]
 }
