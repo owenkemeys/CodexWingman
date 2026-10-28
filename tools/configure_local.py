@@ -137,7 +137,7 @@ def main():
     parser.add_argument('--apply', action='store_true')
     parser.add_argument('--import-helper-config', type=Path, help='Existing installation Helpers directory; preserve manifest customization in local settings without changing package files')
     parser.add_argument('--t3-web-url', help='T3 web address (https only) for Wingman\'s own T3 web window; normally learned from the first pairing link')
-    parser.add_argument('--t3-pairing-folder', help='Folder the T3 host answers pairing requests in; normally found from the the sync share receipt')
+    parser.add_argument('--t3-pairing-folder', help='Folder a host-side bridge answers T3 pairing requests in (docs/T3_WEB_PAIRING.md)')
     args = parser.parse_args()
     try:
         current, proposed, warnings = plan(args.settings, args.obsidian_registry, args.vault, args.import_helper_config,

@@ -36,7 +36,7 @@ function snapshot(node) {
   return `<${node.tagName.toLowerCase()} ${JSON.stringify(attributes)}>${content}</${node.tagName.toLowerCase()}>`
 }
 
-test('package declares Library translation plus local Windows path support', async () => {
+test('package declares remote path translation plus local Windows path support', async () => {
   const [manifestSource, info] = await Promise.all([
     requiredFile('wingman.json'),
     requiredFile('HELPER_INFO.md'),
@@ -131,8 +131,8 @@ test('the Example native control exposes J slash path through DOM and React prop
     requiredFile('wingman.json'),
   ])
   const fixture = createBrowserFixture()
-  const raw = `${linuxPrefix}codex/Projects/ExampleWorkspace/ExampleWorkspace Agent Home/30 Projects/Example Project/brain-landing-nhc-variants.html`
-  const expected = 'R:/codex/Projects/ExampleWorkspace/ExampleWorkspace Agent Home/30 Projects/Example Project/brain-landing-nhc-variants.html'
+  const raw = `${linuxPrefix}codex/Projects/ExampleWorkspace/ExampleWorkspace Agent Home/30 Projects/Example Project/landing-page-variants.html`
+  const expected = 'R:/codex/Projects/ExampleWorkspace/ExampleWorkspace Agent Home/30 Projects/Example Project/landing-page-variants.html'
   const control = makeNativeFileControl(fixture.document, raw)
   control.setAttribute('title', raw)
   const reactPropsKey = '__reactProps$nhc'
