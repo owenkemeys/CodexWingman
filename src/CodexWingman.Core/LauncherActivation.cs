@@ -20,17 +20,66 @@ public static class LauncherActivationPolicy
     };
 }
 
+/// <summary>Where one app opening came from.</summary>
+public enum LaunchSource
+{
+    /// <summary>The app's own launcher: opens that app as its shortcut always has (for Codex, another window).</summary>
+    AppShortcut,
+    /// <summary>The plain Wingman entry (no app named): idempotent, see <see cref="PlainLaunchPolicy"/>.</summary>
+    PlainEntry,
+}
+
+/// <summary>What an app is doing when a plain launch reaches it.</summary>
+public enum AppState
+{
+    NotRunning,
+    /// <summary>Running without Wingman's connection (for example after the app updated itself).</summary>
+    RunningNotConnected,
+    /// <summary>Connected, but no window is open (running in the background only).</summary>
+    ConnectedNoWindow,
+    ConnectedWithWindow,
+}
+
+public enum PlainLaunchStep
+{
+    /// <summary>Start the app (it isn't running).</summary>
+    Launch,
+    /// <summary>Bring the existing window forward; never a new window.</summary>
+    BringForward,
+    /// <summary>Connected but windowless: show its one window.</summary>
+    ShowFirstWindow,
+    /// <summary>Running without Wingman's connection: leave it alone, no relaunch and no question.</summary>
+    LeaveAsIs,
+}
+
+/// <summary>
+/// A plain launch is idempotent per app: it only starts apps that aren't running and never opens a second window.
+/// An app's own launcher keeps its behaviour (it may relaunch after asking, and Codex's opens another window).
+/// </summary>
+public static class PlainLaunchPolicy
+{
+    public static PlainLaunchStep Decide(AppState presence) => presence switch
+    {
+        AppState.NotRunning => PlainLaunchStep.Launch,
+        AppState.RunningNotConnected => PlainLaunchStep.LeaveAsIs,
+        AppState.ConnectedNoWindow => PlainLaunchStep.ShowFirstWindow,
+        AppState.ConnectedWithWindow => PlainLaunchStep.BringForward,
+        _ => throw new ArgumentOutOfRangeException(nameof(presence), presence, "Unknown app state."),
+    };
+}
+
 /// <summary>
 /// Launches that reach the running Wingman, in arrival order. Opening an app waits while Wingman is busy (one
 /// operation at a time). An app already being opened or already waiting is not queued again, so a second
-/// click during a relaunch can't start a second relaunch.
+/// click during a relaunch can't start a second relaunch. If an app waits for a plain launch and its own launcher
+/// is clicked, it waits once, as the launcher's opening.
 /// </summary>
 public sealed class LauncherActivationQueue(
     Func<bool> blocked,
     Func<HelperSettings> settings,
-    Func<WingmanLaunchTarget, Task> open)
+    Func<WingmanLaunchTarget, LaunchSource, Task> open)
 {
-    private readonly List<WingmanLaunchTarget> pending = [];
+    private readonly List<(WingmanLaunchTarget App, LaunchSource Source)> pending = [];
     private WingmanLaunchTarget? opening;
     private bool draining;
 
@@ -39,15 +88,23 @@ public sealed class LauncherActivationQueue(
     public void Enqueue(WingmanLaunchTarget target)
     {
         var apps = LauncherActivationPolicy.AppsFor(target, settings());
+        var source = target == WingmanLaunchTarget.Preferences ? LaunchSource.PlainEntry : LaunchSource.AppShortcut;
         WingmanLog.Write("activation", ("target", target), ("apps", apps.Count == 0 ? "none" : string.Join("+", apps)));
         foreach (var app in apps)
         {
-            if (app == opening || pending.Contains(app))
+            var waiting = pending.FindIndex(item => item.App == app);
+            if (waiting >= 0 && source == LaunchSource.AppShortcut && pending[waiting].Source == LaunchSource.PlainEntry)
+            {
+                pending[waiting] = (app, source);
+                WingmanLog.Write("activation-skip", ("app", app), ("reason", "queued-now-app-shortcut"));
+                continue;
+            }
+            if (app == opening || waiting >= 0)
             {
                 WingmanLog.Write("activation-skip", ("app", app), ("reason", app == opening ? "opening" : "queued"));
                 continue;
             }
-            pending.Add(app);
+            pending.Add((app, source));
         }
         _ = DrainAsync();
     }
@@ -60,11 +117,11 @@ public sealed class LauncherActivationQueue(
         {
             while (pending.Count > 0 && !blocked())
             {
-                var app = pending[0];
+                var (app, source) = pending[0];
                 pending.RemoveAt(0);
                 opening = app;
-                WingmanLog.Write("activation-open", ("app", app));
-                try { await open(app); }
+                WingmanLog.Write("activation-open", ("app", app), ("source", source));
+                try { await open(app, source); }
                 finally { opening = null; }
             }
         }

@@ -441,7 +441,7 @@ internal static class AppTargetTests
         var tray = File.ReadAllText(Path.Combine(RepositoryRoot(), "src", "CodexWingman", "TrayApplicationContext.cs"));
         True(tray.Contains("EnsureT3WebReadyAsync(atStartup: true)", StringComparison.Ordinal) && tray.Contains("EnsureGrokBotReadyAsync(atStartup: true)", StringComparison.Ordinal),
             "Open when Wingman starts uses the quiet start");
-        True(tray.Contains("atStartup ? () => false : ConfirmGrokBotRelaunch", StringComparison.Ordinal), "no relaunch question at startup");
+        True(tray.Contains("atStartup || plainEntry ? () => false : ConfirmGrokBotRelaunch", StringComparison.Ordinal), "no relaunch question at startup");
         True(tray.Contains("launcherActivations.Register(activationEvent, WingmanLaunchTarget.Preferences);", StringComparison.Ordinal)
             && !tray.Contains("QueueLauncherActivation(WingmanLaunchTarget.Codex)", StringComparison.Ordinal),
             "the general Wingman event is the Preferences target, never Codex");
@@ -449,6 +449,14 @@ internal static class AppTargetTests
             && !tray.Contains("codexFlyout.OpenOnLaunchItem.Checked)", StringComparison.Ordinal)
             && !tray.Contains("if (t3Flyout.OpenOnLaunchItem.Checked)", StringComparison.Ordinal),
             "startup opens the apps from the same policy as a later general launch");
+        True(tray.Contains("EnsureCodexReadyAsync(openWindowWhenHealthy: !plain, \"Opening Codex...\", plainEntry: plain)", StringComparison.Ordinal)
+            && tray.Contains("var step = PlainLaunchPolicy.Decide(presence);", StringComparison.Ordinal)
+            && tray.Contains("atStartup || plainEntry ? () => false : ConfirmGrokBotRelaunch", StringComparison.Ordinal)
+            && tray.Contains("EnsureT3ReadyAsync(repair: false, plainEntry: plain)", StringComparison.Ordinal),
+            "a plain launch brings connected apps forward, starts only stopped ones and never asks to relaunch");
+        True(tray.Contains("HelperSettingsStore.Update(settingsPath, current => current.WithOpenOnLaunch(app, item.Checked))", StringComparison.Ordinal)
+            && !tray.Contains("HelperSettingsStore.Save(", StringComparison.Ordinal),
+            "the Open on launch toggle re-reads settings and never writes over an unreadable file");
         True(tray.Contains("await CheckT3WebPairingAsync(interactive: false);\n    }\n\n    /// <summary>\n    /// Repair for Grok Bot.", StringComparison.Ordinal)
             || tray.Replace("\r\n", "\n").Contains("await CheckT3WebPairingAsync(interactive: false);\n    }\n\n    /// <summary>\n    /// Repair for Grok Bot.", StringComparison.Ordinal),
             "T3 Code (web) Repair shows a balloon only when the sign-in check failed");

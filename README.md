@@ -4,7 +4,7 @@
 
 ## New in 2.1.1
 
-- **The plain Wingman entry follows your startup choices.** Starting Wingman from its general entry, or clicking that entry while Wingman already runs, opens exactly the apps ticked `Open when Wingman starts`, and nothing when none is ticked. It no longer opens Codex on its own, including while Wingman is busy with another app. App launchers such as `Wingman Codex` open only their app, and a second click while that app is being opened doesn't open it twice. If settings.json can't be read, Wingman keeps the settings it last read and otherwise opens no app.
+- **The plain Wingman entry follows your startup choices.** Starting Wingman from its general entry, or clicking that entry while Wingman already runs, opens exactly the apps ticked `Open when Wingman starts`, and nothing when none is ticked. It no longer opens Codex on its own, including while Wingman is busy with another app. Clicking it again is safe: an app that is already open is brought forward, never opened in a new window, and only apps that aren't running are started. App launchers such as `Wingman Codex` open only their app, as before, and a second click while that app is being opened doesn't open it twice. If settings.json can't be read, Wingman keeps the settings it last read and otherwise opens no app, and it never writes over that file.
 - **Event log.** Wingman writes a small rolling log (`%LOCALAPPDATA%\CodexWingman\logs\wingman.log`, at most two files of 256 KB) with event and app names only.
 
 ## New in 2.1

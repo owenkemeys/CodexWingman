@@ -20,6 +20,7 @@ internal static class LauncherActivationTests
         var relaunches = 0;
         var generalReceived = false;
         var opened = new List<WingmanLaunchTarget>();
+        var sources = new List<LaunchSource>();
         // Only Grok Bot is ticked Open when Wingman starts.
         var onlyGrok = HelperSettings.Default
             .WithOpenOnLaunch(WingmanLaunchTarget.Codex, false)
@@ -41,9 +42,10 @@ internal static class LauncherActivationTests
             selected.Set();
         }
 
-        var queue = new LauncherActivationQueue(() => busy, () => onlyGrok, app =>
+        var queue = new LauncherActivationQueue(() => busy, () => onlyGrok, (app, source) =>
         {
             opened.Add(app);
+            sources.Add(source);
             if (app == WingmanLaunchTarget.GrokBot && !hooked)
             {
                 busy = true;
@@ -79,10 +81,13 @@ internal static class LauncherActivationTests
         Pump(() => generalReceived && opened.Count == 2, "a later no-app launch reaches Wingman");
         Equal(WingmanLaunchTarget.GrokBot, opened[1], "a later no-app launch opens the ticked app");
         Equal(1, relaunches, "Grok Bot already connected: no second relaunch");
+        Equal(LaunchSource.AppShortcut, sources[0], "the Grok Bot launcher opens as the launcher");
+        Equal(LaunchSource.PlainEntry, sources[1], "the general event opens as a plain launch (bring forward, never a new window)");
 
         SignalAsSecondWingman(prefix + WingmanLaunchOptions.IdentitySuffix(WingmanLaunchTarget.Codex));
         Pump(() => opened.Count == 3, "Codex launcher reaches Wingman");
         Equal(WingmanLaunchTarget.Codex, opened[2], "the Codex launcher still opens Codex");
+        Equal(LaunchSource.AppShortcut, sources[2], "the Codex launcher keeps its own behaviour");
     }
 
     private static void Equal<T>(T expected, T actual, string name)

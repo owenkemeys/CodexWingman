@@ -55,9 +55,9 @@ Environment variables in additional roots are expanded when the helper starts. D
 %USERPROFILE%\.codex\archived_sessions
 ```
 
-`Open when Wingman starts` (the `open…OnLaunch` values) decides which apps the plain Wingman entry opens, both when it starts Wingman and when Wingman is already running; with none ticked it opens no app.
+`Open when Wingman starts` (the `open…OnLaunch` values) decides which apps the plain Wingman entry opens, both when it starts Wingman and when Wingman is already running; with none ticked it opens no app. When Wingman is already running, the plain entry only starts ticked apps that aren't running: an app that is open and connected is brought forward (no new window), and one running without Wingman's connection is left as it is, without a relaunch question. Use the app's own launcher or its tray menu to relaunch it with Helpers.
 
-If settings.json exists but can't be read or parsed, Wingman uses the settings it last read or saved while running; with none, it uses the defaults with every `Open when Wingman starts` off, so an unreadable file never opens an app.
+If settings.json exists but can't be read or parsed, Wingman uses the settings it last read or saved while running; with none, it uses the defaults with every `Open when Wingman starts` off, so an unreadable file never opens an app. A change made in the tray first reads the file again; if it still can't be read, Wingman doesn't write over it and keeps the change for this session only.
 
 Wingman writes a small event log to `%LOCALAPPDATA%\CodexWingman\logs\wingman.log` (rolled once to `wingman.1.log` at 256 KB). Lines hold the time, an event name and app-level values such as the launch target, process ID, port or app version; never paths, window titles, page addresses or message text.
 

@@ -309,7 +309,10 @@ internal sealed class TrayApplicationContext : ApplicationContext
         if (synchronizingOpenOnLaunch) return;
         try
         {
-            HelperSettingsStore.Save(settingsPath, HelperSettingsStore.Load(settingsPath).WithOpenOnLaunch(app, item.Checked));
+            // Re-reads the file first. If it still can't be read, the file is left as it is: the choice is kept in
+            // memory for this session and logged, never written over the user's settings.
+            var update = HelperSettingsStore.Update(settingsPath, current => current.WithOpenOnLaunch(app, item.Checked));
+            WingmanLog.Write("open-on-launch", ("app", app), ("ticked", item.Checked), ("saved", update.Saved));
         }
         catch (Exception error)
         {
@@ -551,15 +554,25 @@ internal sealed class TrayApplicationContext : ApplicationContext
 
     private Task DrainLauncherActivationsAsync() => pendingLaunches.DrainAsync();
 
-    /// <summary>Opens one app for a launch that reached the running Wingman (as that app's own launcher does).</summary>
-    private Task OpenFromLauncherAsync(WingmanLaunchTarget app) => app switch
+    /// <summary>
+    /// Opens one app for a launch that reached the running Wingman. An app's own launcher behaves as it always has.
+    /// The plain entry is idempotent (<see cref="PlainLaunchPolicy"/>): a connected app's window is brought forward,
+    /// never a new one; only an app that isn't running is started; one running without Wingman's connection is left
+    /// alone, with no relaunch question.
+    /// </summary>
+    private Task OpenFromLauncherAsync(WingmanLaunchTarget app, LaunchSource source)
     {
-        WingmanLaunchTarget.Codex => EnsureCodexReadyAsync(openWindowWhenHealthy: true, "Opening Codex..."),
-        WingmanLaunchTarget.T3Code => EnsureT3ReadyAsync(repair: false),
-        WingmanLaunchTarget.T3Web => EnsureT3WebReadyAsync(),
-        WingmanLaunchTarget.GrokBot => EnsureGrokBotReadyAsync(),
-        _ => throw new ArgumentOutOfRangeException(nameof(app), app, "Not an app."),
-    };
+        var plain = source == LaunchSource.PlainEntry;
+        return app switch
+        {
+            WingmanLaunchTarget.Codex => EnsureCodexReadyAsync(openWindowWhenHealthy: !plain, "Opening Codex...", plainEntry: plain),
+            WingmanLaunchTarget.T3Code => EnsureT3ReadyAsync(repair: false, plainEntry: plain),
+            // Wingman's own T3 web window: an existing one is always brought forward (never a second one).
+            WingmanLaunchTarget.T3Web => EnsureT3WebReadyAsync(),
+            WingmanLaunchTarget.GrokBot => EnsureGrokBotReadyAsync(plainEntry: plain),
+            _ => throw new ArgumentOutOfRangeException(nameof(app), app, "Not an app."),
+        };
+    }
 
     private async void InjectCheckedChanged(object? sender, EventArgs eventArgs)
     {
@@ -730,7 +743,7 @@ internal sealed class TrayApplicationContext : ApplicationContext
         await EnsureT3ReadyAsync(repair: true);
     }
 
-    private async Task EnsureT3ReadyAsync(bool repair)
+    private async Task EnsureT3ReadyAsync(bool repair, bool plainEntry = false)
     {
         if (busy || exiting) return;
         using var deadline = new CancellationTokenSource(TimeSpan.FromSeconds(90));
@@ -762,6 +775,12 @@ internal sealed class TrayApplicationContext : ApplicationContext
                     t3RuntimeStatePath, activePort, deadline.Token);
                 if (acquisition.Mode == HookReadyAcquisitionMode.RestartRequired)
                 {
+                    if (plainEntry)
+                    {
+                        WingmanLog.Write("plain-launch", ("app", WingmanLaunchTarget.T3Code), ("step", PlainLaunchPolicy.Decide(AppState.RunningNotConnected)));
+                        SetT3MenuStatus();
+                        return;
+                    }
                     if (!ConfirmT3Restart()) return;
                     await T3CodeLauncher.RestartWithDebuggingAsync(t3RuntimeStatePath, deadline.Token);
                 }
@@ -986,7 +1005,7 @@ internal sealed class TrayApplicationContext : ApplicationContext
         }
     }
 
-    private async Task EnsureGrokBotReadyAsync(bool atStartup = false)
+    private async Task EnsureGrokBotReadyAsync(bool atStartup = false, bool plainEntry = false)
     {
         if (busy || exiting) return;
         using var deadline = new CancellationTokenSource(TimeSpan.FromMinutes(2));
@@ -994,10 +1013,13 @@ internal sealed class TrayApplicationContext : ApplicationContext
         SetBusy(true, "Opening Grok Bot...");
         try
         {
-            // At startup Wingman never asks to relaunch: a Grok Bot running without Wingman's port stays as it is.
-            WingmanLog.Write("grok-bot-open", ("reason", atStartup ? "startup" : "launcher-or-menu"));
-            if (!await grokLauncher.OpenAsync(atStartup ? () => false : ConfirmGrokBotRelaunch, deadline.Token))
+            // At startup and for the plain entry Wingman never asks to relaunch: a Grok Bot running without Wingman's
+            // port stays as it is. Connected: its window is brought forward. Not running: it is started.
+            WingmanLog.Write("grok-bot-open", ("reason", atStartup ? "startup" : plainEntry ? "plain-entry" : "launcher-or-menu"));
+            if (!await grokLauncher.OpenAsync(atStartup || plainEntry ? () => false : ConfirmGrokBotRelaunch, deadline.Token))
             {
+                if (plainEntry)
+                    WingmanLog.Write("plain-launch", ("app", WingmanLaunchTarget.GrokBot), ("step", PlainLaunchPolicy.Decide(AppState.RunningNotConnected)));
                 grok.SetMenuStatus();
                 return;
             }
@@ -1387,10 +1409,10 @@ internal sealed class TrayApplicationContext : ApplicationContext
             uiContext.Post(async _ => await DrainLauncherActivationsAsync(), null);
     }
 
-    private async Task EnsureCodexReadyAsync(bool openWindowWhenHealthy, string busyText)
+    private async Task EnsureCodexReadyAsync(bool openWindowWhenHealthy, string busyText, bool plainEntry = false)
     {
         if (busy || exiting) return;
-        WingmanLog.Write("codex-open", ("newWindow", openWindowWhenHealthy));
+        WingmanLog.Write("codex-open", ("newWindow", openWindowWhenHealthy), ("plainEntry", plainEntry));
         using var operationDeadline = new CancellationTokenSource();
         operationDeadline.CancelAfter(TimeSpan.FromSeconds(90));
         activeInteractiveOperation = operationDeadline;
@@ -1400,7 +1422,42 @@ internal sealed class TrayApplicationContext : ApplicationContext
         {
             var state = await CodexLauncher.GetHookStatusAsync(runtimeStatePath, configuredPortOverride, cancellationToken);
             HelperHostReport report;
-            if (state == CodexHookState.Hooked)
+            if (plainEntry)
+            {
+                var presence = state switch
+                {
+                    CodexHookState.Hooked => CodexLauncher.GetOpenWindowCount() > 0 ? AppState.ConnectedWithWindow : AppState.ConnectedNoWindow,
+                    CodexHookState.OpenButCannotHook => AppState.RunningNotConnected,
+                    _ => AppState.NotRunning,
+                };
+                var step = PlainLaunchPolicy.Decide(presence);
+                WingmanLog.Write("plain-launch", ("app", WingmanLaunchTarget.Codex), ("step", step));
+                switch (step)
+                {
+                    case PlainLaunchStep.BringForward:
+                        CodexLauncher.BringWindowForward();
+                        report = await helperHost.ResumeAndReconcileAsync(cancellationToken);
+                        break;
+                    case PlainLaunchStep.ShowFirstWindow:
+                        report = await helperHost.OpenNativeNewWindowAsync(cancellationToken);
+                        break;
+                    case PlainLaunchStep.Launch:
+                        var launched = await CodexLauncher.OpenHookReadyWindowAsync(runtimeStatePath, configuredPortOverride, cancellationToken);
+                        if (launched.Mode == HookReadyAcquisitionMode.RestartRequired || launched.Port is not { } port)
+                        {
+                            // Codex started on its own in the meantime: leave it alone.
+                            await RefreshConnectionHealthAsync();
+                            return;
+                        }
+                        activePort = port;
+                        report = await helperHost.ResumeAndReconcileAsync(cancellationToken);
+                        break;
+                    default:
+                        await RefreshConnectionHealthAsync();
+                        return;
+                }
+            }
+            else if (state == CodexHookState.Hooked)
             {
                 report = openWindowWhenHealthy
                     ? await helperHost.OpenNativeNewWindowAsync(cancellationToken)

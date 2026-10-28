@@ -1,9 +1,9 @@
 {
   "version": "2.1.1",
   "highlights": [
-    "The plain Wingman entry opens exactly the apps ticked Open when Wingman starts, whether or not Wingman is already running, and nothing when none is ticked.",
+    "The plain Wingman entry opens exactly the apps ticked Open when Wingman starts, whether or not Wingman is already running, and nothing when none is ticked; an app that is already open is brought forward, never opened twice.",
     "An app's own launcher opens only that app, and a second click while Wingman is opening an app doesn't open it twice.",
-    "Unreadable settings never turn on Open when Wingman starts; Wingman keeps the last settings it read.",
+    "Unreadable settings never turn on Open when Wingman starts, and Wingman never writes over a settings file it can't read.",
     "Wingman keeps a small local event log to help trace launch problems."
   ]
 }
