@@ -1406,12 +1406,12 @@ try
         new HostActionRequest("valid-helper", HostActionDispatcher.OpenNewChatWindow, validNewWindowPayload.RootElement, hostTargets[0]));
     Equal(CodexOpenNewChatWindowAdapter.BuildExpression(validNewWindowPayload.RootElement), adapterEvaluator.Expressions.Single(), "new-window Host Action dispatches the verified native bridge expression on its source target");
     var openedObsidianUris = new List<string>();
-    using (var legacyObsidianPayload = JsonDocument.Parse(JsonSerializer.Serialize(new { uri = "obsidian://open?vault=Jarvis&file=Existing.md" })))
+    using (var legacyObsidianPayload = JsonDocument.Parse(JsonSerializer.Serialize(new { uri = "obsidian://open?vault=Library&file=Existing.md" })))
     {
         await new HostActionDispatcher(adapterEvaluator, (uri, _) => { openedObsidianUris.Add(uri); return Task.CompletedTask; }).DispatchAsync(
             new HostActionRequest("obsidian-links", HostActionDispatcher.OpenObsidianUri, legacyObsidianPayload.RootElement, hostTargets[0]));
     }
-    Equal("obsidian://open?vault=Jarvis&file=Existing.md", openedObsidianUris.Single(), "Obsidian Host Action preserves legacy open URIs");
+    Equal("obsidian://open?vault=Library&file=Existing.md", openedObsidianUris.Single(), "Obsidian Host Action preserves legacy open URIs");
 
     var openedFilePaths = new List<string>();
     using (var filePathPayload = JsonDocument.Parse(JsonSerializer.Serialize(new { path = "R:/codex/Projects/ExampleWorkspace/Example Project/home.html" })))
@@ -1459,7 +1459,7 @@ try
     openedObsidianUris.Clear();
     using (var coldStartObsidianPayload = JsonDocument.Parse(JsonSerializer.Serialize(new
     {
-        uri = "obsidian://wait-for-note?vault=Jarvis&file=Notifications%2FTelegram%20concierge.md%23Review%20or%20reminder",
+        uri = "obsidian://wait-for-note?vault=Library&file=Notifications%2FWeekly%20digest.md%23Review%20or%20reminder",
     })))
     using (var coldStartCancellation = new CancellationTokenSource(TimeSpan.FromMilliseconds(100)))
     {
@@ -1469,29 +1469,29 @@ try
                 coldStartCancellation.Token),
             "sync-aware Obsidian Host Action gives a closed vault time to load its community plugin");
     }
-    Equal("obsidian://open?vault=Jarvis", openedObsidianUris.Single(), "sync-aware Obsidian Host Action opens the requested vault before invoking the plugin action");
+    Equal("obsidian://open?vault=Library", openedObsidianUris.Single(), "sync-aware Obsidian Host Action opens the requested vault before invoking the plugin action");
 
     openedObsidianUris.Clear();
     using (var syncAwareObsidianPayload = JsonDocument.Parse(JsonSerializer.Serialize(new
     {
-        uri = "obsidian://wait-for-note?vault=Jarvis&file=Notifications%2FTelegram%20concierge.md%23Review%20or%20reminder",
+        uri = "obsidian://wait-for-note?vault=Library&file=Notifications%2FWeekly%20digest.md%23Review%20or%20reminder",
     })))
     {
         await new HostActionDispatcher(adapterEvaluator, (uri, _) => { openedObsidianUris.Add(uri); return Task.CompletedTask; }).DispatchAsync(
             new HostActionRequest("obsidian-links", HostActionDispatcher.OpenObsidianUri, syncAwareObsidianPayload.RootElement, hostTargets[0]));
     }
     Equal(
-        "obsidian://open?vault=Jarvis|obsidian://wait-for-note?vault=Jarvis&file=Notifications%2FTelegram%20concierge.md%23Review%20or%20reminder",
+        "obsidian://open?vault=Library|obsidian://wait-for-note?vault=Library&file=Notifications%2FWeekly%20digest.md%23Review%20or%20reminder",
         string.Join('|', openedObsidianUris),
         "sync-aware Obsidian Host Action invokes the plugin only after opening its vault");
     foreach (var invalidUri in new[]
     {
         "https://example.test",
-        "obsidian://new?vault=Jarvis&file=Note.md",
-        "obsidian://wait-for-note?vault=Jarvis&file=../Secret.md",
-        "obsidian://wait-for-note?vault=Jarvis&file=Note.txt",
-        "obsidian://wait-for-note?vault=Jarvis&file=Note.md&extra=nope",
-        "obsidian://wait-for-note?vault=Jarvis&vault=Other&file=Note.md",
+        "obsidian://new?vault=Library&file=Note.md",
+        "obsidian://wait-for-note?vault=Library&file=../Secret.md",
+        "obsidian://wait-for-note?vault=Library&file=Note.txt",
+        "obsidian://wait-for-note?vault=Library&file=Note.md&extra=nope",
+        "obsidian://wait-for-note?vault=Library&vault=Other&file=Note.md",
     })
     {
         using var invalidObsidianPayload = JsonDocument.Parse(JsonSerializer.Serialize(new { uri = invalidUri }));

@@ -155,7 +155,7 @@ test('T3 web: Obsidian links use the T3 timeline rules under the t3-web marker',
   const source = await read('obsidian-links/apply.js')
   const web = createBrowserFixture()
   useT3Web(web)
-  const raw = '/mnt/example-data/obsidian/Jarvis/Notes/T3 Trial.md'
+  const raw = '/mnt/example-data/obsidian/Library/Notes/T3 Trial.md'
   const { anchor, timeline } = makeT3Timeline(web, raw)
   const requests = []
   let nativeClicks = 0

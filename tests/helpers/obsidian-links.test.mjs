@@ -230,7 +230,7 @@ test('a slash-only Windows mapping transforms a real Codex file-reference contro
 test('plain heading and block paths render exact human labels and encoded Obsidian URIs', async () => {
   const apply = await requiredFile('apply.js')
   const fixture = createBrowserFixture()
-  const headingRaw = `${prefix}Jarvis/Notifications/Telegram concierge.md#Review or reminder`
+  const headingRaw = `${prefix}Library/Notifications/Weekly digest.md#Review or reminder`
   const blockRaw = `${prefix}Work Vault/Projects/Release Notes.md#^check-42`
   const headingMessage = makeMessage(fixture.document)
   const blockMessage = makeMessage(fixture.document, 'user', 'data-user-message-bubble')
@@ -241,8 +241,8 @@ test('plain heading and block paths render exact human labels and encoded Obsidi
     executeRenderer(apply, fixture, { helperConfig: { pathPrefix: prefix } })
     const links = fixture.document.querySelectorAll(linkSelector)
     assert.equal(links.length, 2)
-    assert.equal(links[0].textContent, 'Open Telegram concierge - Review or reminder')
-    assert.equal(links[0].getAttribute('href'), 'obsidian://wait-for-note?vault=Jarvis&file=Notifications%2FTelegram%20concierge.md%23Review%20or%20reminder')
+    assert.equal(links[0].textContent, 'Open Weekly digest - Review or reminder')
+    assert.equal(links[0].getAttribute('href'), 'obsidian://wait-for-note?vault=Library&file=Notifications%2FWeekly%20digest.md%23Review%20or%20reminder')
     assert.equal(links[1].textContent, 'Open Release Notes - ^check-42')
     assert.equal(links[1].getAttribute('href'), 'obsidian://wait-for-note?vault=Work%20Vault&file=Projects%2FRelease%20Notes.md%23%5Echeck-42')
   } finally {
@@ -253,7 +253,7 @@ test('plain heading and block paths render exact human labels and encoded Obsidi
 test('real final-assistant message boundary transforms a plain Obsidian path', async () => {
   const apply = await requiredFile('apply.js')
   const fixture = createBrowserFixture()
-  const raw = `${prefix}Jarvis/Notifications/Telegram concierge.md#Review or reminder`
+  const raw = `${prefix}Library/Notifications/Weekly digest.md#Review or reminder`
   const main = fixture.document.createElement('main')
   const message = fixture.document.createElement('div')
   message.setAttribute('data-local-conversation-final-assistant', 'true')
@@ -267,7 +267,7 @@ test('real final-assistant message boundary transforms a plain Obsidian path', a
     executeRenderer(apply, fixture, { helperConfig: { pathPrefix: prefix } })
     const link = fixture.document.querySelector(linkSelector)
     assert.ok(link, 'the real Codex assistant message boundary must be reconciled')
-    assert.equal(link.textContent, 'Open Telegram concierge - Review or reminder')
+    assert.equal(link.textContent, 'Open Weekly digest - Review or reminder')
     assert.equal(link.getAttribute('data-obsidian-links-generated-link'), 'true')
     const helperStyle = fixture.document.querySelector('[data-obsidian-links-style="true"]')
     assert.match(helperStyle.textContent, /data-obsidian-links-generated-link/)
@@ -281,21 +281,21 @@ test('real final-assistant message boundary transforms a plain Obsidian path', a
 test('real Codex prompt-link control keeps its label and routes clicks through the Obsidian Host Action', async () => {
   const apply = await requiredFile('apply.js')
   const fixture = createBrowserFixture()
-  const raw = `${prefix}Jarvis/Notifications/Telegram concierge.md#Review or reminder`
-  const expectedUri = 'obsidian://wait-for-note?vault=Jarvis&file=Notifications%2FTelegram%20concierge.md%23Review%20or%20reminder'
+  const raw = `${prefix}Library/Notifications/Weekly digest.md#Review or reminder`
+  const expectedUri = 'obsidian://wait-for-note?vault=Library&file=Notifications%2FWeekly%20digest.md%23Review%20or%20reminder'
   const message = fixture.document.createElement('div')
   message.setAttribute('data-local-conversation-final-assistant', 'true')
   const control = fixture.document.createElement('span')
   control.setAttribute('data-file-reference', 'true')
   control.setAttribute('data-prompt-link-href', raw)
-  control.setAttribute('data-prompt-link-label', 'Open Telegram concierge review')
+  control.setAttribute('data-prompt-link-label', 'Open Weekly digest review')
   control.setAttribute('role', 'button')
   const iconHost = fixture.document.createElement('span')
   const nativeIcon = fixture.document.createElement('svg')
   nativeIcon.setAttribute('data-native-file-icon', 'true')
   iconHost.appendChild(nativeIcon)
   const label = fixture.document.createElement('span')
-  label.textContent = 'Open Telegram concierge review'
+  label.textContent = 'Open Weekly digest review'
   control.append(iconHost, label)
   message.appendChild(control)
   const main = fixture.document.createElement('main')
@@ -311,7 +311,7 @@ test('real Codex prompt-link control keeps its label and routes clicks through t
     assert.equal(control.getAttribute('data-obsidian-links-link'), 'true')
     assert.equal(control.getAttribute('data-obsidian-links-raw-path'), raw)
     assert.equal(control.getAttribute('data-prompt-link-href'), expectedUri)
-    assert.equal(label.textContent, 'Open Telegram concierge review')
+    assert.equal(label.textContent, 'Open Weekly digest review')
     assert.equal(nativeIcon.parentNode?.getAttribute('data-obsidian-links-native-icon-stash'), 'true')
     assert.equal(nativeIcon.parentNode?.hasAttribute('hidden'), true)
     assert.ok(iconHost.querySelector(iconSelector), 'the native file icon is replaced with the Obsidian icon')
@@ -328,8 +328,8 @@ test('real Codex prompt-link control keeps its label and routes clicks through t
 test('remote final outside the first main claims its real Codex prompt-link control', async () => {
   const apply = await requiredFile('apply.js')
   const fixture = createBrowserFixture()
-  const raw = `${prefix}Jarvis/House Rules/House Rules.md`
-  const expectedUri = 'obsidian://wait-for-note?vault=Jarvis&file=House%20Rules%2FHouse%20Rules.md'
+  const raw = `${prefix}Library/Team Guide/Team Guide.md`
+  const expectedUri = 'obsidian://wait-for-note?vault=Library&file=Team%20Guide%2FTeam%20Guide.md'
   fixture.document.body.appendChild(fixture.document.createElement('main'))
   const final = fixture.document.createElement('div')
   final.setAttribute('class', 'flex flex-col')
@@ -343,12 +343,12 @@ test('remote final outside the first main claims its real Codex prompt-link cont
   const control = fixture.document.createElement('span')
   control.setAttribute('data-file-reference', 'true')
   control.setAttribute('data-prompt-link-href', raw)
-  control.setAttribute('data-prompt-link-label', 'Jarvis House Rules')
+  control.setAttribute('data-prompt-link-label', 'Library Team Guide')
   control.setAttribute('role', 'button')
   control.setAttribute('tabindex', '0')
   control.setAttribute('data-inline-mention-interactive', '')
   control.setAttribute('class', 'cursor-interaction')
-  control.textContent = 'Jarvis House Rules'
+  control.textContent = 'Library Team Guide'
   markdown.appendChild(control)
   annotation.appendChild(markdown)
   unit.appendChild(annotation)
@@ -380,23 +380,23 @@ test('a malformed earlier canonical path cannot abort a later real prompt-link c
   const apply = await requiredFile('apply.js')
   const fixture = createBrowserFixture()
   const earlier = makeMessage(fixture.document, 'user', 'data-user-message-bubble')
-  earlier.appendChild(fixture.document.createTextNode(`Earlier invalid path: ${prefix}Jarvis/.md`))
-  const raw = `${prefix}Jarvis/House Rules/House Rules.md`
-  const expectedUri = 'obsidian://wait-for-note?vault=Jarvis&file=House%20Rules%2FHouse%20Rules.md'
+  earlier.appendChild(fixture.document.createTextNode(`Earlier invalid path: ${prefix}Library/.md`))
+  const raw = `${prefix}Library/Team Guide/Team Guide.md`
+  const expectedUri = 'obsidian://wait-for-note?vault=Library&file=Team%20Guide%2FTeam%20Guide.md'
   const message = makeMessage(fixture.document)
   const control = fixture.document.createElement('span')
   control.setAttribute('data-file-reference', 'true')
   control.setAttribute('data-prompt-link-href', raw)
-  control.setAttribute('data-prompt-link-label', 'Jarvis House Rules')
+  control.setAttribute('data-prompt-link-label', 'Library Team Guide')
   control.setAttribute('role', 'button')
-  control.textContent = 'Jarvis House Rules'
+  control.textContent = 'Library Team Guide'
   message.appendChild(control)
 
   try {
     executeRenderer(apply, fixture, { helperConfig: { pathPrefix: prefix } })
     assert.equal(control.getAttribute('data-codex-wingman-owner'), 'obsidian-links')
     assert.equal(control.getAttribute('data-prompt-link-href'), expectedUri)
-    assert.equal(earlier.textContent, `Earlier invalid path: ${prefix}Jarvis/.md`)
+    assert.equal(earlier.textContent, `Earlier invalid path: ${prefix}Library/.md`)
   } finally {
     fixture.dispose()
   }
@@ -405,7 +405,7 @@ test('a malformed earlier canonical path cannot abort a later real prompt-link c
 test('cleanup restores a real Codex prompt-link control exactly', async () => {
   const [apply, remove] = await Promise.all([requiredFile('apply.js'), requiredFile('remove.js')])
   const fixture = createBrowserFixture()
-  const raw = `${prefix}Jarvis/Notes/Restore prompt link.md`
+  const raw = `${prefix}Library/Notes/Restore prompt link.md`
   const message = fixture.document.createElement('div')
   message.setAttribute('data-local-conversation-final-assistant', 'true')
   const control = fixture.document.createElement('span')
@@ -443,12 +443,12 @@ test('plain matching skips false md suffixes and scans through md directory comp
   const apply = await requiredFile('apply.js')
   const fixture = createBrowserFixture()
   const invalid = [
-    `${prefix}Jarvis/Notes/Note.md.bak`,
-    `${prefix}Jarvis/Notes/Note.mdx`,
-    `${prefix}Jarvis/Notes/Note.md?download=1`,
-    `${prefix}Jarvis/Notes/Note.md-longer`,
+    `${prefix}Library/Notes/Note.md.bak`,
+    `${prefix}Library/Notes/Note.mdx`,
+    `${prefix}Library/Notes/Note.md?download=1`,
+    `${prefix}Library/Notes/Note.md-longer`,
   ]
-  const nested = `${prefix}Jarvis/Folder.md/Note.md`
+  const nested = `${prefix}Library/Folder.md/Note.md`
   const invalidMessages = invalid.map((raw) => {
     const message = makeMessage(fixture.document)
     message.appendChild(fixture.document.createTextNode(raw))
@@ -464,7 +464,7 @@ test('plain matching skips false md suffixes and scans through md directory comp
     assert.equal(links.length, 1)
     assert.equal(links[0].getAttribute('data-obsidian-links-raw-path'), nested)
     assert.equal(links[0].textContent, 'Open Note')
-    assert.equal(links[0].getAttribute('href'), 'obsidian://wait-for-note?vault=Jarvis&file=Folder.md%2FNote.md')
+    assert.equal(links[0].getAttribute('href'), 'obsidian://wait-for-note?vault=Library&file=Folder.md%2FNote.md')
   } finally {
     fixture.dispose()
   }
@@ -473,7 +473,7 @@ test('plain matching skips false md suffixes and scans through md directory comp
 test('line-leading prose-like fragment stays raw while a labeled anchor keeps exact punctuation', async () => {
   const apply = await requiredFile('apply.js')
   const fixture = createBrowserFixture()
-  const ambiguous = `${prefix}Jarvis/Notes/Heading.md#Review for details.`
+  const ambiguous = `${prefix}Library/Notes/Heading.md#Review for details.`
   const message = makeMessage(fixture.document)
   message.appendChild(fixture.document.createTextNode(ambiguous))
   const exactAnchor = fixture.document.createElement('a')
@@ -488,7 +488,7 @@ test('line-leading prose-like fragment stays raw while a labeled anchor keeps ex
     assert.equal(exactAnchor.textContent, 'Exact punctuated heading')
     assert.equal(
       exactAnchor.getAttribute('href'),
-      'obsidian://wait-for-note?vault=Jarvis&file=Notes%2FHeading.md%23Review%20for%20details.',
+      'obsidian://wait-for-note?vault=Library&file=Notes%2FHeading.md%23Review%20for%20details.',
     )
   } finally {
     fixture.dispose()
@@ -498,10 +498,10 @@ test('line-leading prose-like fragment stays raw while a labeled anchor keeps ex
 test('ambiguous inline fragments preserve adjacent prose and do not swallow later same-line paths', async () => {
   const apply = await requiredFile('apply.js')
   const fixture = createBrowserFixture()
-  const ambiguousHeading = `${prefix}Jarvis/Notes/Heading.md#Review`
-  const laterPlain = `${prefix}Jarvis/Notes/Later.md`
-  const ambiguousBlock = `${prefix}Jarvis/Notes/Block.md#^item-1`
-  const finalPlain = `${prefix}Jarvis/Notes/Final.md`
+  const ambiguousHeading = `${prefix}Library/Notes/Heading.md#Review`
+  const laterPlain = `${prefix}Library/Notes/Later.md`
+  const ambiguousBlock = `${prefix}Library/Notes/Block.md#^item-1`
+  const finalPlain = `${prefix}Library/Notes/Final.md`
   const headingSource = `${ambiguousHeading} for details; then ${laterPlain} and ${finalPlain}.`
   const blockSource = `${ambiguousBlock} beside ${laterPlain} and ${finalPlain}.`
   const headingMessage = makeMessage(fixture.document)
@@ -530,8 +530,8 @@ test('ambiguous inline fragments preserve adjacent prose and do not swallow late
 test('recognized anchors preserve authored markup, humanize raw labels, and expose owned raw-path controls', async () => {
   const apply = await requiredFile('apply.js')
   const fixture = createBrowserFixture()
-  const authoredRaw = `${prefix}Jarvis/Guides/Obsidian Links.md#Deep links`
-  const rawLabelPath = `${prefix}Jarvis/Notes/Raw Label.md`
+  const authoredRaw = `${prefix}Library/Guides/Obsidian Links.md#Deep links`
+  const rawLabelPath = `${prefix}Library/Notes/Raw Label.md`
   const message = makeMessage(fixture.document)
   const authored = fixture.document.createElement('a')
   authored.setAttribute('href', authoredRaw)
@@ -550,7 +550,7 @@ test('recognized anchors preserve authored markup, humanize raw labels, and expo
     assert.equal(authored.children[1], originalStrong)
     assert.equal(authored.textContent, 'Read the link guide')
     assert.equal(authored.getAttribute('class'), 'author-link')
-    assert.equal(authored.getAttribute('href'), 'obsidian://wait-for-note?vault=Jarvis&file=Guides%2FObsidian%20Links.md%23Deep%20links')
+    assert.equal(authored.getAttribute('href'), 'obsidian://wait-for-note?vault=Library&file=Guides%2FObsidian%20Links.md%23Deep%20links')
     assert.equal(rawLabel.children[1].textContent, 'Open Raw Label')
     for (const anchor of [authored, rawLabel]) {
       assert.equal(anchor.getAttribute('data-codex-wingman-owner'), 'obsidian-links')
@@ -616,7 +616,7 @@ test('affected links use the exact supplied Obsidian artwork as a unique prefix 
 test('copy control writes the exact raw path and clipboard failure leaves unrelated UI unchanged', async () => {
   const apply = await requiredFile('apply.js')
   const fixture = createBrowserFixture()
-  const raw = `${prefix}Jarvis/Notes/Copy Me.md`
+  const raw = `${prefix}Library/Notes/Copy Me.md`
   const message = makeMessage(fixture.document)
   message.appendChild(fixture.document.createTextNode(raw))
   const writes = []
@@ -644,7 +644,7 @@ test('copy control writes the exact raw path and clipboard failure leaves unrela
 test('owned links request the narrow Obsidian Host Action while modified clicks keep native behavior', async () => {
   const apply = await requiredFile('apply.js')
   const fixture = createBrowserFixture()
-  const raw = `${prefix}Jarvis/Notes/Open Me.md#Heading`
+  const raw = `${prefix}Library/Notes/Open Me.md#Heading`
   const message = makeMessage(fixture.document)
   message.appendChild(fixture.document.createTextNode(raw))
   const requests = []
@@ -655,7 +655,7 @@ test('owned links request the narrow Obsidian Host Action while modified clicks 
     link.click()
     assert.equal(requests.length, 1)
     assert.equal(requests[0][0], 'system.openObsidianUri')
-    assert.equal(requests[0][1].uri, 'obsidian://wait-for-note?vault=Jarvis&file=Notes%2FOpen%20Me.md%23Heading')
+    assert.equal(requests[0][1].uri, 'obsidian://wait-for-note?vault=Library&file=Notes%2FOpen%20Me.md%23Heading')
     link.dispatchEvent(new fixture.context.Event('click', { bubbles: true, cancelable: true, ctrlKey: true }))
     assert.equal(requests.length, 1)
   } finally {
@@ -666,7 +666,7 @@ test('owned links request the narrow Obsidian Host Action while modified clicks 
 test('non-target content and excluded message subtrees remain exactly unchanged', async () => {
   const apply = await requiredFile('apply.js')
   const fixture = createBrowserFixture()
-  const targetLooking = `${prefix}Jarvis/Notes/Leave Me.md`
+  const targetLooking = `${prefix}Library/Notes/Leave Me.md`
   const main = fixture.document.createElement('main')
   fixture.document.body.appendChild(main)
   const message = makeMessage(fixture.document)
@@ -741,7 +741,7 @@ test('repeat apply is idempotent and streaming plus inserted message content rec
   const apply = await requiredFile('apply.js')
   const fixture = createBrowserFixture()
   const streaming = makeMessage(fixture.document)
-  const text = fixture.document.createTextNode(`${prefix}Jarvis/Notes/Stream`)
+  const text = fixture.document.createTextNode(`${prefix}Library/Notes/Stream`)
   streaming.appendChild(text)
 
   try {
@@ -758,7 +758,7 @@ test('repeat apply is idempotent and streaming plus inserted message content rec
     assert.equal(fixture.document.querySelectorAll(linkSelector).length, 1)
 
     const inserted = makeMessage(fixture.document, 'assistant', 'data-author')
-    inserted.appendChild(fixture.document.createTextNode(`${prefix}Jarvis/Notes/Inserted.md`))
+    inserted.appendChild(fixture.document.createTextNode(`${prefix}Library/Notes/Inserted.md`))
     await fixture.flush()
     assert.equal(fixture.document.querySelectorAll(linkSelector).length, 2)
 
@@ -797,7 +797,7 @@ test('owned child-list mutations during a scheduled reconcile do not queue a sec
 
   try {
     executeRenderer(apply, fixture, { helperConfig: { pathPrefix: prefix } })
-    message.appendChild(fixture.document.createTextNode(`${prefix}Jarvis/Notes/One Frame.md`))
+    message.appendChild(fixture.document.createTextNode(`${prefix}Library/Notes/One Frame.md`))
     assert.equal(frames.size, 1, 'the external insertion schedules one reconcile')
     const [id, callback] = frames.entries().next().value
     frames.delete(id)
@@ -815,7 +815,7 @@ test('nested message roots reconcile once and remain idempotent', async () => {
   const outer = makeMessage(fixture.document, 'assistant', 'data-message-author')
   const inner = fixture.document.createElement('div')
   inner.setAttribute('data-author', 'user')
-  inner.appendChild(fixture.document.createTextNode(`${prefix}Jarvis/Notes/Nested.md`))
+  inner.appendChild(fixture.document.createTextNode(`${prefix}Library/Notes/Nested.md`))
   outer.appendChild(inner)
 
   try {
@@ -833,7 +833,7 @@ test('nested message roots reconcile once and remain idempotent', async () => {
 test('controller-missing remove restores raw-destination anchor child markup exactly', async () => {
   const [apply, remove] = await Promise.all([requiredFile('apply.js'), requiredFile('remove.js')])
   const fixture = createBrowserFixture()
-  const raw = `${prefix}Jarvis/Notes/Marked Raw.md`
+  const raw = `${prefix}Library/Notes/Marked Raw.md`
   const message = makeMessage(fixture.document)
   const anchor = fixture.document.createElement('a')
   anchor.setAttribute('href', raw)
@@ -861,7 +861,7 @@ test('config identity replaces changed prefixes and invalid reload cleans the ac
   const apply = await requiredFile('apply.js')
   const fixture = createBrowserFixture()
   const alternatePrefix = '/other-vaults/'
-  const firstRaw = `${prefix}Jarvis/Notes/First.md`
+  const firstRaw = `${prefix}Library/Notes/First.md`
   const secondRaw = `${alternatePrefix}Second Vault/Notes/Second.md`
   const message = makeMessage(fixture.document)
   message.appendChild(fixture.document.createTextNode(`${firstRaw}\n${secondRaw}`))
@@ -888,8 +888,8 @@ test('config identity replaces changed prefixes and invalid reload cleans the ac
 test('remove restores exact generated text and original anchor state while preserving unrelated DOM', async () => {
   const [apply, remove] = await Promise.all([requiredFile('apply.js'), requiredFile('remove.js')])
   const fixture = createBrowserFixture()
-  const plainRaw = `${prefix}Jarvis/Notes/Restore Me.md#Original heading`
-  const anchorRaw = `${prefix}Jarvis/Notes/Authored.md`
+  const plainRaw = `${prefix}Library/Notes/Restore Me.md#Original heading`
+  const anchorRaw = `${prefix}Library/Notes/Authored.md`
   const message = makeMessage(fixture.document)
   message.appendChild(fixture.document.createTextNode(`before ${plainRaw} after`))
   const anchor = fixture.document.createElement('a')
@@ -926,7 +926,7 @@ test('invalid helper configuration fails closed without starting a controller', 
   for (const helperConfig of [{}, { pathPrefix: 42 }, { pathPrefix: 'relative/' }, { pathPrefix: '/missing-end' }]) {
     const fixture = createBrowserFixture()
     const message = makeMessage(fixture.document)
-    const raw = `${prefix}Jarvis/Notes/Untouched.md`
+    const raw = `${prefix}Library/Notes/Untouched.md`
     message.appendChild(fixture.document.createTextNode(raw))
     try {
       executeRenderer(apply, fixture, { helperConfig })
@@ -952,7 +952,7 @@ test('T3 timeline links use the host action while composer text and native click
   const markdown = fixture.document.createElement('div')
   markdown.setAttribute('class', 'chat-markdown')
   message.appendChild(markdown)
-  const raw = `${prefix}Jarvis/Notes/T3 Trial.md`
+  const raw = `${prefix}Library/Notes/T3 Trial.md`
   const anchor = fixture.document.createElement('a')
   anchor.setAttribute('href', raw)
   anchor.textContent = 'The note'
@@ -980,7 +980,7 @@ test('T3 timeline links use the host action while composer text and native click
     assert.equal(nativeClicks, 0)
     assert.equal(requests.length, 1)
     assert.equal(requests[0][0], 'system.openObsidianUri')
-    assert.match(requests[0][1].uri, /^obsidian:\/\/wait-for-note\?vault=Jarvis&file=/)
+    assert.match(requests[0][1].uri, /^obsidian:\/\/wait-for-note\?vault=Library&file=/)
     executeRenderer(remove, fixture)
     assert.equal(fixture.document.querySelectorAll(ownerSelector).length, 0)
     assert.equal(anchor.getAttribute('href'), raw)

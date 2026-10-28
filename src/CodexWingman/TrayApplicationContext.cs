@@ -905,7 +905,7 @@ internal sealed class TrayApplicationContext : ApplicationContext
     {
         public string Name => "this PC";
         public Task<T3PairingLink> CreateLinkAsync(T3PairingLinkRequest request, CancellationToken cancellationToken) =>
-            throw new DirectoryNotFoundException("no T3 pairing folder is set up and the Jarvis Sync share was not found.");
+            throw new DirectoryNotFoundException("no T3 pairing folder is set up (t3Web.pairing.folder).");
         public Task RevokePreviousAsync(Uri origin, string label, CancellationToken cancellationToken) => Task.CompletedTask;
     }
 

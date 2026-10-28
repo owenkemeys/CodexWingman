@@ -61,7 +61,7 @@ The tray menu persists every Helper's checked state in `helperEnabled`. `usageDi
 
 ## T3 web and Grok Bot
 
-T3 web normally needs no settings: the first pairing link supplies its address, and the pairing folder is found from the Jarvis Sync receipt (`%LOCALAPPDATA%\Jarvis\Sync\receipts\latest.json`, `share_root`). Without Jarvis Sync, set them explicitly, for example with `python tools/configure_local.py --t3-web-url https://host:port --t3-pairing-folder <folder> --apply`:
+T3 web needs the https address of your T3 server and, for automatic sign-in and renewal, a pairing folder that a small bridge on the T3 host answers (request/response format and the reference bridge `tools/t3_pairing_bridge.py` are in [T3 web pairing](T3_WEB_PAIRING.md)). Set them with `python tools/configure_local.py --t3-web-url https://host:port --t3-pairing-folder <folder> --apply`, or in settings:
 
 ```json
 {
@@ -74,7 +74,7 @@ T3 web normally needs no settings: the first pairing link supplies its address, 
 }
 ```
 
-`t3Web.chromePath` overrides Chrome discovery. `t3Web.pairing.label` overrides the session label (default `Wingman T3 web (<PC name>)`). Only https addresses are accepted. Wingman's T3 web Chrome data stays in `%LOCALAPPDATA%\CodexWingman\t3-web\chrome-data` and its pairing record in `t3-web\pairing.json` (expiry only, no credential).
+`t3Web.chromePath` overrides Chrome discovery. `t3Web.pairing.label` overrides the session label (default `Wingman T3 web (<PC name>)`). Only https addresses are accepted. Without a pairing folder, T3 web still opens; sign in inside its window with a pairing link from your T3 server, and repeat that when the 30-day session ends. Wingman's T3 web Chrome data stays in `%LOCALAPPDATA%\CodexWingman\t3-web\chrome-data` and its pairing record in `t3-web\pairing.json` (expiry only, no credential).
 
 Grok Bot needs no settings. Wingman uses the standard install (`%LOCALAPPDATA%\Programs\Grok Bot\Grok Bot.exe`) and reads only its local weekly-usage cache under `%APPDATA%\Grok Bot\sand-client-persistence`.
 

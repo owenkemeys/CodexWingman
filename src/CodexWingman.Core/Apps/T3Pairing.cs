@@ -164,13 +164,17 @@ public sealed class T3PairingCoordinator(
 }
 
 /// <summary>
-/// Pairing provider that drops a request file into a folder the T3 host watches (the Jarvis Sync share)
-/// and waits for the host's answer file. The folder holds a one-time, two-minute link only briefly;
+/// Pairing provider that drops a request file into a folder the T3 host watches (answered by a host-side bridge
+/// such as tools/t3_pairing_bridge.py; format in docs/T3_WEB_PAIRING.md) and waits for the host's answer file.
+/// The folder holds a one-time, two-minute link only briefly;
 /// Wingman deletes the answer as soon as it has read it.
 /// </summary>
 public sealed class SharedFolderPairingProvider : IT3PairingLinkProvider
 {
     private static readonly JsonSerializerOptions JsonOptions = new() { WriteIndented = true };
+    // Optional receipt integration (one sync tool's layout); unused unless that receipt exists on this PC.
+    private static readonly string[] OptionalReceiptPath = ["Jarvis", "Sync", "receipts", "latest.json"];
+    private static readonly string[] OptionalReceiptRequestFolder = ["ops", "jarvis-sync", "requests", "t3-pairing"];
     private readonly string folder;
     private readonly string instance;
     private readonly TimeSpan timeout;
@@ -214,7 +218,7 @@ public sealed class SharedFolderPairingProvider : IT3PairingLinkProvider
         var responsePath = Path.Combine(folder, id + ".response.json");
         var temporary = Path.Combine(folder, "." + id + ".request.tmp");
         var created = clock();
-        // Jarvis Sync request files use snake_case JSON.
+        // Request and answer files use snake_case JSON (docs/T3_WEB_PAIRING.md).
         await File.WriteAllTextAsync(temporary, JsonSerializer.Serialize(new Dictionary<string, object?>
         {
             ["schema_version"] = 1,
@@ -268,12 +272,13 @@ public sealed class SharedFolderPairingProvider : IT3PairingLinkProvider
     }
 
     /// <summary>
-    /// Zero-touch folder discovery: an explicit setting wins; otherwise the Jarvis Sync receipt on this PC names the share root.
+    /// Folder discovery: an explicit <c>t3Web.pairing.folder</c> setting wins. Otherwise, optionally, a sync tool's
+    /// receipt on this PC names a share root whose fixed request folder is used (docs/T3_WEB_PAIRING.md).
     /// </summary>
     public static string? ResolveFolder(T3PairingSettings? settings, string localAppData)
     {
         if (!string.IsNullOrWhiteSpace(settings?.Folder)) return Environment.ExpandEnvironmentVariables(settings.Folder.Trim());
-        var receipt = Path.Combine(localAppData, "Jarvis", "Sync", "receipts", "latest.json");
+        var receipt = Path.Combine(localAppData, Path.Combine(OptionalReceiptPath));
         try
         {
             if (!File.Exists(receipt)) return null;
@@ -283,7 +288,7 @@ public sealed class SharedFolderPairingProvider : IT3PairingLinkProvider
                 if (!property.Name.Equals("share_root", StringComparison.OrdinalIgnoreCase)
                     && !property.Name.Equals("shareRoot", StringComparison.OrdinalIgnoreCase)) continue;
                 if (property.Value.GetString() is { Length: > 0 } root)
-                    return Path.Combine(root, "ops", "jarvis-sync", "requests", "t3-pairing");
+                    return Path.Combine(root, Path.Combine(OptionalReceiptRequestFolder));
             }
         }
         catch (Exception error) when (error is IOException or UnauthorizedAccessException or JsonException or InvalidOperationException) { }

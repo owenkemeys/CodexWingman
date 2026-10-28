@@ -150,13 +150,13 @@ internal static class AppTargetTests
             False(HelperSettings.Default.T3Web?.IsConfigured == true, "T3 web unconfigured by default");
             var settings = HelperSettings.Default with
             {
-                T3Web = new T3WebSettings(Origin, new T3PairingSettings(Folder: "R:\\ops\\jarvis-sync\\requests\\t3-pairing"), OpenOnLaunch: true),
+                T3Web = new T3WebSettings(Origin, new T3PairingSettings(Folder: "R:\\ops\\t3-pairing"), OpenOnLaunch: true),
                 OpenGrokBotOnLaunch = true,
             };
             HelperSettingsStore.Save(path, settings);
             var loaded = HelperSettingsStore.Load(path);
             Equal(Origin, loaded.T3Web?.Url, "T3 web url round trip");
-            Equal("R:\\ops\\jarvis-sync\\requests\\t3-pairing", loaded.T3Web?.Pairing?.Folder, "pairing folder round trip");
+            Equal("R:\\ops\\t3-pairing", loaded.T3Web?.Pairing?.Folder, "pairing folder round trip");
             True(loaded.T3Web?.IsConfigured == true, "configured T3 web");
             True(loaded.OpenGrokBotOnLaunch, "Grok Bot open-on-launch round trip");
             True(new T3WebSettings(Pairing: new T3PairingSettings(Folder: "X:\\p")).IsConfigured, "pairing folder alone is enough (zero setup)");
@@ -588,13 +588,13 @@ internal static class AppTargetTests
         Equal("Wingman T3 web (abc)", T3PairingCoordinator.DefaultLabel("a b/c"), "label is sanitized");
         try
         {
-            // Zero touch: the folder is found from the Jarvis Sync receipt on this PC.
+            // Zero touch: the folder is found from the optional sync receipt on this PC.
             var localAppData = Path.Combine(root, "local");
             Equal<string?>(null, SharedFolderPairingProvider.ResolveFolder(null, localAppData), "no receipt, no folder");
             Directory.CreateDirectory(Path.Combine(localAppData, "Jarvis", "Sync", "receipts"));
             File.WriteAllText(Path.Combine(localAppData, "Jarvis", "Sync", "receipts", "latest.json"),
                 JsonSerializer.Serialize(new Dictionary<string, object> { ["share_root"] = share, ["status"] = "ok" }));
-            Equal(folder, SharedFolderPairingProvider.ResolveFolder(null, localAppData), "folder from the Jarvis Sync receipt");
+            Equal(folder, SharedFolderPairingProvider.ResolveFolder(null, localAppData), "folder from the optional sync receipt");
             Equal("X:\\explicit", SharedFolderPairingProvider.ResolveFolder(new T3PairingSettings(Folder: "X:\\explicit"), localAppData), "explicit folder wins");
 
             using var bridge = new FakeBridge(folder, Origin);
@@ -759,7 +759,7 @@ internal static class AppTargetTests
         }
     }
 
-    /// <summary>Stands in for the Jarvis-side bridge: answers request files in the same JSON shape.</summary>
+    /// <summary>Stands in for the host-side bridge: answers request files in the same JSON shape.</summary>
     private sealed class FakeBridge : IDisposable
     {
         private readonly CancellationTokenSource stop = new();

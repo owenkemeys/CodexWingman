@@ -14,7 +14,7 @@ const rollout = [
 
 class FakeManager {
   constructor() {
-    this.hostId = 'remote-ssh-discovered:Jarvis'
+    this.hostId = 'remote-ssh-discovered:devbox'
     this.updated = false
     this.readCalls = 0
     this.conversation = {
@@ -22,12 +22,12 @@ class FakeManager {
       rolloutPath: '/mnt/example-data/codex/home/sessions/fixture.jsonl',
       turnHistory: { kind: 'canonical', history: { entitiesByKey: {}, generation: 1, islands: [] } },
       threadRuntimeStatus: { type: 'idle' },
-      cwd: '/mnt/example-data/projects/TOTK Truly Breakable Weapons',
+      cwd: '/mnt/example-data/projects/Example Project',
       latestModel: 'fixture-model',
       latestReasoningEffort: 'medium',
       currentPermissions: {
         activePermissionProfile: null,
-        runtimeWorkspaceRoots: ['/mnt/example-data/projects/TOTK Truly Breakable Weapons'],
+        runtimeWorkspaceRoots: ['/mnt/example-data/projects/Example Project'],
         approvalPolicy: 'on-request',
         approvalsReviewer: 'auto_review',
         sandboxPolicy: { type: 'workspaceWrite', writableRoots: [], networkAccess: false },

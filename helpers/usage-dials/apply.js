@@ -478,7 +478,7 @@
     [data-codex-helper="usage-dials"][data-wingman-app="grok-bot"] { height: 32px; }
     [data-codex-helper-dial][data-wingman-app="grok-bot"] { width: 28px; height: 32px; }
     [data-codex-helper-dial][data-wingman-app="grok-bot"] svg { width: 28px; height: 28px; }
-    /* Grok Bot (from native-slot-v34, Owen's option B): a small 16px ring inside a grey chip that
+    /* Grok Bot (from native-slot-v34, design option B): a small 16px ring inside a grey chip that
        matches the mic button beside it (fill #282828, rim #343434, icon grey #979797). The used arc is
        a touch brighter than the icon grey; ahead of pace shows as an equally muted amber (red only at
        danger), and the unused-until-now marker stays a quiet grey. The popup keeps the plain ring. */
