@@ -2,6 +2,14 @@
 
 **Wingman 2.0 supports Codex and T3 Code.** It provides separate launch and repair controls for each app, with Helpers that declare which apps they support. See [the 2.0 design](docs/wingman-2.md) and [the GitHub release contract](docs/codex-app-release-contract.md).
 
+## New in 2.1
+
+- **T3 Code (web).** Wingman can open your T3 server's web client as its own Chrome app window (`Wingman T3 Code (web)` in Start), with T3's icon, and brings an existing window forward instead of opening a second one. Usage dials, Obsidian links and Clickable file links run there too. Set the server's https address with `python tools/configure_local.py --t3-web-url https://host:port --apply`. Sign-in uses T3's own one-time pairing links, never copied cookies; for automatic pairing and renewal before T3's 30-day session end, run the small reference bridge on the T3 host and point Wingman at its folder ([T3 web pairing](docs/T3_WEB_PAIRING.md)).
+- **Grok Bot.** If Grok Bot is installed, Wingman can relaunch it once (after asking) with a localhost-only debugging port and adds a weekly-usage dial beside its composer buttons. Wingman changes no Grok Bot files, makes no calls to its servers and holds no credentials. Pointing an existing Grok Bot taskbar pin at Wingman is an opt-in tray step with a backup.
+- **One tray menu for every app.** Each installed app shows a plain Running or Closed line with a New window or Open command; apps that are not installed are not listed. `Open when Wingman starts` is off for the new targets.
+
+Details: [the 2.0 and 2.1 design notes](docs/wingman-2.md) and [configuration](docs/configuration.md#t3-web-and-grok-bot).
+
 Wingman (formerly CodexWingman) is a Windows tray companion that adds small quality-of-life improvements to Codex and T3 Code. It loads readable Helper packages and applies them to supported connected windows. Wingman does not replace either app or modify stored chat history.
 
 Start here: [Agent setup and customization](docs/AGENT_SETUP.md). Give this repository link to your agent and ask it to install Wingman, configure local integrations, and report unresolved choices. Windows only.

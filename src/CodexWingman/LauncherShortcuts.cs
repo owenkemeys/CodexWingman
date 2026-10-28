@@ -62,14 +62,14 @@ internal static class LauncherShortcuts
     [DllImport("shell32.dll")]
     private static extern void SHChangeNotify(int eventId, uint flags, IntPtr item1, IntPtr item2);
 
-    /// <summary>True when this profile has a T3 web address or a reachable pairing folder (set up or found via the sync share).</summary>
+    /// <summary>True when this profile has a T3 web address or a reachable pairing folder (set up, or found from an optional sync receipt).</summary>
     public static bool T3WebAvailable(string? localAppData)
     {
         try
         {
             var settings = HelperSettingsStore.Load(HelperSettingsStore.DefaultPath(localAppData));
             return settings.T3Web?.IsConfigured == true
-                // The the sync share receipt belongs to the Windows user, not to a Wingman profile override.
+                // An optional sync receipt belongs to the Windows user, not to a Wingman profile override.
                 || SharedFolderPairingProvider.ResolveFolder(settings.T3Web?.Pairing,
                     Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData)) is { } folder
                     && Directory.Exists(folder);

@@ -59,6 +59,8 @@ jobs:
           Compress-Archive -LiteralPath '${{ runner.temp }}/package/CodexWingman-verified' -DestinationPath $asset
           python tools/release_archive.py $asset --root-name CodexWingman-verified --repository 'https://github.com/owenkemeys/CodexWingman' --version $tag.TrimStart('v')
           if ($LASTEXITCODE -ne 0) { throw 'Release archive verification failed' }
+          python tools/release_hygiene.py zip $asset
+          if ($LASTEXITCODE -ne 0) { throw 'Release download contains setup-specific terms' }
           $hash = (Get-FileHash -LiteralPath $asset -Algorithm SHA256).Hash.ToLowerInvariant()
           Set-Content -LiteralPath ($asset + '.sha256') -Value "$hash  $asset" -Encoding ascii
           python tools/release_identity.py --tag $tag --notes-output release-notes.md
