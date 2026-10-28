@@ -161,9 +161,8 @@ public sealed class HelperHost
         {
             var package = catalogReport.Packages.FirstOrDefault(candidate => candidate.Manifest.Id.Equals(helperId, StringComparison.Ordinal))
                 ?? throw new KeyNotFoundException($"Unknown Helper '{helperId}'");
-            var nextSettings = HelperSettingsStore.Load(settingsPath).WithHelperEnabled(helperId, enabled);
-            HelperSettingsStore.Save(settingsPath, nextSettings);
-            settings = nextSettings;
+            // Re-reads the file; an unreadable file is never overwritten (the change is kept in memory).
+            settings = HelperSettingsStore.Update(settingsPath, current => current.WithHelperEnabled(helperId, enabled)).Value;
             if (enabled) suspended = false;
 
             HelperHostReport report;

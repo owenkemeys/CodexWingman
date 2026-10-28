@@ -72,6 +72,8 @@ internal static class Program
                 Environment.ExitCode = 3;
                 return;
             }
+            WingmanLog.Configure(WingmanLog.LogDirectory(Path.GetDirectoryName(HelperSettingsStore.DefaultPath(options.LocalAppData))!));
+            WingmanLog.Write("launcher-signal", ("target", options.Target));
             using var selected = EventWaitHandle.OpenExisting(options.ActivationEventName);
             // This launch came from the user's click; pass the right to come to the front only to the
             // running Wingman (which passes it on to the app window it raises), not to every process.

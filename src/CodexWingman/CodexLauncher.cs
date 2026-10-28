@@ -89,10 +89,17 @@ internal static class CodexLauncher
             : CodexHookState.NotOpen;
     }
 
-    public static int GetOpenWindowCount()
+    public static int GetOpenWindowCount() => OpenWindows().Count;
+
+    /// <summary>Brings the front-most open Codex window forward (restoring it if minimized). False if none is open.</summary>
+    public static bool BringWindowForward() =>
+        OpenWindows() is { Count: > 0 } windows && Core.Helpers.WindowsForegroundActivator.ActivateWindow(windows[0]);
+
+    /// <summary>Visible, titled, unowned Codex windows in this session, front-most first.</summary>
+    private static List<IntPtr> OpenWindows()
     {
         var currentSessionId = WindowProcessInfo.CurrentSession();
-        var count = 0;
+        var windows = new List<IntPtr>();
         // One answer per process id per enumeration; a process usually owns several windows.
         var isCodex = new Dictionary<uint, bool>();
         EnumWindows((window, _) =>
@@ -110,10 +117,10 @@ internal static class CodexLauncher
                         StringComparison.OrdinalIgnoreCase);
                 isCodex[processId] = matches;
             }
-            if (matches) count++;
+            if (matches) windows.Add(window);
             return true;
         }, IntPtr.Zero);
-        return count;
+        return windows;
     }
 
     private static IEnumerable<int> CandidatePorts(string runtimeStatePath, int? preferredPort)
@@ -139,6 +146,7 @@ internal static class CodexLauncher
             ActivateOptions.None,
             out _);
         Marshal.ThrowExceptionForHR(result);
+        WingmanLog.Write("codex-launch", ("port", port));
 
         if (!await WaitForEndpointAsync(port, cancellationToken))
             throw new TimeoutException($"Codex did not expose localhost CDP on port {port}");

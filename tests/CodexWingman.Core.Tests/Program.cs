@@ -177,6 +177,7 @@ TestSealedReleasePackage();
 await TestTargetAppIsolation();
 TestT3CodeLaunchPolicy();
 await AppTargetTests.RunAsync();
+await LauncherActivationTests.RunAsync();
 Equal("CodexWingman.Desktop.Singleton.v1", WingmanIdentity.SingleInstanceName, "stable single-instance identity");
 Equal("CodexWingman.Desktop.Activate.v1", WingmanIdentity.ActivationEventName, "stable activation identity");
 Equal("Wingman", WingmanIdentity.RunningMenuText, "concise Wingman menu heading");
@@ -431,7 +432,10 @@ try
     Equal(true, oldSettings.OpenCodexOnLaunch, "older settings preserve Codex startup");
     Equal(false, oldSettings.OpenT3CodeOnLaunch, "older settings leave T3 startup off");
     await File.WriteAllTextAsync(settingsPath, "{not-json");
-    Equal(HelperSettings.Default, HelperSettingsStore.Load(settingsPath), "malformed settings fail closed to defaults");
+    Equal(true, ReferenceEquals(oldSettings, HelperSettingsStore.Load(settingsPath)), "malformed settings keep the last good reading");
+    var neverRead = Path.Combine(settingsRoot, "never-read.json");
+    await File.WriteAllTextAsync(neverRead, "{not-json");
+    Equal(HelperSettings.UnreadableFallback, HelperSettingsStore.Load(neverRead), "malformed settings with no good reading open no app");
 }
 finally
 {

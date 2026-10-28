@@ -53,7 +53,8 @@ public static class WindowsForegroundActivator
         return false;
     }
 
-    private static bool ActivateWindow(IntPtr handle)
+    /// <summary>Restores a minimized window and brings it to the front.</summary>
+    public static bool ActivateWindow(IntPtr handle)
     {
         _ = ShowWindowAsync(handle, RestoreWindow);
         var currentThread = GetCurrentThreadId();

@@ -50,7 +50,7 @@ public sealed record WingmanLaunchOptions(
 
     public bool OpenOnStartup(WingmanLaunchTarget app, HelperSettings settings) =>
         // The tray checks that the app is on this PC (T3 web: Chrome plus an address or pairing folder).
-        Target == WingmanLaunchTarget.Preferences ? settings.OpensOnLaunch(app) : Target == app;
+        LauncherActivationPolicy.AppsFor(Target, settings).Contains(app);
 
     private static WingmanCommand? CommandFor(string argument) => argument switch
     {

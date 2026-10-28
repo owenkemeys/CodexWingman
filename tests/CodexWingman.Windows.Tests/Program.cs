@@ -181,6 +181,7 @@ internal static class Program
             var largest = t3Ico.AsSpan(BitConverter.ToInt32(t3Ico, last + 12), BitConverter.ToInt32(t3Ico, last + 8)).ToArray();
             Equal((256, 256), T3WebAppIcon.PngSize(largest)!.Value, "the 256 px entry is a 256 px PNG");
             NativeUpdaterTests.Run(root);
+            LauncherActivationTests.Run();
             Console.WriteLine(JsonSerializer.Serialize(new { status = "pass", shortcuts = observed }));
         }
         finally

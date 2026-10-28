@@ -50,7 +50,7 @@ internal sealed class GrokBotLauncher(string wingmanDataRoot, Func<IEnumerable<i
         if (!IsInstalled()) throw new FileNotFoundException("Grok Bot is not installed in its usual folder.");
         if ((await PagesAsync(cancellationToken)).Count > 0 && Running() is { Length: > 0 } hooked)
         {
-            try { foreach (var process in hooked) if (SafeMainWindow(process) is var window && window != IntPtr.Zero) SetForegroundWindow(window); }
+            try { foreach (var process in hooked) if (SafeMainWindow(process) is var window && window != IntPtr.Zero) Core.Helpers.WindowsForegroundActivator.ActivateWindow(window); }
             finally { foreach (var process in hooked) process.Dispose(); }
             return true;
         }
@@ -60,6 +60,7 @@ internal sealed class GrokBotLauncher(string wingmanDataRoot, Func<IEnumerable<i
             if (running.Length > 0)
             {
                 if (!confirmRelaunch()) return false;
+                WingmanLog.Write("grok-bot-close", ("processes", running.Length), ("forced", false));
                 foreach (var process in running)
                 {
                     try { if (SafeMainWindow(process) != IntPtr.Zero) process.CloseMainWindow(); }
@@ -87,6 +88,7 @@ internal sealed class GrokBotLauncher(string wingmanDataRoot, Func<IEnumerable<i
         foreach (var argument in GrokBotLaunchPolicy.Arguments(port)) start.ArgumentList.Add(argument);
         using (Process.Start(start) ?? throw new InvalidOperationException("Grok Bot did not start.")) { }
         AppRuntimePortFile.Write(RuntimePath, port);
+        WingmanLog.Write("grok-bot-start", ("port", port));
         var deadline = DateTime.UtcNow + EndpointTimeout;
         while (DateTime.UtcNow < deadline)
         {
@@ -151,8 +153,4 @@ internal sealed class GrokBotLauncher(string wingmanDataRoot, Func<IEnumerable<i
         }
         throw new IOException("No free local port was available for Grok Bot.");
     }
-
-    [DllImport("user32.dll")]
-    [return: MarshalAs(UnmanagedType.Bool)]
-    private static extern bool SetForegroundWindow(IntPtr window);
 }

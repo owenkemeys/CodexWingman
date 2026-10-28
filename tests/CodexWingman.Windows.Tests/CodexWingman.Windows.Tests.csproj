@@ -12,6 +12,7 @@
     <Compile Include="../../src/CodexWingman/TrayIconSet.cs" Link="TrayIconSet.cs" />
     <Compile Include="../../src/CodexWingman/WindowAppIdentity.cs" Link="WindowAppIdentity.cs" />
     <Compile Include="../../src/CodexWingman/IconImages.cs" Link="IconImages.cs" />
+    <Compile Include="../../src/CodexWingman/LauncherActivationRouter.cs" Link="LauncherActivationRouter.cs" />
     <None Include="../../src/CodexApp.ReleaseKit/Apply-CodexAppUpdate.ps1" Link="Apply-CodexAppUpdate.ps1" CopyToOutputDirectory="PreserveNewest" CopyToPublishDirectory="PreserveNewest" />
   </ItemGroup>
 </Project>
