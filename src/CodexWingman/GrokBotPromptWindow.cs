@@ -78,7 +78,7 @@ internal sealed class GrokBotPromptWindow : Form
 
     /// <summary>
     /// Shows <paramref name="prompt"/>'s state: [Reconnect] [Not now]; a disabled "Working…"; [Cancel] while waiting for the
-    /// quit; or why Wingman couldn't reopen Grok Bot with [Open Grok Bot] [Not now].
+    /// quit or while Grok Bot updates; or why Wingman couldn't reopen Grok Bot with [Open Grok Bot] [Not now].
     /// </summary>
     public void Render(GrokBotReconnectPrompt prompt)
     {
@@ -88,6 +88,11 @@ internal sealed class GrokBotPromptWindow : Form
         {
             case GrokBotPromptState.WaitingForQuit:
                 message.Text = GrokBotReconnectPolicy.QuitText;
+                primary.Visible = false;
+                secondary.Text = "Cancel";
+                break;
+            case GrokBotPromptState.Updating:
+                message.Text = GrokBotReconnectPolicy.UpdatingText;
                 primary.Visible = false;
                 secondary.Text = "Cancel";
                 break;

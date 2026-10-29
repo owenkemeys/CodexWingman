@@ -1274,8 +1274,25 @@ internal sealed class TrayApplicationContext : ApplicationContext
         WingmanLog.Write("grok-bot-reconnect-outcome", ("process", prompt.Offer.ProcessId), ("step", step), ("outcome", result.Outcome));
         prompt.Finished(result);
         if (ReferenceEquals(grokPrompt, prompt)) SyncGrokPromptWindow();
+        if (result.Outcome is GrokBotReconnectOutcome.Reopened or GrokBotReconnectOutcome.UpdatedAndReopened && ReferenceEquals(grokPrompt, prompt))
+            HandOverGrokPrompt(prompt, goOn: result.Outcome == GrokBotReconnectOutcome.UpdatedAndReopened);
         if (result.Outcome == GrokBotReconnectOutcome.Adopted) await ConnectToListeningGrokBotAsync("reconnect");
         if (result.Outcome == GrokBotReconnectOutcome.Relaunched) await ConnectRelaunchedGrokBotAsync();
+    }
+
+    /// <summary>
+    /// Grok Bot was opened again without a usable port while the reconnect waited to reopen it: the prompt moves to that
+    /// new process at once. After an update the user's quit started, it goes straight on to the quit step, since the user
+    /// already chose Reconnect. If no unconnected Grok Bot is running any more, the old prompt stays and says what happened.
+    /// </summary>
+    private void HandOverGrokPrompt(GrokBotReconnectPrompt from, bool goOn)
+    {
+        if (grokReconnect.HandOver(ObserveGrokBot(), DateTimeOffset.UtcNow, grokLauncher) is not { } offer) return;
+        WingmanLog.Write("grok-bot-reconnect-handed-over", ("from", from.Offer.ProcessId), ("process", offer.ProcessId), ("go-on", goOn));
+        ShowGrokPrompt(offer);
+        if (!goOn || grokPrompt is not { } prompt) return;
+        if (prompt.Reconnect(busy || initializing || exiting)) _ = ActOnGrokPromptAsync(prompt, GrokBotPromptStep.Reconnect);
+        SyncGrokPromptWindow();
     }
 
     private sealed class TrayReconnectSteps(TrayApplicationContext tray, GrokBotReconnectPrompt prompt) : IGrokBotReconnectSteps
@@ -1292,6 +1309,14 @@ internal sealed class TrayApplicationContext : ApplicationContext
             tray.grokLauncher.ReconnectAsync(target, () => !Busy, () => tray.sessionEnding, cancellationToken);
         public Task<GrokBotRelaunchResult> StartAsync(GrokBotRelaunch.ClosedProcess quit, CancellationToken cancellationToken) =>
             tray.grokLauncher.StartAfterQuitAsync(quit, () => !Busy, () => tray.sessionEnding, cancellationToken);
+        public void Updating(GrokBotRelaunch.ClosedProcess quit)
+        {
+            WingmanLog.Write("grok-bot-reconnect-updating", ("process", quit.Process.Id));
+            prompt.Updating(quit);
+            if (ReferenceEquals(tray.grokPrompt, prompt)) tray.SyncGrokPromptWindow();
+        }
+        public Task<GrokBotRelaunchResult> AfterUpdateAsync(GrokBotRelaunch.ClosedProcess quit, CancellationToken cancellationToken) =>
+            tray.grokLauncher.AfterUpdateAsync(quit, () => !Busy, () => tray.sessionEnding, cancellationToken);
     }
 
     /// <summary>After the reconnect started Grok Bot with Wingman's port: waits for its window and connects the Helpers.</summary>

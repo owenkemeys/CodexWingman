@@ -71,6 +71,11 @@ public sealed class GrokBotReconnectPolicy
     public const string BusyTooLongText = "Wingman was busy, so it didn't reopen Grok Bot.";
     public const string CrashedText = "Grok Bot closed unexpectedly, so Wingman didn't reopen it.";
     public const string SessionEndingText = "Windows began to shut down or sign out, so Wingman didn't reopen Grok Bot.";
+    /// <summary>The user quit Grok Bot and that started its update: Wingman reopens it once the update has finished.</summary>
+    public const string UpdatingText = "Grok Bot is updating… Wingman reopens it when the update has finished.";
+    public const string UpdateTooLongText = "Grok Bot's update was still running after 5 minutes, so Wingman didn't reopen it.";
+    public const string ReopenedText = "Grok Bot was opened again without Wingman.";
+    public const string CouldNotOpenText = "Wingman couldn't reopen Grok Bot.";
 
     private bool wasConnected;
     private GrokBotProcess? connectedProcess;
@@ -115,6 +120,23 @@ public sealed class GrokBotReconnectPolicy
         return new GrokBotReconnectOffer(process.Id, updated, now, process.Started);
     }
 
+    /// <summary>
+    /// Grok Bot was opened again (by the user, or by its installer) while a reconnect the user had agreed to was waiting
+    /// to reopen it: the prompt moves to that new process at once, without the settle, presence and earlier-connected
+    /// checks, and the policy won't offer it a second prompt. Null when no unconnected Grok Bot is running.
+    /// </summary>
+    public GrokBotReconnectOffer? HandOver(GrokBotObservation observation, DateTimeOffset now, IGrokBotFacts facts)
+    {
+        if (observation.Connected || observation.Process is not { } process) return null;
+        unconnectedProcess = process;
+        unconnectedSince = now;
+        promptedProcess = process;
+        var version = facts.ExecutableVersion();
+        var updated = HasUpdatedFlag(facts.CommandLine(process.Id))
+            || connectedVersion is not null && version is not null && !string.Equals(connectedVersion, version, StringComparison.Ordinal);
+        return new GrokBotReconnectOffer(process.Id, updated, now, process.Started);
+    }
+
     /// <summary>True when a Windows command line carries the whole argument <c>--updated</c> (Grok Bot's installer adds it).</summary>
     public static bool HasUpdatedFlag(string? commandLine) =>
         commandLine is not null && SplitCommandLine(commandLine).Skip(1).Any(argument => argument == "--updated");
@@ -151,6 +173,8 @@ public enum GrokBotPromptState
     Working,
     /// <summary>Waiting for the user to quit that Grok Bot process; [Cancel].</summary>
     WaitingForQuit,
+    /// <summary>The user quit it and Grok Bot's update is running: "Grok Bot is updating…"; [Cancel]. Wingman reopens it after.</summary>
+    Updating,
     /// <summary>It quit, but Wingman couldn't open it again: says why; [Open Grok Bot] [Not now].</summary>
     CouldNotStart,
     Closed,
@@ -163,8 +187,9 @@ public enum GrokBotPromptStep { None, Reconnect, Open }
 /// The reconnect prompt window's state, bound to one offer: its exact Grok Bot process (id and start time). It replaces
 /// tray balloons, whose clicks Windows can't tie to one balloon. Until Reconnect it has no time limit, and closes when
 /// that process exits or is replaced, when Grok Bot connects, or after Not now. Once the user has quit Grok Bot for it,
-/// it never closes silently: it closes when Grok Bot is open again (or an update takes over), or stays and says why
-/// Wingman couldn't open it, with an Open Grok Bot button. A button pressed while Wingman is busy shows "Working…" and
+/// it never closes silently: it closes once Grok Bot is reconnected (or the user cancels), moves to a Grok Bot opened again
+/// meanwhile, shows "Grok Bot is updating…" while an update runs, or stays and says why Wingman couldn't open it, with an
+/// Open Grok Bot button. A button pressed while Wingman is busy shows "Working…" and
 /// acts once Wingman is free.
 /// </summary>
 public sealed class GrokBotReconnectPrompt(GrokBotReconnectOffer offer)
@@ -206,9 +231,10 @@ public sealed class GrokBotReconnectPrompt(GrokBotReconnectOffer offer)
             // Before the quit the prompt belongs to its process; while waiting for the quit its exit is expected.
             if (State != GrokBotPromptState.WaitingForQuit && !Offer.Owns(current)) { Close("gone"); return GrokBotPromptStep.None; }
         }
-        else if (current.Process is { } other && other != Offer.Target)
+        else if (State != GrokBotPromptState.Updating && current.Process is { } other && other != Offer.Target)
         {
-            // After the quit: another Grok Bot started (by the user, or an installer); it gets its own prompt.
+            // After the quit: another Grok Bot started (by the user, or an installer); it gets its own prompt. While
+            // updating, the run itself sees it and moves the prompt to it.
             Close("replaced");
             return GrokBotPromptStep.None;
         }
@@ -224,9 +250,19 @@ public sealed class GrokBotReconnectPrompt(GrokBotReconnectOffer offer)
         if (State == GrokBotPromptState.Working) State = GrokBotPromptState.WaitingForQuit;
     }
 
+    /// <summary>The user quit Grok Bot and its update is running: the prompt says so and keeps [Cancel].</summary>
+    public void Updating(GrokBotRelaunch.ClosedProcess quit)
+    {
+        if (State == GrokBotPromptState.Closed) return;
+        Quit = quit;
+        Problem = null;
+        State = GrokBotPromptState.Updating;
+    }
+
     /// <summary>
-    /// The run's result. Busy keeps the press pending; no quit within the limit goes back to the offer, silently; an
-    /// outcome that couldn't start Grok Bot keeps the prompt with the reason; anything else closes it.
+    /// The run's result. Busy keeps the press pending; no quit within the limit goes back to the offer, silently. Before
+    /// the quit anything else closes it. After the quit only a reconnect (or the user's Cancel) closes it; every other
+    /// outcome keeps it with the reason and Open Grok Bot (a Grok Bot opened meanwhile gets the prompt moved to it).
     /// </summary>
     public void Finished(GrokBotReconnectResult result)
     {
@@ -238,7 +274,7 @@ public sealed class GrokBotReconnectPrompt(GrokBotReconnectOffer offer)
                 pending = Quit is null ? GrokBotPromptStep.Reconnect : GrokBotPromptStep.Open;
                 State = GrokBotPromptState.Working;
                 return;
-            case GrokBotReconnectOutcome.QuitTimedOut:
+            case GrokBotReconnectOutcome.QuitTimedOut when Quit is null:
                 State = GrokBotPromptState.Offered;
                 return;
             // Windows began shutting down or signing out. If that goes ahead Wingman exits with it; if another app cancels
@@ -250,20 +286,29 @@ public sealed class GrokBotReconnectPrompt(GrokBotReconnectOffer offer)
                 Problem = GrokBotReconnectPolicy.SessionEndingText;
                 State = GrokBotPromptState.CouldNotStart;
                 return;
-            case GrokBotReconnectOutcome.StillRunning or GrokBotReconnectOutcome.BusyTooLong or GrokBotReconnectOutcome.Crashed when Quit is not null:
-                Problem = result.Outcome switch
-                {
-                    GrokBotReconnectOutcome.StillRunning => GrokBotReconnectPolicy.StillRunningText,
-                    GrokBotReconnectOutcome.Crashed => GrokBotReconnectPolicy.CrashedText,
-                    _ => GrokBotReconnectPolicy.BusyTooLongText,
-                };
-                State = GrokBotPromptState.CouldNotStart;
+            case GrokBotReconnectOutcome.Relaunched or GrokBotReconnectOutcome.Adopted or GrokBotReconnectOutcome.AlreadyConnected or GrokBotReconnectOutcome.Cancelled:
+            case var _ when Quit is null:
+                Close(result.Outcome.ToString());
                 return;
             default:
-                Close(result.Outcome.ToString());
+                Problem = ProblemAfterQuit(result.Outcome);
+                State = GrokBotPromptState.CouldNotStart;
                 return;
         }
     }
+
+    /// <summary>What the prompt says when Wingman couldn't reopen Grok Bot after the user's quit.</summary>
+    public static string ProblemAfterQuit(GrokBotReconnectOutcome outcome) => outcome switch
+    {
+        GrokBotReconnectOutcome.StillRunning => GrokBotReconnectPolicy.StillRunningText,
+        GrokBotReconnectOutcome.Crashed => GrokBotReconnectPolicy.CrashedText,
+        GrokBotReconnectOutcome.BusyTooLong => GrokBotReconnectPolicy.BusyTooLongText,
+        GrokBotReconnectOutcome.SessionEnding => GrokBotReconnectPolicy.SessionEndingText,
+        GrokBotReconnectOutcome.UpdateTooLong => GrokBotReconnectPolicy.UpdateTooLongText,
+        GrokBotReconnectOutcome.UpdateRunning => GrokBotRelaunch.UpdateRunningText,
+        GrokBotReconnectOutcome.Reopened or GrokBotReconnectOutcome.UpdatedAndReopened => GrokBotReconnectPolicy.ReopenedText,
+        _ => GrokBotReconnectPolicy.CouldNotOpenText,
+    };
 
     private void Close(string reason)
     {
@@ -287,14 +332,24 @@ public enum GrokBotReconnectOutcome
     Cancelled,
     /// <summary>Not quit within the limit: back to the offer.</summary>
     QuitTimedOut,
-    /// <summary>A Grok Bot installer or update is running: nothing started; the post-update prompt handles what it opens.</summary>
+    /// <summary>
+    /// A Grok Bot installer or update is running. Before the quit: nothing started, and the post-update prompt handles what
+    /// it opens. After the quit the run waits for it instead (<see cref="IGrokBotReconnectSteps.AfterUpdateAsync"/>).
+    /// </summary>
     UpdateRunning,
+    /// <summary>After the quit, Grok Bot's update was still running at the limit: nothing started; the prompt says so.</summary>
+    UpdateTooLong,
     /// <summary>It quit, but a Grok Bot process was still running at the limit: nothing started; the prompt says so.</summary>
     StillRunning,
     /// <summary>It quit, but Wingman stayed busy past the limit: nothing started; the prompt says so.</summary>
     BusyTooLong,
-    /// <summary>The user opened Grok Bot again before Wingman did: nothing started; that run gets its own prompt.</summary>
+    /// <summary>The user opened Grok Bot again before Wingman did, without a usable port: nothing started; the prompt moves to it.</summary>
     Reopened,
+    /// <summary>
+    /// Grok Bot opened again during the update the user's quit started, without a usable port: nothing started; the prompt
+    /// moves to it and goes straight on to the quit step (the user already chose Reconnect).
+    /// </summary>
+    UpdatedAndReopened,
     /// <summary>It exited with a failure code (a crash, or ended from Task Manager), not the user's quit: nothing started; the prompt says so.</summary>
     Crashed,
     /// <summary>Windows is shutting down or signing out: nothing started.</summary>
@@ -318,13 +373,18 @@ public interface IGrokBotReconnectSteps
     Task<GrokBotRelaunchResult> RelaunchAfterQuitAsync(GrokBotProcess target, CancellationToken cancellationToken);
     /// <summary>Opens Grok Bot with the port after it quit (<see cref="GrokBotRelaunch.StartWhenClearAsync"/>).</summary>
     Task<GrokBotRelaunchResult> StartAsync(GrokBotRelaunch.ClosedProcess quit, CancellationToken cancellationToken);
+    /// <summary>The prompt now says Grok Bot is updating.</summary>
+    void Updating(GrokBotRelaunch.ClosedProcess quit);
+    /// <summary>Waits (bounded) for the update to finish, then opens Grok Bot with the port (<see cref="GrokBotRelaunch.AfterUpdateAsync"/>).</summary>
+    Task<GrokBotRelaunchResult> AfterUpdateAsync(GrokBotRelaunch.ClosedProcess quit, CancellationToken cancellationToken);
 }
 
 /// <summary>
 /// Pressing Reconnect: Wingman checks that the offer's exact Grok Bot process is still the one running unconnected (else
 /// nothing happens, and Grok Bot is never started) and whether it already has a usable port (then that port is adopted and
 /// nothing restarts). Busy: kept for later. Otherwise the user quits Grok Bot and Wingman opens it again with the port.
-/// Pressing Open Grok Bot (after Wingman couldn't): the same checks for opening it.
+/// Pressing Open Grok Bot (after Wingman couldn't): the same checks for opening it. After the quit, an update it started is
+/// waited for, and a Grok Bot opened meanwhile is adopted or gets the prompt.
 /// </summary>
 public static class GrokBotReconnectRun
 {
@@ -336,14 +396,37 @@ public static class GrokBotReconnectRun
         if (steps.AdoptListeningPort(offer.ProcessId)) return new(GrokBotReconnectOutcome.Adopted);
         if (steps.Busy) return new(GrokBotReconnectOutcome.Busy);
         steps.WaitingForQuit();
-        return Result(await steps.RelaunchAfterQuitAsync(offer.Target, cancellationToken));
+        return await AfterQuitAsync(await steps.RelaunchAfterQuitAsync(offer.Target, cancellationToken), steps, cancellationToken);
     }
 
     public static async Task<GrokBotReconnectResult> OpenAsync(GrokBotRelaunch.ClosedProcess quit, IGrokBotReconnectSteps steps, CancellationToken cancellationToken)
     {
         if (steps.Observe().Connected) return new(GrokBotReconnectOutcome.AlreadyConnected, quit);
         if (steps.Busy) return new(GrokBotReconnectOutcome.Busy, quit);
-        return Result(await steps.StartAsync(quit, cancellationToken));
+        return await AfterQuitAsync(await steps.StartAsync(quit, cancellationToken), steps, cancellationToken);
+    }
+
+    /// <summary>
+    /// After the user's quit. An update it started: the prompt says Grok Bot is updating, and the run waits for it to
+    /// finish, then opens Grok Bot. A Grok Bot opened again meanwhile: its usable port is adopted, else the prompt moves to it.
+    /// </summary>
+    private static async Task<GrokBotReconnectResult> AfterQuitAsync(GrokBotRelaunchResult result, IGrokBotReconnectSteps steps, CancellationToken cancellationToken)
+    {
+        var updated = false;
+        if (result is { Kind: GrokBotRelaunchKind.UpdateRunning, Quit: { } updating })
+        {
+            steps.Updating(updating);
+            updated = true;
+            result = await steps.AfterUpdateAsync(updating, cancellationToken);
+        }
+        if (result is { Kind: GrokBotRelaunchKind.Reopened, Quit: { } quit })
+        {
+            var current = steps.Observe();
+            if (current.Connected) return new(GrokBotReconnectOutcome.AlreadyConnected, quit);
+            if (current.ProcessId is { } reopened && steps.AdoptListeningPort(reopened)) return new(GrokBotReconnectOutcome.Adopted, quit);
+            return new(updated ? GrokBotReconnectOutcome.UpdatedAndReopened : GrokBotReconnectOutcome.Reopened, quit);
+        }
+        return Result(result);
     }
 
     private static GrokBotReconnectResult Result(GrokBotRelaunchResult result) => new(result.Kind switch
@@ -357,11 +440,12 @@ public static class GrokBotReconnectRun
         GrokBotRelaunchKind.Reopened => GrokBotReconnectOutcome.Reopened,
         GrokBotRelaunchKind.Crashed => GrokBotReconnectOutcome.Crashed,
         GrokBotRelaunchKind.SessionEnding => GrokBotReconnectOutcome.SessionEnding,
+        GrokBotRelaunchKind.UpdateTooLong => GrokBotReconnectOutcome.UpdateTooLong,
         _ => GrokBotReconnectOutcome.BusyTooLong,
     }, result.Quit);
 }
 
-public enum GrokBotRelaunchKind { Relaunched, Gone, Cancelled, QuitTimedOut, UpdateRunning, StillRunning, BusyTooLong, Reopened, Crashed, SessionEnding }
+public enum GrokBotRelaunchKind { Relaunched, Gone, Cancelled, QuitTimedOut, UpdateRunning, StillRunning, BusyTooLong, Reopened, Crashed, SessionEnding, UpdateTooLong }
 
 /// <summary>What the relaunch step did, and the proof that the process quit once it has.</summary>
 public sealed record GrokBotRelaunchResult(GrokBotRelaunchKind Kind, GrokBotRelaunch.ClosedProcess? Quit = null);
@@ -378,7 +462,7 @@ public interface IGrokBotProcessHandle : IDisposable
 {
     GrokBotProcess Identity { get; }
     bool HasExited { get; }
-    /// <summary>Its exit code once it has exited; null while running or when Windows can't say. A quit from Grok Bot's tray exits with 0.</summary>
+    /// <summary>Its exit code once it has exited; null while running or when Windows can't say. Closing Grok Bot's last window (its quit on Windows) exits with 0.</summary>
     int? ExitCode { get; }
 }
 
@@ -409,6 +493,11 @@ public interface IGrokBotProcessControl
 /// <summary>The relaunch's limits.</summary>
 public sealed record GrokBotRelaunchLimits(TimeSpan Quit, TimeSpan Settle, TimeSpan Busy, TimeSpan Poll)
 {
+    /// <summary>An update the user's quit started: up to 5 minutes for it to finish.</summary>
+    public TimeSpan Update { get; init; } = TimeSpan.FromMinutes(5);
+    /// <summary>Finished means no Grok Bot installer runs and Grok Bot.exe stays unchanged for this long.</summary>
+    public TimeSpan Stable { get; init; } = TimeSpan.FromSeconds(5);
+
     /// <summary>10 minutes to quit, then 20 s for its helper processes to exit and 60 s for Wingman to be free.</summary>
     public static readonly GrokBotRelaunchLimits Default = new(TimeSpan.FromMinutes(10), TimeSpan.FromSeconds(20), TimeSpan.FromSeconds(60), TimeSpan.FromSeconds(1));
 }
@@ -418,8 +507,8 @@ public sealed record GrokBotRelaunchLimits(TimeSpan Quit, TimeSpan Settle, TimeS
 /// time), held by an open process handle until it exits (<see cref="IGrokBotProcessHandle"/>); Wingman brings its window
 /// forward and waits for the user to quit it. If the user opens Grok Bot again meanwhile, Wingman starts nothing. After that process exits,
 /// Wingman waits (bounded) for every Grok Bot process to exit and for itself to be free, then starts Grok Bot with the
-/// port. It never starts Grok Bot while a Grok Bot installer runs or Grok Bot.exe has changed (an update is under way; the
-/// post-update prompt handles the Grok Bot it opens), while Windows is shutting down or signing out, or after the process
+/// port. It never starts Grok Bot while a Grok Bot installer runs or Grok Bot.exe has changed (an update is under way;
+/// after the user's quit <see cref="AfterUpdateAsync"/> waits for it to finish), while Windows is shutting down or signing out, or after the process
 /// exited with a failure code (a crash, not the user's quit). <see cref="IGrokBotProcessControl.Start"/> takes a
 /// <see cref="ClosedProcess"/>, which only this class creates, once the offer's process has exited.
 /// </summary>
@@ -446,7 +535,9 @@ public static class GrokBotRelaunch
             while (!handle.HasExited)
             {
                 if (Stopped(control, cancellationToken) is { } stopped) return stopped;
-                if (await UpdateUnderWayAsync(control, stamp)) return new(GrokBotRelaunchKind.UpdateRunning);
+                // The installer starts as Grok Bot exits, so an update seen here may already follow the user's quit.
+                if (await UpdateUnderWayAsync(control, stamp))
+                    return handle.HasExited ? new(GrokBotRelaunchKind.UpdateRunning, new ClosedProcess(target)) : new(GrokBotRelaunchKind.UpdateRunning);
                 if (now() >= quitBy) return new(GrokBotRelaunchKind.QuitTimedOut);
                 if (!await Wait(delay, limits.Poll, cancellationToken)) return Stopped(control, cancellationToken) ?? new(GrokBotRelaunchKind.Cancelled);
             }
@@ -493,6 +584,42 @@ public static class GrokBotRelaunch
                 return new(GrokBotRelaunchKind.Relaunched, quit);
             }
             if (now() >= free) return new(GrokBotRelaunchKind.BusyTooLong, quit);
+            if (!await Wait(delay, limits.Poll, cancellationToken)) return Stopped(control, cancellationToken, quit) ?? new(GrokBotRelaunchKind.Cancelled, quit);
+        }
+    }
+
+    /// <summary>
+    /// The user's quit started a Grok Bot update. Waits up to <c>Update</c> for it to finish: no Grok Bot installer runs and
+    /// Grok Bot.exe is present and unchanged for <c>Stable</c>. Then opens Grok Bot with the port through
+    /// <see cref="StartWhenClearAsync"/>, with the same guards; an installer that starts again meanwhile goes back to waiting.
+    /// A Grok Bot opened meanwhile (by the user, or the installer) is <see cref="GrokBotRelaunchKind.Reopened"/>: nothing is
+    /// started. Nothing is ever started while an installer runs, and nothing is closed.
+    /// </summary>
+    public static async Task<GrokBotRelaunchResult> AfterUpdateAsync(ClosedProcess quit, IGrokBotProcessControl control, GrokBotRelaunchLimits limits,
+        Func<DateTime> now, Func<TimeSpan, CancellationToken, Task> delay, CancellationToken cancellationToken)
+    {
+        var until = now() + limits.Update;
+        GrokBotExecutableStamp? last = null;
+        var stableSince = now();
+        while (true)
+        {
+            if (Stopped(control, cancellationToken, quit) is { } stopped) return stopped;
+            if (Reopened(control, quit)) return new(GrokBotRelaunchKind.Reopened, quit);
+            var installer = await control.InstallerRunningAsync();
+            var stamp = control.ExecutableStamp();
+            if (installer || stamp is null || stamp != last)
+            {
+                last = installer ? null : stamp;
+                stableSince = now();
+            }
+            else if (now() - stableSince >= limits.Stable)
+            {
+                var started = await StartWhenClearAsync(quit, stamp, control, limits, now, delay, cancellationToken);
+                if (started.Kind != GrokBotRelaunchKind.UpdateRunning) return started;
+                last = null;
+                stableSince = now();
+            }
+            if (now() >= until) return new(GrokBotRelaunchKind.UpdateTooLong, quit);
             if (!await Wait(delay, limits.Poll, cancellationToken)) return Stopped(control, cancellationToken, quit) ?? new(GrokBotRelaunchKind.Cancelled, quit);
         }
     }
