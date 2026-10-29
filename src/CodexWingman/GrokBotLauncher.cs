@@ -140,6 +140,32 @@ internal sealed class GrokBotLauncher(string wingmanDataRoot, Func<IEnumerable<i
         finally { CloseHandle(handle); }
     }
 
+    /// <summary>
+    /// The id of the process that started <paramref name="processId"/> (PROCESS_BASIC_INFORMATION's
+    /// InheritedFromUniqueProcessId), read with limited query rights; null when Windows won't say. Reads only.
+    /// </summary>
+    private static int? ParentProcessId(int processId)
+    {
+        const uint QueryLimitedInformation = 0x1000;
+        const int ProcessBasicInformation = 0;
+        var handle = OpenProcess(QueryLimitedInformation, false, processId);
+        if (handle == IntPtr.Zero) return null;
+        var size = 6 * IntPtr.Size;
+        var buffer = Marshal.AllocHGlobal(size);
+        try
+        {
+            if (NtQueryInformationProcess(handle, ProcessBasicInformation, buffer, size, out _) != 0) return null;
+            // ExitStatus, PebBaseAddress, AffinityMask, BasePriority, UniqueProcessId, InheritedFromUniqueProcessId: each pointer-sized.
+            var parent = Marshal.ReadIntPtr(buffer, 5 * IntPtr.Size).ToInt64();
+            return parent is > 0 and <= int.MaxValue ? (int)parent : null;
+        }
+        finally
+        {
+            Marshal.FreeHGlobal(buffer);
+            CloseHandle(handle);
+        }
+    }
+
     [DllImport("kernel32.dll", SetLastError = true)]
     private static extern IntPtr OpenProcess(uint access, bool inheritHandle, int processId);
 
@@ -351,7 +377,9 @@ internal sealed class GrokBotLauncher(string wingmanDataRoot, Func<IEnumerable<i
                 try { name = process.ProcessName; }
                 catch (InvalidOperationException) { continue; }
                 if (!MayBeInstaller(name)) continue;
-                if (GrokBotInstallers.IsInstaller(WindowProcessInfo.ImagePathOf((uint)process.Id), Executable)) return true;
+                var id = process.Id;
+                if (GrokBotInstallers.IsInstaller(WindowProcessInfo.ImagePathOf((uint)id), Executable, () => CommandLine(id),
+                    () => ParentProcessId(id) is { } parent ? WindowProcessInfo.ImagePathOf((uint)parent) : null)) return true;
             }
             return false;
         }

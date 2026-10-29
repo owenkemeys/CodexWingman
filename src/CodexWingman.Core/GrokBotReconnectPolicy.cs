@@ -658,23 +658,43 @@ public static class GrokBotRelaunch
 /// <summary>
 /// Grok Bot's installers, recognised by their program file. On Windows Grok Bot stages its update as
 /// <c>%TEMP%\sand-update-…\sand-update-&lt;version&gt;-….exe</c> and runs it when Grok Bot quits (<c>--updated /S</c>).
-/// Its uninstaller lives in its install folder and runs from a <c>%TEMP%\~nsu….tmp</c> copy. Any program in the install
-/// folder other than Grok Bot.exe counts.
+/// Any program in the install folder other than Grok Bot.exe counts, such as its uninstaller. An NSIS uninstaller runs
+/// from a <c>%TEMP%\~nsu….tmp</c> copy (<c>Un_A.exe</c> or <c>Au_.exe</c>), and every NSIS app's does, so such a copy counts
+/// only when it is Grok Bot's: its <c>_?=</c> argument names Grok Bot's install folder, or its parent runs from there.
 /// </summary>
 public static class GrokBotInstallers
 {
-    public static bool IsInstaller(string? imagePath, string grokExecutable)
+    /// <param name="commandLine">Read only for an NSIS uninstaller copy; null when Windows won't say.</param>
+    /// <param name="parentImagePath">The parent process's program path, read only for an NSIS uninstaller copy.</param>
+    public static bool IsInstaller(string? imagePath, string grokExecutable, Func<string?>? commandLine = null, Func<string?>? parentImagePath = null)
     {
         if (string.IsNullOrEmpty(imagePath) || !imagePath.EndsWith(".exe", StringComparison.OrdinalIgnoreCase)) return false;
         var (directory, name) = Split(imagePath);
         if (name.StartsWith("sand-update-", StringComparison.OrdinalIgnoreCase)) return true;
-        var folder = Split(directory).Name;
-        if (folder.StartsWith("~nsu", StringComparison.OrdinalIgnoreCase) && folder.EndsWith(".tmp", StringComparison.OrdinalIgnoreCase)) return true;
         var (installFolder, grokName) = Split(grokExecutable);
-        return installFolder.Length > 0
-            && string.Equals(directory, installFolder, StringComparison.OrdinalIgnoreCase)
-            && !string.Equals(name, grokName, StringComparison.OrdinalIgnoreCase);
+        if (installFolder.Length == 0) return false;
+        var folder = Split(directory).Name;
+        if (folder.StartsWith("~nsu", StringComparison.OrdinalIgnoreCase) && folder.EndsWith(".tmp", StringComparison.OrdinalIgnoreCase))
+            return SameFolder(UninstallTarget(commandLine?.Invoke()), installFolder)
+                || parentImagePath?.Invoke() is { Length: > 0 } parent && SameFolder(Split(parent).Directory, installFolder);
+        return SameFolder(directory, installFolder) && !string.Equals(name, grokName, StringComparison.OrdinalIgnoreCase);
     }
+
+    /// <summary>
+    /// The folder an NSIS uninstaller copy works on: its last argument <c>_?=&lt;folder&gt;</c>, which NSIS reads to the end of
+    /// the command line unquoted (so it may contain spaces). Null without one.
+    /// </summary>
+    public static string? UninstallTarget(string? commandLine)
+    {
+        if (commandLine is null) return null;
+        var at = commandLine.LastIndexOf("_?=", StringComparison.Ordinal);
+        if (at < 0 || at > 0 && !char.IsWhiteSpace(commandLine[at - 1])) return null;
+        var folder = commandLine[(at + 3)..].Trim().Trim('"').TrimEnd('\\', '/');
+        return folder.Length == 0 ? null : folder;
+    }
+
+    private static bool SameFolder(string? folder, string installFolder) =>
+        folder is not null && string.Equals(folder.Replace('/', '\\').TrimEnd('\\'), installFolder.Replace('/', '\\').TrimEnd('\\'), StringComparison.OrdinalIgnoreCase);
 
     private static (string Directory, string Name) Split(string path)
     {

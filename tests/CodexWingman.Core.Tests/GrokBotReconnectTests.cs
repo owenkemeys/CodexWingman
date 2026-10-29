@@ -1254,7 +1254,28 @@ internal static class GrokBotReconnectTests
         const string Grok = @"C:\Users\a\AppData\Local\Programs\Grok Bot\Grok Bot.exe";
         Equal(true, GrokBotInstallers.IsInstaller(@"C:\Users\a\AppData\Local\Temp\sand-update-x1\sand-update-0.79.0-x64.exe", Grok), "the staged update installer");
         Equal(true, GrokBotInstallers.IsInstaller(@"C:\Users\a\AppData\Local\Programs\Grok Bot\Uninstall Grok Bot.exe", Grok), "the uninstaller");
-        Equal(true, GrokBotInstallers.IsInstaller(@"C:\Users\a\AppData\Local\Temp\~nsuA.tmp\Un_A.exe", Grok), "the uninstaller's running copy");
+        const string Copy = @"C:\Users\a\AppData\Local\Temp\~nsuA.tmp\Un_A.exe";
+        Equal(true, GrokBotInstallers.IsInstaller(Copy, Grok, () => "\"" + Copy + "\" _?=C:\\Users\\a\\AppData\\Local\\Programs\\Grok Bot"),
+            "Grok Bot's uninstaller copy: its _?= names Grok Bot's folder (with a space, unquoted)");
+        Equal(true, GrokBotInstallers.IsInstaller(Copy.Replace("Un_A", "Au_"), Grok, () => "\"x\" /S _?=c:\\users\\a\\appdata\\local\\programs\\grok bot\\"),
+            "any case, a trailing backslash");
+        Equal(true, GrokBotInstallers.IsInstaller(Copy, Grok, () => null, () => @"C:\Users\a\AppData\Local\Programs\Grok Bot\Uninstall Grok Bot.exe"),
+            "started by Grok Bot's Uninstall.exe");
+        Equal(false, GrokBotInstallers.IsInstaller(Copy, Grok), "an uninstaller copy nothing ties to Grok Bot");
+        Equal(false, GrokBotInstallers.IsInstaller(Copy, Grok, () => "\"" + Copy + "\" _?=C:\\Program Files\\Other"), "another app's uninstaller copy");
+        Equal(false, GrokBotInstallers.IsInstaller(Copy, Grok, () => "\"" + Copy + "\" _?=C:\\Users\\a\\AppData\\Local\\Programs\\Grok Bot Beta"),
+            "a folder that only starts like Grok Bot's");
+        Equal(false, GrokBotInstallers.IsInstaller(Copy, Grok, () => null, () => @"C:\Program Files\Other\Uninstall.exe"), "started by another app's uninstaller");
+        Equal(false, GrokBotInstallers.IsInstaller(Copy, Grok, () => "\"" + Copy + "\" /D=x?_?=C:\\Users\\a\\AppData\\Local\\Programs\\Grok Bot"),
+            "_?= only as its own argument");
+        Equal((string?)null, GrokBotInstallers.UninstallTarget("\"x\" /S"), "no _?=: no target");
+        var reads = 0;
+        GrokBotInstallers.IsInstaller(@"C:\Users\a\AppData\Local\Temp\sand-update-x1\sand-update-0.79.0-x64.exe", Grok, () => { reads++; return null; }, () => { reads++; return null; });
+        Equal(0, reads, "the staged update needs no command line or parent");
+        var launcher = File.ReadAllText(Path.Combine(RepositoryRoot(), "src", "CodexWingman", "GrokBotLauncher.cs"));
+        Equal(true, launcher.Contains("Executable, () => CommandLine(id),", StringComparison.Ordinal)
+            && launcher.Contains("() => ParentProcessId(id) is { } parent ? WindowProcessInfo.ImagePathOf((uint)parent) : null", StringComparison.Ordinal),
+            "the installer check gives an uninstaller copy's command line and parent");
         Equal(false, GrokBotInstallers.IsInstaller(Grok, Grok), "Grok Bot itself");
         Equal(false, GrokBotInstallers.IsInstaller(@"C:\Users\a\AppData\Local\Programs\Grok Bot\resources\elevate.exe", Grok), "a subfolder");
         Equal(false, GrokBotInstallers.IsInstaller(@"C:\Program Files\Other\Uninstall Other.exe", Grok), "another app's uninstaller");
