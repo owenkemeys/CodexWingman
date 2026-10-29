@@ -55,6 +55,16 @@ public sealed class GrokBotReconnectPolicy
     public static bool FullScreen(int notificationState) => notificationState is 2 or 3 or 4 or 7;
 
     public static readonly TimeSpan CheckInterval = TimeSpan.FromSeconds(2);
+
+    /// <summary>
+    /// Whether the every-<see cref="CheckInterval"/> check runs: while a prompt is open (it follows its process even after an
+    /// uninstall), or when Grok Bot is installed and set up in Wingman: a Grok Bot port is recorded (Wingman opened Grok Bot
+    /// or adopted its port before; the Start menu option records one too) or the Start menu option is on. A Grok Bot that
+    /// Wingman has never had stays unwatched; one already running with a port is still adopted at Wingman's startup and
+    /// from Wingman's Grok Bot menu, which records the port, so the check runs from then on.
+    /// </summary>
+    public static bool ShouldCheck(bool promptOpen, bool installed, bool portRecorded, Func<bool> startLinkOn) =>
+        promptOpen || installed && (portRecorded || startLinkOn());
     public static readonly TimeSpan Settle = TimeSpan.FromSeconds(4);
     public static readonly TimeSpan PresentWithin = TimeSpan.FromSeconds(60);
 

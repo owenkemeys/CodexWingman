@@ -1051,6 +1051,8 @@ internal sealed class TrayApplicationContext : ApplicationContext
             // port stays as it is. Connected: its window is brought forward. Not running: it is started.
             WingmanLog.Write("grok-bot-open", ("reason", atStartup ? "startup" : plainEntry ? "plain-entry" : "launcher-or-menu"));
             Func<bool> confirm = atStartup || plainEntry ? () => false : ConfirmGrokBotRelaunch;
+            // A Grok Bot already running with a usable port Wingman didn't launch is adopted first, so nothing restarts.
+            if (grokLauncher.MainProcess() is { } running) AdoptGrokBotPort(running.Id, "open");
             if (!await grokLauncher.OpenAsync(confirm, deadline.Token))
             {
                 if (plainEntry)
@@ -1083,14 +1085,16 @@ internal sealed class TrayApplicationContext : ApplicationContext
     /// <summary>
     /// After Grok Bot updates itself its installer reopens it without Wingman's port. Wingman never closes it by itself:
     /// a quick check every GrokBotReconnectPolicy.CheckInterval shows one prompt window (the policy decides when and its
-    /// title), bound to that exact Grok Bot process; its Reconnect button is the one click. Grok Bot not installed: nothing.
+    /// title), bound to that exact Grok Bot process; its Reconnect button is the one click. It runs only while a prompt is
+    /// open or Grok Bot is set up in Wingman (GrokBotReconnectPolicy.ShouldCheck).
     /// </summary>
     private void GrokBotReconnectTick()
     {
         if (exiting) return;
         // An open prompt keeps checking its process even after Grok Bot is uninstalled, so it closes when that process exits.
         var installed = grokLauncher.IsInstalled();
-        if (!installed && grokPrompt is null) return;
+        if (!GrokBotReconnectPolicy.ShouldCheck(grokPrompt is not null, installed, grokLauncher.Port() is not null,
+                () => GrokBotStartLinkOptIn.Load(GrokBotStartLinkOptIn.PathIn(settingsDirectory)).Enabled)) return;
         try
         {
             var observation = ObserveGrokBot();

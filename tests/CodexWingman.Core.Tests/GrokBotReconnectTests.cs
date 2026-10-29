@@ -46,6 +46,7 @@ internal static class GrokBotReconnectTests
         ThePromptClosesAfterItsOwnClick();
         TheRuntimeFileHasOneWriterAtATime();
         CommandLineSplitting();
+        TheQuickCheckRunsOnlyForASetUpGrokBot();
         Console.WriteLine("Grok Bot reconnect tests passed");
     }
 
@@ -841,8 +842,9 @@ internal static class GrokBotReconnectTests
         var tick = tray[tray.IndexOf("private void GrokBotReconnectTick()", StringComparison.Ordinal)..];
         tick = tick[..tick.IndexOf("\n    }\n", StringComparison.Ordinal)];
         var observe = tick.IndexOf("prompt.Observe(observation,", StringComparison.Ordinal);
-        Equal(true, tick.Contains("var installed = grokLauncher.IsInstalled();\n        if (!installed && grokPrompt is null) return;", StringComparison.Ordinal)
-            && tick.Split("IsInstalled()").Length - 1 == 1 && tick.IndexOf("if (!installed && grokPrompt is null) return;", StringComparison.Ordinal) < observe,
+        const string Gate = "if (!GrokBotReconnectPolicy.ShouldCheck(grokPrompt is not null, installed,";
+        Equal(true, tick.Contains("var installed = grokLauncher.IsInstalled();\n        " + Gate, StringComparison.Ordinal)
+            && tick.Split("IsInstalled()").Length - 1 == 1 && tick.IndexOf(Gate, StringComparison.Ordinal) < observe,
             "not installed: stops only when no prompt is open");
         Equal(true, observe > 0 && tick.IndexOf("if (!installed || busy || grokPromptWait is not null) return;", StringComparison.Ordinal) > observe,
             "nothing new is offered or adopted while it isn't installed, after the prompt's check");
@@ -1100,6 +1102,31 @@ internal static class GrokBotReconnectTests
         var tray = File.ReadAllText(Path.Combine(RepositoryRoot(), "src", "CodexWingman", "TrayApplicationContext.cs"));
         Equal(true, tray.Contains("HandOverGrokPrompt(prompt, goOn: result.Outcome == GrokBotReconnectOutcome.UpdatedAndReopened)", StringComparison.Ordinal)
             && tray.Contains("grokReconnect.HandOver(", StringComparison.Ordinal), "the tray moves the prompt to the reopened Grok Bot");
+    }
+
+    /// <summary>
+    /// The 2-second check runs only while a prompt is open or Grok Bot is set up in Wingman (a recorded port, or the Start
+    /// menu option on), not merely because Grok Bot is installed. A port Wingman doesn't know yet is still adopted at
+    /// startup and from Wingman's Grok Bot menu.
+    /// </summary>
+    private static void TheQuickCheckRunsOnlyForASetUpGrokBot()
+    {
+        var reads = 0;
+        bool Link(bool on) { reads++; return on; }
+        Equal(false, GrokBotReconnectPolicy.ShouldCheck(false, true, false, () => Link(false)), "installed but never set up: no check");
+        Equal(true, GrokBotReconnectPolicy.ShouldCheck(false, true, true, () => Link(false)), "a recorded Grok Bot port: checked");
+        Equal(true, GrokBotReconnectPolicy.ShouldCheck(false, true, false, () => Link(true)), "the Start menu option on: checked");
+        Equal(true, GrokBotReconnectPolicy.ShouldCheck(true, false, false, () => Link(false)), "a prompt open: checked, even after an uninstall");
+        Equal(false, GrokBotReconnectPolicy.ShouldCheck(false, false, true, () => Link(true)), "not installed and no prompt: no check");
+        reads = 0;
+        GrokBotReconnectPolicy.ShouldCheck(false, true, true, () => Link(true));
+        Equal(0, reads, "with a recorded port the option file isn't read");
+        var tray = File.ReadAllText(Path.Combine(RepositoryRoot(), "src", "CodexWingman", "TrayApplicationContext.cs"));
+        Equal(true, tray.Contains("if (!GrokBotReconnectPolicy.ShouldCheck(grokPrompt is not null, installed, grokLauncher.Port() is not null,", StringComparison.Ordinal),
+            "the tick uses it");
+        Equal(true, tray.Contains("if (grokLauncher.MainProcess() is { } running && AdoptGrokBotPort(running.Id, \"startup\"))", StringComparison.Ordinal)
+            && tray.Contains("if (grokLauncher.MainProcess() is { } running) AdoptGrokBotPort(running.Id, \"open\");", StringComparison.Ordinal),
+            "startup and the Grok Bot menu still adopt a running port");
     }
 
     /// <summary>The handed-over prompt is its process's one prompt: no settle, and no second offer later.</summary>
