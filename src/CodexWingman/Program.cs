@@ -27,6 +27,11 @@ internal static class Program
             }
             return;
         }
+        if (WingmanLaunchOptions.RunsOnItsOwn(options.Command))
+        {
+            RunOnItsOwn(options);
+            return;
+        }
         if (options.Command != WingmanCommand.None)
         {
             // Commands only signal a running Wingman (development builds listen); they never start one.
@@ -86,6 +91,37 @@ internal static class Program
         var portOverride = CodexLaunchPolicy.TryGetPortOverride(args);
         Application.Run(new TrayApplicationContext(portOverride, activationEvent, options, codexActivation, t3Activation,
             t3WebActivation, grokActivation));
+    }
+
+    /// <summary>
+    /// --grok-bot-start-link-status and --restore-grok-bot-start-link. Text goes to a redirected output, else to the
+    /// console they were typed in (attached, never a new console), else to a message box.
+    /// </summary>
+    private static void RunOnItsOwn(WingmanLaunchOptions options)
+    {
+        var dataRoot = Path.GetDirectoryName(HelperSettingsStore.DefaultPath(options.LocalAppData))!;
+        WingmanLog.Configure(WingmanLog.LogDirectory(dataRoot));
+        var grok = GrokBotLaunchPolicy.ExecutablePath(Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData));
+        string text;
+        var failed = false;
+        try
+        {
+            if (options.Command == WingmanCommand.GrokBotStartLinkStatus) text = GrokBotStartLinkWindows.StatusJson(grok, dataRoot);
+            else
+            {
+                var restored = GrokBotStartLinkWindows.RestoreForUninstall(grok, dataRoot);
+                text = restored.Message;
+                failed = restored.Kind == GrokBotStartLinkRestoreKind.Failed;
+                if (failed) Environment.ExitCode = 1;
+            }
+        }
+        catch (Exception error)
+        {
+            text = error.Message;
+            failed = true;
+            Environment.ExitCode = 1;
+        }
+        StandaloneConsole.Show(text, failed, "Wingman: Grok Bot Start menu shortcut");
     }
 
     private static void AllowRunningWingmanToForeground()

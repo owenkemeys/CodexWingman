@@ -59,10 +59,15 @@ internal sealed class TrayApplicationContext : ApplicationContext
     private bool busy;
     private bool exiting;
     private readonly GrokBotReconnectPolicy grokReconnect = new();
-    private readonly GrokBotReconnectClicks grokReconnectClicks = new();
-    private GrokBotReconnectOffer? grokReconnectOffer;
-    private bool grokReconnectOfferClosed = true;
+    // The reconnect prompt window and, while the user quits Grok Bot for it, its wait (cancelled by Not now or Cancel).
+    private GrokBotReconnectPrompt? grokPrompt;
+    private GrokBotPromptWindow? grokPromptWindow;
+    private CancellationTokenSource? grokPromptWait;
+    private GrokBotProcess? lastGrokProcess;
     private System.Windows.Forms.Timer grokReconnectTimer = null!;
+    // Set when Windows says it is shutting down or signing out: the reconnect never starts Grok Bot then. Cleared by the
+    // user's next Reconnect or Open Grok Bot press (a shutdown another app cancelled).
+    private volatile bool sessionEnding;
     private bool reloadPending;
     private bool synchronizingMenu;
     private bool checkingRelease;
@@ -194,8 +199,6 @@ internal sealed class TrayApplicationContext : ApplicationContext
         };
         SetStatus(currentStatus);
         tray.MouseClick += TrayMouseClick;
-        tray.BalloonTipClicked += TrayBalloonClicked;
-        tray.BalloonTipClosed += (_, _) => grokReconnectOfferClosed = true;
         // Each app's launcher opens that app; the general Wingman entry (no --launch=) opens the apps ticked
         // Open when Wingman starts, the same set as at startup (LauncherActivationPolicy.AppsFor).
         launcherActivations.Register(activationEvent, WingmanLaunchTarget.Preferences);
@@ -216,6 +219,7 @@ internal sealed class TrayApplicationContext : ApplicationContext
         grokReconnectTimer = new System.Windows.Forms.Timer { Interval = (int)GrokBotReconnectPolicy.CheckInterval.TotalMilliseconds };
         grokReconnectTimer.Tick += (_, _) => GrokBotReconnectTick();
         grokReconnectTimer.Start();
+        Microsoft.Win32.SystemEvents.SessionEnding += OnSessionEnding;
         trayRecoveryTimer = new System.Windows.Forms.Timer { Interval = 5_000 };
         trayRecoveryTimer.Tick += (_, _) => TrayVisibilityRecovery.EnsureVisible(
             exiting,
@@ -227,12 +231,18 @@ internal sealed class TrayApplicationContext : ApplicationContext
         {
             startTimer.Stop();
             startTimer.Dispose();
-            try { await InitializeAsync(); }
+            try
+            {
+                // Grok Bot already running with a debugging port Wingman didn't launch: record it and connect, nothing restarted.
+                if (grokLauncher.MainProcess() is { } running && AdoptGrokBotPort(running.Id, "startup"))
+                    await ConnectToListeningGrokBotAsync("startup", duringStartup: true);
+                await InitializeAsync();
+            }
             finally
             {
+                ReconcileGrokBotStartLink("startup");
                 initializing = false;
                 await DrainLauncherActivationsAsync();
-                await DrainGrokBotReconnectAsync();
             }
             await CheckForUpdatesAsync(showCurrentResult: false);
         };
@@ -385,6 +395,14 @@ internal sealed class TrayApplicationContext : ApplicationContext
         if (grokLauncher?.Port() is { } grokPort) yield return grokPort;
     }
 
+    /// <summary>The ports Wingman uses for Codex and T3 right now (not Grok Bot's).</summary>
+    private IEnumerable<int> OtherAppPorts()
+    {
+        yield return activePort;
+        if (GetT3Port() is { } t3) yield return t3;
+        if (t3WebLauncher?.Port() is { } web) yield return web;
+    }
+
     private async Task ReconcileAppTargetsAsync(Func<AppTargetController, Func<Task<HelperHostReport>>?>? operation = null)
     {
         foreach (var target in AppTargets())
@@ -461,7 +479,9 @@ internal sealed class TrayApplicationContext : ApplicationContext
     private void TrayMouseClick(object? sender, MouseEventArgs eventArgs)
     {
         if (eventArgs.Button != MouseButtons.Left) return;
-        ShowBalloon(TrayHoverText, currentStatus.DiagnosticText, 2500);
+        tray.BalloonTipTitle = TrayHoverText;
+        tray.BalloonTipText = currentStatus.DiagnosticText;
+        tray.ShowBalloonTip(2500);
     }
 
     private static string WingmanVersion() =>
@@ -497,6 +517,9 @@ internal sealed class TrayApplicationContext : ApplicationContext
                 return;
             case WingmanCommand.GrokBotPin:
                 ToggleGrokBotPin();
+                return;
+            case WingmanCommand.GrokBotStartLink:
+                _ = ToggleGrokBotStartLinkAsync();
                 return;
             case WingmanCommand.T3WebCheckSignIn:
                 // Sign-in renewal is automatic; this is the old "Check T3 sign-in now" for development.
@@ -913,7 +936,9 @@ internal sealed class TrayApplicationContext : ApplicationContext
         t3Web.SetMenuStatus();
         if (outcome.Result == T3PairingResult.Failed || interactive || forceRenew)
         {
-            ShowBalloon("T3 Code (web) sign-in", outcome.Message, 4000);
+            tray.BalloonTipTitle = "T3 Code (web) sign-in";
+            tray.BalloonTipText = outcome.Message;
+            tray.ShowBalloonTip(4000);
         }
     }
 
@@ -1014,7 +1039,7 @@ internal sealed class TrayApplicationContext : ApplicationContext
         }
     }
 
-    private async Task EnsureGrokBotReadyAsync(bool atStartup = false, bool plainEntry = false, bool relaunchConfirmed = false)
+    private async Task EnsureGrokBotReadyAsync(bool atStartup = false, bool plainEntry = false)
     {
         if (busy || exiting) return;
         using var deadline = new CancellationTokenSource(TimeSpan.FromMinutes(2));
@@ -1024,8 +1049,8 @@ internal sealed class TrayApplicationContext : ApplicationContext
         {
             // At startup and for the plain entry Wingman never asks to relaunch: a Grok Bot running without Wingman's
             // port stays as it is. Connected: its window is brought forward. Not running: it is started.
-            WingmanLog.Write("grok-bot-open", ("reason", relaunchConfirmed ? "reconnect-prompt" : atStartup ? "startup" : plainEntry ? "plain-entry" : "launcher-or-menu"));
-            Func<bool> confirm = relaunchConfirmed ? () => true : atStartup || plainEntry ? () => false : ConfirmGrokBotRelaunch;
+            WingmanLog.Write("grok-bot-open", ("reason", atStartup ? "startup" : plainEntry ? "plain-entry" : "launcher-or-menu"));
+            Func<bool> confirm = atStartup || plainEntry ? () => false : ConfirmGrokBotRelaunch;
             if (!await grokLauncher.OpenAsync(confirm, deadline.Token))
             {
                 if (plainEntry)
@@ -1057,61 +1082,246 @@ internal sealed class TrayApplicationContext : ApplicationContext
 
     /// <summary>
     /// After Grok Bot updates itself its installer reopens it without Wingman's port. Wingman never closes it by itself:
-    /// a quick check every GrokBotReconnectPolicy.CheckInterval shows one balloon (the policy decides when and its title),
-    /// and only a click on that balloon, for that same Grok Bot process, reconnects without a second question.
+    /// a quick check every GrokBotReconnectPolicy.CheckInterval shows one prompt window (the policy decides when and its
+    /// title), bound to that exact Grok Bot process; its Reconnect button is the one click. Grok Bot not installed: nothing.
     /// </summary>
     private void GrokBotReconnectTick()
     {
-        // While busy Wingman may itself be closing and reopening Grok Bot; observe again once it is free.
-        if (exiting || busy) return;
+        if (exiting) return;
+        // An open prompt keeps checking its process even after Grok Bot is uninstalled, so it closes when that process exits.
+        var installed = grokLauncher.IsInstalled();
+        if (!installed && grokPrompt is null) return;
         try
         {
             var observation = ObserveGrokBot();
+            if (grokPrompt is { } prompt)
+            {
+                if (prompt.Observe(observation, busy || initializing) is var step and not GrokBotPromptStep.None) _ = ActOnGrokPromptAsync(prompt, step);
+                SyncGrokPromptWindow();
+            }
+            // While busy Wingman may itself be closing and reopening Grok Bot, and during a reconnect it is waiting for the
+            // user to quit it; observe again once that is over.
+            if (!installed || busy || grokPromptWait is not null) return;
+            if (startLinkRetry is { } retry) ReconcileGrokBotStartLink(retry);
+            var newProcess = observation.Process is { } process && process != lastGrokProcess;
+            lastGrokProcess = observation.Process;
+            if (newProcess) ReconcileGrokBotStartLink("grok-bot-started");
+            // Started with a debugging port Wingman didn't launch (the opted-in shortcut after an update): record it, connect.
+            // Checked every tick while unconnected, since the port can come up after the window.
+            if (!observation.Connected && observation.ProcessId is { } unconnected
+                && AdoptGrokBotPort(unconnected, "grok-bot-started", log: newProcess))
+            {
+                observation = ObserveGrokBot();
+                uiContext.Post(async _ => await ConnectToListeningGrokBotAsync("grok-bot-started"), null);
+            }
             if (grokReconnect.Observe(observation, DateTimeOffset.UtcNow, grokLauncher) is not { } offer) return;
             WingmanLog.Write("grok-bot-reconnect-offered", ("process", offer.ProcessId), ("updated", offer.Updated));
-            ShowBalloon(offer.Title, offer.Text, 15_000, offer);
+            ShowGrokPrompt(offer);
         }
         catch (Exception error) { Debug.WriteLine($"[Grok Bot reconnect] {error.Message}"); }
     }
 
-    /// <summary>Cheap: the window's process id and whether Wingman's port is listening (no HTTP request).</summary>
-    private GrokBotObservation ObserveGrokBot() =>
-        new(grokLauncher.WindowProcessId(), AppPresence.IsListening(grokLauncher.Port()), GrokBotLauncher.UserIdle());
-
-    private async void TrayBalloonClicked(object? sender, EventArgs eventArgs)
+    /// <summary>
+    /// When Grok Bot's command line asks for a loopback debugging port (for example from the opted-in Start menu shortcut),
+    /// records it in grok-runtime.json so Wingman uses it. True when the process has such a port.
+    /// </summary>
+    private bool AdoptGrokBotPort(int process, string reason, bool log = true)
     {
-        // Only the reconnect balloon records an offer; clicks on the other balloons do nothing, as before.
-        if (grokReconnectOffer is not { } offer) return;
-        var closed = grokReconnectOfferClosed;
-        grokReconnectOffer = null;
-        grokReconnectOfferClosed = true;
-        var action = grokReconnectClicks.Click(offer, closed, DateTimeOffset.UtcNow, ObserveGrokBot(), busy || initializing);
-        WingmanLog.Write("grok-bot-reconnect-clicked", ("process", offer.ProcessId), ("action", action));
-        await RunGrokBotReconnectAsync(action);
-    }
-
-    private async Task DrainGrokBotReconnectAsync()
-    {
-        if (busy || exiting || grokReconnectClicks.Drain(ObserveGrokBot()) is not { } action) return;
-        WingmanLog.Write("grok-bot-reconnect-drained", ("action", action));
-        await RunGrokBotReconnectAsync(action);
-    }
-
-    private async Task RunGrokBotReconnectAsync(GrokBotReconnectAction action)
-    {
-        switch (action)
+        try
         {
-            case GrokBotReconnectAction.ReconnectNow:
-                // The click is the consent the prompt asked for: no second question.
-                await EnsureGrokBotReadyAsync(relaunchConfirmed: true);
-                return;
-            case GrokBotReconnectAction.AskFirst:
-                // The click can't be tied to the prompt's Grok Bot: the usual Open window path, with its Yes/No question.
-                await EnsureGrokBotReadyAsync();
-                return;
-            default:
-                // AlreadyConnected needs nothing; WaitUntilFree is drained when SetBusy(false) runs.
-                return;
+            var asked = GrokBotLaunchPolicy.DebugPortFrom(grokLauncher.CommandLine(process));
+            if (asked is null) return false;
+            if (!GrokBotLaunchPolicy.Adoptable(asked, OtherAppPorts(), GrokBotLauncher.ListenerProcess(asked.Value), process))
+            {
+                if (log) WingmanLog.Write("grok-bot-port-not-adopted", ("reason", reason), ("port", asked));
+                return false;
+            }
+            var port = asked.Value;
+            if (grokLauncher.RecordPort(port)) WingmanLog.Write("grok-bot-port-adopted", ("reason", reason), ("port", port));
+            return true;
+        }
+        catch (Exception error) when (error is IOException or UnauthorizedAccessException)
+        {
+            WingmanLog.Write("grok-bot-port-adopt-failed", ("reason", reason), ("error", error.Message));
+            return false;
+        }
+    }
+
+    /// <summary>Connects to a Grok Bot already listening on the recorded port, unless it is connected already. Never restarts it.</summary>
+    private async Task ConnectToListeningGrokBotAsync(string reason, bool duringStartup = false)
+    {
+        if ((grok.Connections?.Connected ?? 0) > 0 || !GrokBotLauncher.ConnectedTo(grokLauncher.Port(), grokLauncher.MainProcess()?.Id)) return;
+        if (!automaticRefreshGate.TryEnter(busy || (initializing && !duringStartup), exiting)) return;
+        try
+        {
+            await grok.ReconcileAsync(null);
+            WingmanLog.Write("grok-bot-connected-existing", ("reason", reason), ("connected", grok.Connections?.Connected ?? 0));
+        }
+        catch (Exception error) { WingmanLog.Write("grok-bot-connect-existing-failed", ("reason", reason), ("error", error.Message)); }
+        finally { automaticRefreshGate.Exit(); }
+    }
+
+    /// <summary>
+    /// Cheap: Grok Bot's main process (with or without a visible window, so one still starting counts) and whether
+    /// it is connected: Wingman's port listening on 127.0.0.1 and owned by that process, as for adoption (no HTTP request).
+    /// </summary>
+    private GrokBotObservation ObserveGrokBot()
+    {
+        var main = grokLauncher.MainProcess();
+        return new(main?.Id, GrokBotLauncher.ConnectedTo(grokLauncher.Port(), main?.Id), GrokBotLauncher.UserIdle(), main?.Started,
+            GrokBotLauncher.FullScreenInFront());
+    }
+
+    /// <summary>Shows the prompt window for <paramref name="offer"/> without taking focus, replacing any earlier one.</summary>
+    private void ShowGrokPrompt(GrokBotReconnectOffer offer)
+    {
+        CloseGrokPrompt();
+        var prompt = new GrokBotReconnectPrompt(offer);
+        var window = new GrokBotPromptWindow(tray.Icon);
+        window.ReconnectClicked += () =>
+        {
+            if (!ReferenceEquals(grokPrompt, prompt)) return;
+            sessionEnding = false;
+            var actNow = prompt.Reconnect(busy || initializing || exiting);
+            WingmanLog.Write("grok-bot-reconnect-clicked", ("process", offer.ProcessId), ("now", actNow));
+            if (actNow) _ = ActOnGrokPromptAsync(prompt, GrokBotPromptStep.Reconnect);
+            SyncGrokPromptWindow();
+        };
+        window.OpenClicked += () =>
+        {
+            if (!ReferenceEquals(grokPrompt, prompt)) return;
+            sessionEnding = false;
+            var actNow = prompt.Open(busy || initializing || exiting);
+            WingmanLog.Write("grok-bot-reconnect-open-clicked", ("process", offer.ProcessId), ("now", actNow));
+            if (actNow) _ = ActOnGrokPromptAsync(prompt, GrokBotPromptStep.Open);
+            SyncGrokPromptWindow();
+        };
+        window.NotNowClicked += () =>
+        {
+            if (!ReferenceEquals(grokPrompt, prompt)) return;
+            WingmanLog.Write("grok-bot-reconnect-not-now", ("process", offer.ProcessId), ("state", prompt.State));
+            prompt.NotNow();
+            SyncGrokPromptWindow();
+        };
+        grokPrompt = prompt;
+        grokPromptWindow = window;
+        window.Render(prompt);
+        window.ShowWithoutFocus();
+    }
+
+    /// <summary>Shows the prompt's state, or closes the window (and stops any wait for the quit) once the prompt is closed.</summary>
+    private void SyncGrokPromptWindow()
+    {
+        if (grokPrompt is not { } prompt) return;
+        if (prompt.State != GrokBotPromptState.Closed)
+        {
+            grokPromptWindow?.Render(prompt);
+            return;
+        }
+        WingmanLog.Write("grok-bot-reconnect-prompt-closed", ("process", prompt.Offer.ProcessId), ("reason", prompt.ClosedBecause));
+        CloseGrokPrompt();
+    }
+
+    /// <summary>
+    /// Closes the prompt. Usually called from one of the window's own click handlers, so the window is hidden now and
+    /// disposed after the handler returns (BeginInvoke); <paramref name="now"/> (Wingman's own Dispose) disposes at once.
+    /// </summary>
+    private void CloseGrokPrompt(bool now = false)
+    {
+        grokPrompt = null;
+        grokPromptWait?.Cancel();
+        var window = grokPromptWindow;
+        grokPromptWindow = null;
+        if (window is null) return;
+        if (now || !window.IsHandleCreated) { window.Dispose(); return; }
+        window.Hide();
+        window.BeginInvoke(window.Dispose);
+    }
+
+    /// <summary>Windows is shutting down or signing out: stop any reconnect wait, so Grok Bot is never started now.</summary>
+    private void OnSessionEnding(object? sender, Microsoft.Win32.SessionEndingEventArgs e)
+    {
+        sessionEnding = true;
+        WingmanLog.Write("grok-bot-reconnect-session-ending", ("reason", e.Reason), ("waiting", grokPromptWait is not null));
+        grokPromptWait?.Cancel();
+    }
+
+    /// <summary>
+    /// Reconnect (or Open Grok Bot after Wingman couldn't), through GrokBotReconnectRun: only for the offer's own
+    /// still-running Grok Bot process, and a port that is already usable is adopted instead of restarting. Otherwise the
+    /// user quits Grok Bot and Wingman opens it again with the port, only after that exact process has exited and never
+    /// during a Grok Bot update. Logs the outcome that actually happened; one that couldn't start keeps the prompt open.
+    /// </summary>
+    private async Task ActOnGrokPromptAsync(GrokBotReconnectPrompt prompt, GrokBotPromptStep step)
+    {
+        using var wait = new CancellationTokenSource();
+        grokPromptWait = wait;
+        var steps = new TrayReconnectSteps(this, prompt);
+        GrokBotReconnectResult result;
+        try
+        {
+            result = step == GrokBotPromptStep.Open && prompt.Quit is { } quit
+                ? await GrokBotReconnectRun.OpenAsync(quit, steps, wait.Token)
+                : await GrokBotReconnectRun.RunAsync(prompt.Offer, steps, wait.Token);
+        }
+        catch (Exception error)
+        {
+            WingmanLog.Write("grok-bot-reconnect-failed", ("error", error.GetType().Name));
+            MessageBox.Show(error.Message, "Grok Bot needs attention", MessageBoxButtons.OK, MessageBoxIcon.Warning);
+            result = new(GrokBotReconnectOutcome.Cancelled);
+        }
+        finally { if (ReferenceEquals(grokPromptWait, wait)) grokPromptWait = null; }
+        WingmanLog.Write("grok-bot-reconnect-outcome", ("process", prompt.Offer.ProcessId), ("step", step), ("outcome", result.Outcome));
+        prompt.Finished(result);
+        if (ReferenceEquals(grokPrompt, prompt)) SyncGrokPromptWindow();
+        if (result.Outcome == GrokBotReconnectOutcome.Adopted) await ConnectToListeningGrokBotAsync("reconnect");
+        if (result.Outcome == GrokBotReconnectOutcome.Relaunched) await ConnectRelaunchedGrokBotAsync();
+    }
+
+    private sealed class TrayReconnectSteps(TrayApplicationContext tray, GrokBotReconnectPrompt prompt) : IGrokBotReconnectSteps
+    {
+        public GrokBotObservation Observe() => tray.ObserveGrokBot();
+        public bool AdoptListeningPort(int process) => tray.AdoptGrokBotPort(process, "reconnect");
+        public bool Busy => tray.busy || tray.initializing || tray.exiting;
+        public void WaitingForQuit()
+        {
+            prompt.WaitingForQuit();
+            if (ReferenceEquals(tray.grokPrompt, prompt)) tray.SyncGrokPromptWindow();
+        }
+        public Task<GrokBotRelaunchResult> RelaunchAfterQuitAsync(GrokBotProcess target, CancellationToken cancellationToken) =>
+            tray.grokLauncher.ReconnectAsync(target, () => !Busy, () => tray.sessionEnding, cancellationToken);
+        public Task<GrokBotRelaunchResult> StartAsync(GrokBotRelaunch.ClosedProcess quit, CancellationToken cancellationToken) =>
+            tray.grokLauncher.StartAfterQuitAsync(quit, () => !Busy, () => tray.sessionEnding, cancellationToken);
+    }
+
+    /// <summary>After the reconnect started Grok Bot with Wingman's port: waits for its window and connects the Helpers.</summary>
+    private async Task ConnectRelaunchedGrokBotAsync()
+    {
+        if (busy || exiting) return; // the next refresh connects it
+        using var deadline = new CancellationTokenSource(TimeSpan.FromMinutes(2));
+        activeInteractiveOperation = deadline;
+        SetBusy(true, "Reconnecting Grok Bot...");
+        try
+        {
+            await grokLauncher.WaitForWindowAsync(deadline.Token);
+            grok.Menu.Visible = true;
+            await grok.ReconcileAsync(() => grok.Host.ResumeAndReconcileAsync(deadline.Token), deadline.Token);
+            if (grok.CheckFailed)
+                throw new InvalidOperationException("Grok Bot started, but its Helpers could not be checked.");
+            SynchronizeHelpersMenu();
+            grok.SetMenuStatus();
+        }
+        catch (Exception error)
+        {
+            WingmanLog.Write("grok-bot-reconnect-failed", ("error", error.GetType().Name));
+            grok.CheckFailed = true;
+            grok.SetMenuStatus();
+            MessageBox.Show(error.Message, "Grok Bot needs attention", MessageBoxButtons.OK, MessageBoxIcon.Warning);
+        }
+        finally
+        {
+            if (ReferenceEquals(activeInteractiveOperation, deadline)) activeInteractiveOperation = null;
+            SetBusy(false);
         }
     }
 
@@ -1119,6 +1329,121 @@ internal sealed class TrayApplicationContext : ApplicationContext
         "Wingman will close Grok Bot and open it again with Helpers. Grok Bot keeps its own sign-in and data, and Wingman changes none of its files. Finish anything in progress first. Continue?",
         "Grok Bot", MessageBoxButtons.YesNo, MessageBoxIcon.Question,
         MessageBoxDefaultButton.Button2) == DialogResult.Yes;
+
+    private GrokBotStartLink GrokBotStartLinkFor() => GrokBotStartLinkWindows.For(grokLauncher.Executable, settingsDirectory);
+
+    /// <summary>How long the tray waits for the setting's lock, off its UI thread, before trying again later.</summary>
+    private static readonly TimeSpan StartLinkLockWait = TimeSpan.FromSeconds(2);
+    private Task? startLinkReconcile;
+    private string? startLinkRetry;
+    private bool startLinkToggling;
+
+    /// <summary>
+    /// Opted in only: a Grok Bot reinstall writes a fresh Start menu shortcut without Wingman's port; add the port again,
+    /// record it, and log it. Checked at startup and whenever a new Grok Bot process appears. Off: reads only the setting.
+    /// Runs off the UI thread with a short lock wait; when the lock is busy (or a run is under way) it retries on a later tick.
+    /// </summary>
+    private void ReconcileGrokBotStartLink(string reason)
+    {
+        if (startLinkReconcile is { IsCompleted: false } || startLinkToggling) { startLinkRetry = reason; return; }
+        startLinkRetry = null;
+        var path = GrokBotStartLinkOptIn.PathIn(settingsDirectory);
+        if (!GrokBotStartLinkOptIn.Load(path).Enabled) return;
+        var link = GrokBotStartLinkFor();
+        startLinkReconcile = ReconcileGrokBotStartLinkAsync(reason, path, link);
+    }
+
+    private async Task ReconcileGrokBotStartLinkAsync(string reason, string path, GrokBotStartLink link)
+    {
+        try
+        {
+            // Re-read under the lock the restore command takes, so a restore that just turned it off is never undone.
+            var outcome = await OnStaThread(() => GrokBotStartLinkOptIn.Locked(path, () =>
+            {
+                var setting = GrokBotStartLinkOptIn.Load(path);
+                return setting.Enabled
+                    ? link.Reconcile(setting, grokLauncher.ReservePortForShortcut, updated => GrokBotStartLinkOptIn.Save(path, updated))
+                    : GrokBotStartLinkOutcome.Unchanged;
+            }, StartLinkLockWait));
+            if (outcome != GrokBotStartLinkOutcome.Unchanged)
+                WingmanLog.Write("grok-start-link-reconcile", ("reason", reason), ("outcome", outcome));
+        }
+        catch (TimeoutException)
+        {
+            startLinkRetry ??= reason; // back on the UI thread: the next tick tries again
+        }
+        catch (Exception error)
+        {
+            WingmanLog.Write("grok-start-link-reconcile-failed", ("reason", reason), ("error", error.Message));
+        }
+    }
+
+    /// <summary>Runs <paramref name="work"/> on its own STA thread (the shortcut code uses COM), never blocking the UI thread.</summary>
+    private static Task<T> OnStaThread<T>(Func<T> work)
+    {
+        var done = new TaskCompletionSource<T>(TaskCreationOptions.RunContinuationsAsynchronously);
+        var thread = new Thread(() =>
+        {
+            try { done.SetResult(work()); }
+            catch (Exception error) { done.SetException(error); }
+        }) { IsBackground = true, Name = "Wingman Grok Bot shortcut" };
+        thread.SetApartmentState(ApartmentState.STA);
+        thread.Start();
+        return done.Task;
+    }
+
+    /// <summary>
+    /// Development command --grok-bot-start-link: add Wingman's debugging port to Grok Bot's Start menu shortcut, or remove
+    /// exactly the pair Wingman recorded adding. Off by default; asks before changing anything, and refuses a shortcut that
+    /// already has a debugging setting Wingman didn't add.
+    /// </summary>
+    private async Task ToggleGrokBotStartLinkAsync()
+    {
+        const string Title = "Grok Bot Start menu shortcut";
+        if (startLinkToggling) return;
+        var path = GrokBotStartLinkOptIn.PathIn(settingsDirectory);
+        startLinkToggling = true;
+        try
+        {
+            if (startLinkReconcile is { } running) await running;
+            var link = GrokBotStartLinkFor();
+            var setting = GrokBotStartLinkOptIn.Load(path);
+            if (setting.Unreadable)
+            {
+                MessageBox.Show(GrokBotStartLinkSetting.UnreadableMessage, Title, MessageBoxButtons.OK, MessageBoxIcon.Warning);
+                return;
+            }
+            var state = link.State(setting.AddedPort);
+            if (setting.Enabled || state == GrokBotStartLinkState.Ours)
+            {
+                if (MessageBox.Show(GrokBotStartLinkRestore.Question(setting.AddedPort), Title,
+                        MessageBoxButtons.YesNo, MessageBoxIcon.Question, MessageBoxDefaultButton.Button2) != DialogResult.Yes) return;
+                // Off and the record cleared only once the pair is verified gone; a failed restore keeps both.
+                var restored = await OnStaThread(() => GrokBotStartLinkOptIn.Locked(path, () => link.Restore(GrokBotStartLinkOptIn.Load(path), off => GrokBotStartLinkOptIn.Save(path, off)), StartLinkLockWait));
+                WingmanLog.Write("grok-start-link-restored", ("reason", "user"), ("outcome", restored.Kind));
+                MessageBox.Show(restored.Message, Title, MessageBoxButtons.OK,
+                    restored.Kind == GrokBotStartLinkRestoreKind.Failed ? MessageBoxIcon.Warning : MessageBoxIcon.Information);
+                return;
+            }
+            if (state != GrokBotStartLinkState.Plain)
+            {
+                link.Apply(GrokBotLaunchPolicy.PreferredPort, setting, _ => { }); // throws the reason; changes nothing
+                return;
+            }
+            if (MessageBox.Show(
+                    "Add Wingman's debugging port to Grok Bot's Start menu shortcut? Grok Bot's installer opens this shortcut after it updates itself, so Grok Bot comes back with the port and Wingman reconnects with no restart. The shortcut still opens Grok Bot directly, with or without Wingman, and keeps its name, icon and grouping. The port listens on this PC only (127.0.0.1) whenever Grok Bot is opened from this shortcut, and any program on this PC can then control the signed-in Grok Bot through it, as with Wingman's own launch. Wingman keeps a backup, adds the port again if a Grok Bot reinstall replaces the shortcut, and removes it when you run this command again or CodexWingman.exe --restore-grok-bot-start-link.",
+                    Title, MessageBoxButtons.YesNo, MessageBoxIcon.Question, MessageBoxDefaultButton.Button2) != DialogResult.Yes) return;
+            var port = grokLauncher.ReservePortForShortcut();
+            var backup = await OnStaThread(() => GrokBotStartLinkOptIn.Locked(path, () => link.Apply(port, GrokBotStartLinkOptIn.Load(path), updated => GrokBotStartLinkOptIn.Save(path, updated)), StartLinkLockWait));
+            WingmanLog.Write("grok-start-link-applied", ("backup", backup), ("port", port));
+            MessageBox.Show("Done." + (backup is null ? string.Empty : " Backup: " + backup), Title, MessageBoxButtons.OK, MessageBoxIcon.Information);
+        }
+        catch (Exception error)
+        {
+            MessageBox.Show(error.Message, Title, MessageBoxButtons.OK, MessageBoxIcon.Warning);
+        }
+        finally { startLinkToggling = false; }
+    }
 
     /// <summary>
     /// Development command --grok-bot-pin: make the existing Grok Bot taskbar pin open Grok Bot through
@@ -1445,6 +1770,7 @@ internal sealed class TrayApplicationContext : ApplicationContext
         exiting = true;
         refreshTimer.Stop();
         grokReconnectTimer.Stop();
+        CloseGrokPrompt();
         actionTimer.Stop();
         trayRecoveryTimer.Stop();
         SetBusy(true, "Removing Helpers from connected windows...");
@@ -1478,8 +1804,9 @@ internal sealed class TrayApplicationContext : ApplicationContext
         }
         if (!value && !exiting && pendingLaunches.Pending > 0)
             uiContext.Post(async _ => await DrainLauncherActivationsAsync(), null);
-        if (!value && !exiting && grokReconnectClicks.Pending)
-            uiContext.Post(async _ => await DrainGrokBotReconnectAsync(), null);
+        // A Reconnect pressed while busy ("Working…") acts as soon as Wingman is free.
+        if (!value && !exiting && grokPrompt is not null)
+            uiContext.Post(_ => GrokBotReconnectTick(), null);
     }
 
     private async Task EnsureCodexReadyAsync(bool openWindowWhenHealthy, string busyText, bool plainEntry = false)
@@ -1684,17 +2011,11 @@ internal sealed class TrayApplicationContext : ApplicationContext
         codexMenuItem.Text = TrayMenuLayout.LineText(WingmanLaunchTarget.Codex, label);
     }
 
-    private void ShowCurrentStatusBalloon() => ShowBalloon(TrayHoverText, currentStatus.DiagnosticText, 2500);
-
-    /// <summary>Every tray balloon goes through here: a new balloon replaces the reconnect prompt, so its click no longer counts.</summary>
-    private void ShowBalloon(string title, string text, int timeout, GrokBotReconnectOffer? reconnectOffer = null)
+    private void ShowCurrentStatusBalloon()
     {
-        grokReconnectOffer = reconnectOffer;
-        grokReconnectOfferClosed = reconnectOffer is null;
-        tray.BalloonTipTitle = title;
-        tray.BalloonTipText = text;
-        tray.BalloonTipIcon = reconnectOffer is null ? ToolTipIcon.None : ToolTipIcon.Info;
-        tray.ShowBalloonTip(timeout);
+        tray.BalloonTipTitle = TrayHoverText;
+        tray.BalloonTipText = currentStatus.DiagnosticText;
+        tray.ShowBalloonTip(2500);
     }
 
     protected override void Dispose(bool disposing)
@@ -1703,6 +2024,8 @@ internal sealed class TrayApplicationContext : ApplicationContext
         {
             refreshTimer.Dispose();
             grokReconnectTimer.Dispose();
+            Microsoft.Win32.SystemEvents.SessionEnding -= OnSessionEnding;
+            CloseGrokPrompt(now: true);
             actionTimer.Dispose();
             trayRecoveryTimer.Dispose();
             launcherActivations.Dispose();

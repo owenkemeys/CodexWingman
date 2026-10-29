@@ -179,6 +179,7 @@ TestT3CodeLaunchPolicy();
 await AppTargetTests.RunAsync();
 await LauncherActivationTests.RunAsync();
 GrokBotReconnectTests.Run();
+GrokBotStartLinkTests.Run();
 Equal("CodexWingman.Desktop.Singleton.v1", WingmanIdentity.SingleInstanceName, "stable single-instance identity");
 Equal("CodexWingman.Desktop.Activate.v1", WingmanIdentity.ActivationEventName, "stable activation identity");
 Equal("Wingman", WingmanIdentity.RunningMenuText, "concise Wingman menu heading");

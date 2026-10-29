@@ -1,8 +1,8 @@
 using CodexWingman.Core;
 
 /// <summary>
-/// Grok Bot's self-update (its installer reopens it with no debugging port): Wingman offers one click to reconnect and
-/// never closes or reopens Grok Bot by itself.
+/// Grok Bot's self-update (its installer reopens it with no debugging port): Wingman offers a prompt window to reconnect
+/// and never closes or reopens Grok Bot by itself.
 /// </summary>
 internal static class GrokBotReconnectTests
 {
@@ -21,8 +21,27 @@ internal static class GrokBotReconnectTests
         ReconnectRearms();
         PromptAppearsWithinSecondsOfThePortGoing();
         TitleSaysUpdatedOnlyWithProof();
-        ClickCountsOnlyForThisPromptAndProcess();
-        BusyClickIsKeptThenRechecked();
+        ReusedProcessIdIsANewRun();
+        PromptIsBoundToItsProcess();
+        ReconnectRechecksBeforeActing();
+        RelaunchWaitsForTheUsersQuit();
+        AfterTheQuitThePromptNeverGivesUpSilently();
+        AfterTheQuitWingmanWaitsThenSaysSo();
+        NeverStartsDuringAnUpdate();
+        PromptWindowStaysOutOfTheWay();
+        BringingForwardKeepsTheWindowAsItIs();
+        TheQuitWaitHoldsTheProcessItself();
+        ThePromptFollowsItsProcessAfterAnUninstall();
+        AReopenDuringTheWaitStartsNothing();
+        NoPromptOverAFullScreenApp();
+        ACrashIsNotReopened();
+        AnInstallersKillIsAnUpdateNotACrash();
+        ACancelledShutdownKeepsTheReconnect();
+        NothingIsAwaitedBetweenTheBusyCheckAndTheStart();
+        TheMainProcessIsGrokBotItself();
+        NothingStartsWhileWindowsShutsDown();
+        ThePromptClosesAfterItsOwnClick();
+        TheRuntimeFileHasOneWriterAtATime();
         CommandLineSplitting();
         Console.WriteLine("Grok Bot reconnect tests passed");
     }
@@ -149,45 +168,913 @@ internal static class GrokBotReconnectTests
         Equal(false, GrokBotReconnectPolicy.UpdatedTitle == GrokBotReconnectPolicy.ReopenedTitle, "two distinct titles");
     }
 
-    private static void ClickCountsOnlyForThisPromptAndProcess()
+    /// <summary>A reused process id with a new start time is a new Grok Bot run: it settles again and gets its own prompt.</summary>
+    private static void ReusedProcessIdIsANewRun()
     {
-        var offer = new GrokBotReconnectOffer(Second, false, T0);
-        var same = new GrokBotObservation(Second, false, Present);
-        Equal(GrokBotReconnectAction.ReconnectNow, GrokBotReconnectPolicy.Validate(offer, false, T0.AddSeconds(5), same), "click on the live prompt");
-        Equal(GrokBotReconnectAction.AskFirst, GrokBotReconnectPolicy.Validate(offer, true, T0.AddSeconds(5), same), "prompt closed or replaced");
-        Equal(GrokBotReconnectAction.AskFirst,
-            GrokBotReconnectPolicy.Validate(offer, false, T0 + GrokBotReconnectPolicy.PromptLifetime + TimeSpan.FromSeconds(1), same), "click after the lifetime");
-        Equal(GrokBotReconnectAction.AskFirst, GrokBotReconnectPolicy.Validate(offer, false, T0.AddSeconds(5), new(Third, false, Present)),
-            "a different Grok Bot process since the prompt");
-        Equal(GrokBotReconnectAction.AskFirst, GrokBotReconnectPolicy.Validate(offer, false, T0.AddSeconds(5), new(null, false, Present)),
-            "Grok Bot closed since the prompt");
-        Equal(GrokBotReconnectAction.AskFirst, GrokBotReconnectPolicy.Validate(null, false, T0.AddSeconds(5), same), "no prompt on record");
-        Equal(GrokBotReconnectAction.AlreadyConnected, GrokBotReconnectPolicy.Validate(offer, false, T0.AddSeconds(5), new(Second, true, Present)),
-            "already connected again");
+        var policy = new GrokBotReconnectPolicy();
+        var facts = new Facts();
+        var early = new DateTime(2026, 1, 1, 8, 0, 0, DateTimeKind.Utc);
+        GrokBotReconnectOffer? At(double seconds, int pid, bool connected, DateTime started) =>
+            policy.Observe(new(pid, connected, Present, started), T0.AddSeconds(seconds), facts);
+        At(0, First, true, early);
+        Equal(true, At(6, Second, false, early) is null && At(10, Second, false, early) is { } offer && offer.Target == new GrokBotProcess(Second, early),
+            "first run prompted, bound to its start time");
+        var later = early.AddMinutes(5);
+        Equal(true, At(12, Second, false, later) is null, "same id, new start time: settles again, no prompt yet");
+        Equal(true, At(17, Second, false, later) is { ProcessStarted: var started } && started == later, "and then prompts once for the new run");
+        Equal(true, At(30, Second, false, later) is null, "only once");
     }
 
-    private static void BusyClickIsKeptThenRechecked()
+    /// <summary>
+    /// The prompt window is bound to its offer's exact process: it closes when that process exits or is replaced, when Grok
+    /// Bot connects, and after Not now; Reconnect acts once, and while Wingman is busy it waits ("Working…") and acts when free.
+    /// </summary>
+    private static void PromptIsBoundToItsProcess()
     {
-        var offer = new GrokBotReconnectOffer(Second, true, T0);
-        var same = new GrokBotObservation(Second, false, Present);
-        var clicks = new GrokBotReconnectClicks();
-        Equal(null, clicks.Drain(same), "nothing kept: nothing to drain");
-        Equal(GrokBotReconnectAction.ReconnectNow, clicks.Click(offer, false, T0.AddSeconds(3), same, busy: false), "free: act now");
-        Equal(false, clicks.Pending, "nothing kept when acted on");
+        var started = new DateTime(2026, 1, 1, 8, 59, 0, DateTimeKind.Utc);
+        var offer = new GrokBotReconnectOffer(Second, true, T0, started);
+        GrokBotObservation Seen(int? pid, DateTime? start = null, bool connected = false) => new(pid, connected, Present, start ?? started);
+        const GrokBotPromptStep None = GrokBotPromptStep.None;
 
-        Equal(GrokBotReconnectAction.WaitUntilFree, clicks.Click(offer, false, T0.AddSeconds(3), same, busy: true), "busy: kept");
-        Equal(true, clicks.Pending, "the busy click is kept, not dropped");
-        // Busy for longer than the prompt's lifetime: the consent was valid when given and holds for the same process.
-        Equal(GrokBotReconnectAction.ReconnectNow, clicks.Drain(same), "drained once free: reconnect");
-        Equal(false, clicks.Pending, "drained once");
+        var reused = new GrokBotReconnectPrompt(offer);
+        Equal(None, reused.Observe(Seen(Second, started.AddSeconds(1)), busy: false), "same id, other start");
+        Equal((GrokBotPromptState.Closed, "gone"), (reused.State, reused.ClosedBecause), "another run of the same id closes it");
+        Equal(false, reused.Reconnect(busy: false), "a closed prompt never acts");
 
-        clicks.Click(offer, false, T0.AddSeconds(3), same, busy: true);
-        Equal(GrokBotReconnectAction.AskFirst, clicks.Drain(new(Third, false, Present)), "another Grok Bot by the time Wingman is free: ask");
-        clicks.Click(offer, false, T0.AddSeconds(3), same, busy: true);
-        Equal(GrokBotReconnectAction.AlreadyConnected, clicks.Drain(new(Second, true, Present)), "connected meanwhile: nothing to do");
+        var exited = new GrokBotReconnectPrompt(offer);
+        exited.Observe(Seen(null), busy: false);
+        Equal(GrokBotPromptState.Closed, exited.State, "its process exited: closed");
 
-        Equal(GrokBotReconnectAction.WaitUntilFree, clicks.Click(offer, true, T0.AddSeconds(3), same, busy: true), "stale click while busy: kept too");
-        Equal(GrokBotReconnectAction.AskFirst, clicks.Drain(same), "a stale click becomes the Yes/No question, never a silent relaunch");
+        var connected = new GrokBotReconnectPrompt(offer);
+        connected.Observe(Seen(Second, connected: true), busy: false);
+        Equal((GrokBotPromptState.Closed, "connected"), (connected.State, connected.ClosedBecause), "Grok Bot connected: closed");
+
+        var declined = new GrokBotReconnectPrompt(offer);
+        declined.NotNow();
+        Equal((GrokBotPromptState.Closed, "not-now"), (declined.State, declined.ClosedBecause), "Not now closes it");
+
+        var stays = new GrokBotReconnectPrompt(offer);
+        for (var tick = 0; tick < 1000; tick++) stays.Observe(Seen(Second), busy: false);
+        Equal(GrokBotPromptState.Offered, stays.State, "no timeout while its process runs unconnected");
+        Equal(true, stays.Reconnect(busy: false), "Reconnect acts at once when free");
+        Equal(false, stays.Reconnect(busy: false), "a second press does nothing");
+
+        var busy = new GrokBotReconnectPrompt(offer);
+        Equal(false, busy.Reconnect(busy: true), "pressed while busy: not yet");
+        Equal(GrokBotPromptState.Working, busy.State, "shows Working…");
+        Equal(None, busy.Observe(Seen(Second), busy: true), "still busy: waits");
+        Equal(GrokBotPromptStep.Reconnect, busy.Observe(Seen(Second), busy: false), "free: acts");
+        Equal(None, busy.Observe(Seen(Second), busy: false), "acts once");
+        busy.Finished(new(GrokBotReconnectOutcome.Busy));
+        Equal(true, busy.State == GrokBotPromptState.Working && busy.Observe(Seen(Second), busy: false) == GrokBotPromptStep.Reconnect,
+            "busy again by then: kept, acts when free");
+
+        var gone = new GrokBotReconnectPrompt(offer);
+        gone.Reconnect(busy: true);
+        Equal(None, gone.Observe(Seen(Third), busy: false), "replaced while waiting to act: never acts");
+        Equal(GrokBotPromptState.Closed, gone.State, "and closes");
+
+        var quitting = new GrokBotReconnectPrompt(offer);
+        quitting.Reconnect(busy: false);
+        quitting.WaitingForQuit();
+        quitting.Observe(Seen(null), busy: false);
+        Equal(GrokBotPromptState.WaitingForQuit, quitting.State, "waiting for the quit: its exit is expected, the run decides");
+        quitting.Finished(new(GrokBotReconnectOutcome.Relaunched));
+        Equal((GrokBotPromptState.Closed, "Relaunched"), (quitting.State, quitting.ClosedBecause), "closed when the reconnect finishes");
+    }
+
+    /// <summary>
+    /// Once the user has quit Grok Bot for the prompt, it never closes silently: it stays and says why Wingman couldn't open
+    /// it, with Open Grok Bot. No quit within the limit: back to the offer, silently. An update running: closed.
+    /// </summary>
+    private static void AfterTheQuitThePromptNeverGivesUpSilently()
+    {
+        var started = new DateTime(2026, 1, 1, 8, 59, 0, DateTimeKind.Utc);
+        var offer = new GrokBotReconnectOffer(Second, true, T0, started);
+        var quit = QuitProof(offer.Target);
+        GrokBotObservation Seen(int? pid, DateTime? start = null, bool connected = false) => new(pid, connected, Present, start ?? started);
+
+        GrokBotReconnectPrompt Waiting()
+        {
+            var prompt = new GrokBotReconnectPrompt(offer);
+            prompt.Reconnect(busy: false);
+            prompt.WaitingForQuit();
+            return prompt;
+        }
+
+        foreach (var (outcome, text) in new[] { (GrokBotReconnectOutcome.StillRunning, GrokBotReconnectPolicy.StillRunningText),
+            (GrokBotReconnectOutcome.BusyTooLong, GrokBotReconnectPolicy.BusyTooLongText) })
+        {
+            var prompt = Waiting();
+            prompt.Finished(new(outcome, quit));
+            Equal((GrokBotPromptState.CouldNotStart, text), (prompt.State, prompt.Problem), outcome + ": the prompt stays and says why");
+            for (var tick = 0; tick < 100; tick++) prompt.Observe(Seen(null), busy: false);
+            Equal(GrokBotPromptState.CouldNotStart, prompt.State, outcome + ": Grok Bot not running is expected now; it stays");
+            Equal(false, prompt.Reconnect(busy: false), outcome + ": Reconnect isn't offered again");
+            Equal(true, prompt.Open(busy: false), outcome + ": Open Grok Bot acts");
+            Equal(GrokBotPromptState.Working, prompt.State, outcome + ": Working…");
+            Equal(false, prompt.Open(busy: false), outcome + ": a second press does nothing");
+        }
+
+        var openBusy = Waiting();
+        openBusy.Finished(new(GrokBotReconnectOutcome.StillRunning, quit));
+        Equal(false, openBusy.Open(busy: true), "Open pressed while busy: not yet");
+        Equal(GrokBotPromptStep.Open, openBusy.Observe(Seen(null), busy: false), "free: opens, without the offer's process");
+        openBusy.Finished(new(GrokBotReconnectOutcome.Relaunched, quit));
+        Equal(GrokBotPromptState.Closed, openBusy.State, "opened: closed");
+
+        var replaced = Waiting();
+        replaced.Finished(new(GrokBotReconnectOutcome.BusyTooLong, quit));
+        replaced.Observe(Seen(Third), busy: false);
+        Equal((GrokBotPromptState.Closed, "replaced"), (replaced.State, replaced.ClosedBecause), "another Grok Bot started: it gets its own prompt");
+
+        var timedOut = Waiting();
+        timedOut.Finished(new(GrokBotReconnectOutcome.QuitTimedOut));
+        Equal((GrokBotPromptState.Offered, (string?)null), (timedOut.State, timedOut.ClosedBecause), "no quit within the limit: back to the offer, silently");
+        Equal(true, timedOut.Reconnect(busy: false), "and Reconnect works again");
+
+        var updating = Waiting();
+        updating.Finished(new(GrokBotReconnectOutcome.UpdateRunning, quit));
+        Equal((GrokBotPromptState.Closed, "UpdateRunning"), (updating.State, updating.ClosedBecause), "an update runs: the post-update prompt takes over");
+
+        Equal("Helpers need Grok Bot reopened by Wingman.", GrokBotReconnectPolicy.PromptText, "prompt wording");
+        Equal("Close Grok Bot's window. Wingman reopens it.", GrokBotReconnectPolicy.QuitText, "quit wording: on Windows closing the window quits Grok Bot");
+        var window = File.ReadAllText(Path.Combine(RepositoryRoot(), "src", "CodexWingman", "GrokBotPromptWindow.cs"));
+        Equal(true, window.Contains("\"Open Grok Bot\"", StringComparison.Ordinal) && window.Contains("OpenClicked", StringComparison.Ordinal),
+            "the window has the Open Grok Bot button");
+        // Grok Bot 0.78.1 has no tray icon on Windows: nothing sends the user to one.
+        foreach (var file in new[] { Path.Combine("src", "CodexWingman.Core", "GrokBotReconnectPolicy.cs"), Path.Combine("src", "CodexWingman", "GrokBotLauncher.cs"),
+                     Path.Combine("docs", "grok-bot-after-update.md"), Path.Combine("docs", "wingman-2.md") })
+        {
+            var text = File.ReadAllText(Path.Combine(RepositoryRoot(), file));
+            Equal(false, text.Contains("its tray icon", StringComparison.OrdinalIgnoreCase) || text.Contains("Quit Grok Bot", StringComparison.Ordinal)
+                || text.Contains("hides to its tray", StringComparison.OrdinalIgnoreCase) || text.Contains("hides it to the tray", StringComparison.OrdinalIgnoreCase),
+                file + " never sends the user to a Grok Bot tray icon");
+        }
+        var tray = File.ReadAllText(Path.Combine(RepositoryRoot(), "src", "CodexWingman", "TrayApplicationContext.cs"));
+        Equal(true, tray.Contains("WingmanLog.Write(\"grok-bot-reconnect-outcome\", (\"process\", prompt.Offer.ProcessId), (\"step\", step), (\"outcome\", result.Outcome));", StringComparison.Ordinal),
+            "the real outcome is logged");
+    }
+
+    private static GrokBotRelaunch.ClosedProcess QuitProof(GrokBotProcess target)
+    {
+        var control = new FakeControl(new FakeProcess(target, []) { QuitsAfter = 2 }) { Free = false };
+        var clock = DateTime.UnixEpoch;
+        var result = GrokBotRelaunch.RunAsync(target, control, Limits, () => clock, (wait, _) => { clock += wait; return Task.CompletedTask; }, default).GetAwaiter().GetResult();
+        return result.Quit ?? throw new InvalidOperationException("no proof");
+    }
+
+    private sealed class Steps(params GrokBotObservation[] observations) : IGrokBotReconnectSteps
+    {
+        public readonly List<string> Log = [];
+        private int seen;
+        public bool Adopts, IsBusy;
+        public GrokBotRelaunchKind Result = GrokBotRelaunchKind.Relaunched;
+        public GrokBotObservation Observe() => observations[Math.Min(seen++, observations.Length - 1)];
+        public bool AdoptListeningPort(int process) { Log.Add("adopt? " + process); return Adopts; }
+        public bool Busy => IsBusy;
+        public void WaitingForQuit() => Log.Add("waiting");
+        public Task<GrokBotRelaunchResult> RelaunchAfterQuitAsync(GrokBotProcess target, CancellationToken cancellationToken)
+        {
+            Log.Add("relaunch " + target.Id);
+            return Task.FromResult(new GrokBotRelaunchResult(Result));
+        }
+        public Task<GrokBotRelaunchResult> StartAsync(GrokBotRelaunch.ClosedProcess quit, CancellationToken cancellationToken)
+        {
+            Log.Add("start " + quit.Process.Id);
+            return Task.FromResult(new GrokBotRelaunchResult(Result, quit));
+        }
+    }
+
+    /// <summary>Reconnect re-checks first: gone, connected or adoptable means nothing restarts; busy keeps it.</summary>
+    private static void ReconnectRechecksBeforeActing()
+    {
+        var started = new DateTime(2026, 1, 1, 8, 59, 0, DateTimeKind.Utc);
+        var offer = new GrokBotReconnectOffer(Second, false, T0, started);
+        GrokBotReconnectOutcome Run(Steps steps) => GrokBotReconnectRun.RunAsync(offer, steps, CancellationToken.None).GetAwaiter().GetResult().Outcome;
+        var unconnected = new GrokBotObservation(Second, false, Present, started);
+
+        var gone = new Steps(new GrokBotObservation(Second, false, Present, started.AddSeconds(3)));
+        Equal(GrokBotReconnectOutcome.Gone, Run(gone), "same id, other run: gone");
+        Equal(0, gone.Log.Count, "nothing adopted, nothing relaunched");
+
+        var connected = new Steps(unconnected with { Connected = true });
+        Equal(GrokBotReconnectOutcome.AlreadyConnected, Run(connected), "connected by now");
+        Equal(0, connected.Log.Count, "nothing touched");
+
+        var adopted = new Steps(unconnected) { Adopts = true };
+        Equal(GrokBotReconnectOutcome.Adopted, Run(adopted), "a usable port is adopted");
+        Equal(true, adopted.Log is ["adopt? 200"], "no restart");
+
+        var busy = new Steps(unconnected) { IsBusy = true };
+        Equal(GrokBotReconnectOutcome.Busy, Run(busy), "busy: kept for later");
+        Equal(true, busy.Log is ["adopt? 200"], "not waiting, nothing relaunched");
+
+        var ok = new Steps(unconnected);
+        Equal(GrokBotReconnectOutcome.Relaunched, Run(ok), "relaunched");
+        Equal(true, ok.Log is ["adopt? 200", "waiting", "relaunch 200"], "asks the user to quit, then relaunches that exact process");
+
+        foreach (var kind in Enum.GetValues<GrokBotRelaunchKind>())
+            Equal(kind.ToString(), Run(new Steps(unconnected) { Result = kind }).ToString(), kind + " is reported as such");
+
+        var quit = QuitProof(offer.Target);
+        var open = new Steps(new GrokBotObservation(null, false, Present));
+        Equal(GrokBotReconnectOutcome.Relaunched, GrokBotReconnectRun.OpenAsync(quit, open, default).GetAwaiter().GetResult().Outcome, "Open Grok Bot starts it");
+        Equal(true, open.Log is ["start 200"], "without adopting or waiting for a quit");
+        var openBusy = new Steps(new GrokBotObservation(null, false, Present)) { IsBusy = true };
+        Equal(GrokBotReconnectOutcome.Busy, GrokBotReconnectRun.OpenAsync(quit, openBusy, default).GetAwaiter().GetResult().Outcome, "Open while busy: kept");
+        Equal(0, openBusy.Log.Count, "nothing started");
+
+        // The tray acts only through the run, never through the ordinary open, and has no balloon-click reconnect at all.
+        var tray = File.ReadAllText(Path.Combine(RepositoryRoot(), "src", "CodexWingman", "TrayApplicationContext.cs"));
+        var act = tray[tray.IndexOf("private async Task ActOnGrokPromptAsync(", StringComparison.Ordinal)..];
+        act = act[..act.IndexOf("\n    }\n", StringComparison.Ordinal)];
+        Equal(true, act.Contains("GrokBotReconnectRun.RunAsync(prompt.Offer,", StringComparison.Ordinal) && act.Contains("GrokBotReconnectRun.OpenAsync(quit,", StringComparison.Ordinal)
+            && !act.Contains("grokLauncher.OpenAsync", StringComparison.Ordinal) && !act.Contains("EnsureGrokBotReadyAsync", StringComparison.Ordinal), "acts only through the checked run");
+        Equal(false, tray.Contains("BalloonTipClicked", StringComparison.Ordinal) || tray.Contains("BalloonTipClosed", StringComparison.Ordinal),
+            "no balloon click or close handler");
+        Equal(true, tray.Contains("tray.ShowBalloonTip(2500);", StringComparison.Ordinal) && tray.Contains("tray.ShowBalloonTip(4000);", StringComparison.Ordinal)
+            && tray.Split("ShowBalloonTip(").Length - 1 == 3 && !tray.Contains("BalloonTipIcon", StringComparison.Ordinal), "the other balloons are as before");
+        var launcher = File.ReadAllText(Path.Combine(RepositoryRoot(), "src", "CodexWingman", "GrokBotLauncher.cs"));
+        Equal(3, launcher.Split("StartWithPort()").Length - 1, "StartWithPort: defined once, called by the ordinary open and by the relaunch's proof-gated Start only");
+        Equal(true, launcher.Contains("public void Start(GrokBotRelaunch.ClosedProcess proof) => launcher.StartWithPort();", StringComparison.Ordinal),
+            "the reconnect starts Grok Bot only with the relaunch's proof");
+        var reconnect = launcher[launcher.IndexOf("public async Task<GrokBotRelaunchResult> ReconnectAsync(", StringComparison.Ordinal)..];
+        reconnect = reconnect[..reconnect.IndexOf("    private static DateTime? StartedUtc", StringComparison.Ordinal)];
+        Equal(false, reconnect.Contains("CloseMainWindow", StringComparison.Ordinal) || reconnect.Contains("Kill", StringComparison.Ordinal),
+            "the reconnect never closes Grok Bot");
+    }
+
+    /// <summary>
+    /// The prompt window: topmost and never activated through its window styles, not Form.TopMost; placed in the working
+    /// area's corner by the notification area wherever the taskbar is.
+    /// </summary>
+    private static void PromptWindowStaysOutOfTheWay()
+    {
+        var window = File.ReadAllText(Path.Combine(RepositoryRoot(), "src", "CodexWingman", "GrokBotPromptWindow.cs"));
+        Equal(true, window.Contains("protected override bool ShowWithoutActivation => true;", StringComparison.Ordinal)
+            && window.Contains("WsExTopmost | WsExToolWindow | WsExNoActivate", StringComparison.Ordinal)
+            && window.Contains("ShowWindow(handle, SwShowNoActivate);", StringComparison.Ordinal)
+            && window.Contains("SwpNoActivate", StringComparison.Ordinal) && !window.Contains("TopMost =", StringComparison.Ordinal),
+            "the prompt window never takes focus and stays on top without Form.TopMost");
+        var tray = File.ReadAllText(Path.Combine(RepositoryRoot(), "src", "CodexWingman", "TrayApplicationContext.cs"));
+        Equal(true, tray.Contains("window.ShowWithoutFocus();", StringComparison.Ordinal) && !tray.Contains("window.Show();", StringComparison.Ordinal),
+            "shown without activation");
+
+        var size = new System.Drawing.Size(300, 100);
+        var screen = new System.Drawing.Rectangle(0, 0, 1920, 1080);
+        System.Drawing.Point At(System.Drawing.Rectangle working) => GrokBotPromptPlacement.Corner(screen, working, size, 12);
+        Equal(new System.Drawing.Point(1608, 928), At(new(0, 0, 1920, 1040)), "bottom taskbar: bottom right");
+        Equal(new System.Drawing.Point(1608, 52), At(new(0, 40, 1920, 1040)), "top taskbar: top right");
+        Equal(new System.Drawing.Point(72, 968), At(new(60, 0, 1860, 1080)), "left taskbar: bottom left");
+        Equal(new System.Drawing.Point(1548, 968), At(new(0, 0, 1860, 1080)), "right taskbar: bottom right, left of it");
+        Equal(new System.Drawing.Point(1608, 968), At(screen), "auto-hidden taskbar: bottom right");
+
+        Equal((360, 450, 540, 720, 360), (GrokBotPromptPlacement.Scaled(360, 96), GrokBotPromptPlacement.Scaled(360, 120),
+            GrokBotPromptPlacement.Scaled(360, 144), GrokBotPromptPlacement.Scaled(360, 192), GrokBotPromptPlacement.Scaled(360, 0)),
+            "the width scales with DPI: 100%, 125%, 150%, 200%, unknown");
+        Equal(true, window.Contains("message.MaximumSize = new Size(Px(MessageWidth), 0);", StringComparison.Ordinal)
+            && window.Contains("int Px(int logical) => GrokBotPromptPlacement.Scaled(logical, DeviceDpi);", StringComparison.Ordinal)
+            && window.Contains("GrokBotPromptPlacement.Scaled(ScreenGap, DeviceDpi)", StringComparison.Ordinal)
+            && !window.Contains("new Size(360, 0)", StringComparison.Ordinal), "the window uses the scaled sizes");
+        Equal(true, window.Contains("var corner = GrokBotPromptPlacement.Corner(screen.Bounds, screen.WorkingArea,", StringComparison.Ordinal)
+            && window.Contains("if (TrayScreen() is not { } screen) return;", StringComparison.Ordinal)
+            && window.Contains("var taskbar = FindWindow(\"Shell_TrayWnd\", null);\n        return taskbar != IntPtr.Zero ? Screen.FromHandle(taskbar) : Screen.PrimaryScreen;", StringComparison.Ordinal)
+            && window.Split("Screen.PrimaryScreen").Length - 1 == 1, "placed on the screen with the notification area, the primary screen only as a fallback");
+    }
+
+    /// <summary>
+    /// Grok Bot exiting with a failure code (a crash, or ended from Task Manager) isn't the user's quit: Wingman starts
+    /// nothing and the prompt says so, with Open Grok Bot for the user to choose. Only exit code 0 (the user's quit) is
+    /// followed by a start.
+    /// </summary>
+    private static void ACrashIsNotReopened()
+    {
+        var started = new DateTime(2026, 1, 1, 8, 59, 0, DateTimeKind.Utc);
+        var target = new GrokBotProcess(Second, started);
+        var clock = DateTime.UnixEpoch;
+        GrokBotRelaunchResult Run(FakeControl control) => GrokBotRelaunch.RunAsync(target, control,
+            Limits, () => clock, (wait, _) => { clock += wait; return Task.CompletedTask; }, default).GetAwaiter().GetResult();
+        var log = new List<string>();
+        foreach (var code in new int?[] { unchecked((int)0xC0000005), 1, null })
+        {
+            var crashed = new FakeControl(new FakeProcess(target, log) { QuitsAfter = 3, Code = code });
+            var result = Run(crashed);
+            Equal((GrokBotRelaunchKind.Crashed, true), (result.Kind, result.Quit?.Process == target), $"exit code {code?.ToString() ?? "unknown"}: not the user's quit");
+            Equal(true, crashed.Log is ["forward 200"], $"exit code {code?.ToString() ?? "unknown"}: nothing started");
+        }
+        var quit = new FakeControl(new FakeProcess(target, log) { QuitsAfter = 3, Code = 0 });
+        Equal(GrokBotRelaunchKind.Relaunched, Run(quit).Kind, "exit code 0, the user's quit: started");
+
+        var prompt = new GrokBotReconnectPrompt(new GrokBotReconnectOffer(Second, true, T0, started));
+        prompt.Reconnect(busy: false);
+        prompt.WaitingForQuit();
+        var crash = Run(new FakeControl(new FakeProcess(target, log) { QuitsAfter = 2, Code = 3 }));
+        prompt.Finished(GrokBotReconnectRunResult(crash));
+        Equal((GrokBotPromptState.CouldNotStart, GrokBotReconnectPolicy.CrashedText), (prompt.State, prompt.Problem), "the prompt says why");
+        Equal(true, prompt.Open(busy: false), "Open Grok Bot stays the user's choice");
+    }
+
+    /// <summary>
+    /// The update check comes before the exit code: Grok Bot's installer may end it with a failure code after the user's
+    /// quit, and that is an update (the post-update prompt handles what the installer opens), not a crash.
+    /// </summary>
+    private static void AnInstallersKillIsAnUpdateNotACrash()
+    {
+        var started = new DateTime(2026, 1, 1, 8, 59, 0, DateTimeKind.Utc);
+        var target = new GrokBotProcess(Second, started);
+        var clock = DateTime.UnixEpoch;
+        GrokBotRelaunchResult Run(FakeControl control) => GrokBotRelaunch.RunAsync(target, control,
+            Limits, () => clock, (wait, _) => { clock += wait; return Task.CompletedTask; }, default).GetAwaiter().GetResult();
+        var log = new List<string>();
+        // QuitsAfter 3: one check while it runs, then the one right after it exited.
+        var installer = new FakeControl(new FakeProcess(target, log) { QuitsAfter = 3, Code = 1 }) { InstallerAt = check => check >= 1 };
+        Equal(GrokBotRelaunchKind.UpdateRunning, Run(installer).Kind, "an installer runs as it ends with a failure code: an update");
+        Equal(true, installer.Log is ["forward 200"], "nothing started");
+        var changed = new GrokBotExecutableStamp(new DateTime(2026, 1, 2, 0, 0, 0, DateTimeKind.Utc), 200);
+        var stamp = new FakeControl(new FakeProcess(target, log) { QuitsAfter = 3, Code = unchecked((int)0xC000013A) }) { StampAt = check => check >= 2 ? changed : new(new DateTime(2026, 1, 1, 0, 0, 0, DateTimeKind.Utc), 100) };
+        Equal(GrokBotRelaunchKind.UpdateRunning, Run(stamp).Kind, "Grok Bot.exe changed as it ended: an update");
+        var gone = new FakeControl(new FakeProcess(target, log) { QuitsAfter = 3, Code = 1 }) { Missing = check => check >= 2 };
+        Equal(GrokBotRelaunchKind.UpdateRunning, Run(gone).Kind, "Grok Bot.exe unreadable as it ended: an update");
+        var crash = new FakeControl(new FakeProcess(target, log) { QuitsAfter = 3, Code = 1 });
+        Equal(GrokBotRelaunchKind.Crashed, Run(crash).Kind, "no installer and the same Grok Bot.exe: still a crash");
+    }
+
+    /// <summary>
+    /// Windows began shutting down and another app cancelled it: the reconnect isn't lost. The wait reports SessionEnding
+    /// even when the tray cancelled it for that, and the prompt stays for that process.
+    /// </summary>
+    private static void ACancelledShutdownKeepsTheReconnect()
+    {
+        var started = new DateTime(2026, 1, 1, 8, 59, 0, DateTimeKind.Utc);
+        var target = new GrokBotProcess(Second, started);
+        var clock = DateTime.UnixEpoch;
+        using var cancelled = new CancellationTokenSource();
+        cancelled.Cancel();
+        var log = new List<string>();
+        var waiting = new FakeControl(new FakeProcess(target, log) { QuitsAfter = 100 }) { EndingAt = _ => true };
+        var result = GrokBotRelaunch.RunAsync(target, waiting, Limits, () => clock, (wait, _) => Task.CompletedTask, cancelled.Token).GetAwaiter().GetResult();
+        Equal(GrokBotRelaunchKind.SessionEnding, result.Kind, "the tray cancels the wait as Windows begins to shut down: SessionEnding, not Cancelled");
+        // Windows begins to shut down while the wait sleeps, and the tray cancels that sleep.
+        foreach (var quits in new[] { 100, 2 })
+        {
+            var asleep = new FakeControl(new FakeProcess(target, log) { QuitsAfter = quits }, new FakeProcess(new GrokBotProcess(Third, started), log) { QuitsAfter = 100 }) { EndingAt = check => check >= 1 };
+            var woken = GrokBotRelaunch.RunAsync(target, asleep, Limits, () => clock, (wait, _) => Task.FromException(new OperationCanceledException()), default).GetAwaiter().GetResult();
+            Equal(GrokBotRelaunchKind.SessionEnding, woken.Kind, quits == 2 ? "a sleep cancelled for shutdown after the quit: SessionEnding" : "a sleep cancelled for shutdown: SessionEnding");
+        }
+        var plainCancel = new FakeControl(new FakeProcess(target, log) { QuitsAfter = 100 });
+        Equal(GrokBotRelaunchKind.Cancelled, GrokBotRelaunch.RunAsync(target, plainCancel, Limits, () => clock, (wait, _) => Task.CompletedTask, cancelled.Token).GetAwaiter().GetResult().Kind,
+            "Cancel pressed: Cancelled");
+
+        var before = new GrokBotReconnectPrompt(new GrokBotReconnectOffer(Second, true, T0, started));
+        before.Reconnect(busy: false);
+        before.WaitingForQuit();
+        before.Finished(GrokBotReconnectRunResult(result));
+        Equal(GrokBotPromptState.Offered, before.State, "before the quit: the prompt offers Reconnect again");
+        Equal(true, before.Reconnect(busy: false), "and Reconnect works");
+
+        var after = new GrokBotReconnectPrompt(new GrokBotReconnectOffer(Second, true, T0, started));
+        after.Reconnect(busy: false);
+        after.WaitingForQuit();
+        var quitThenEnding = new FakeControl(new FakeProcess(target, log) { QuitsAfter = 2 }) { EndingAt = check => check >= 1 };
+        var ended = GrokBotRelaunch.RunAsync(target, quitThenEnding, Limits, () => clock, (wait, _) => Task.CompletedTask, default).GetAwaiter().GetResult();
+        Equal((GrokBotRelaunchKind.SessionEnding, true), (ended.Kind, ended.Quit is not null), "after the quit: SessionEnding with the quit's proof");
+        after.Finished(GrokBotReconnectRunResult(ended));
+        Equal((GrokBotPromptState.CouldNotStart, GrokBotReconnectPolicy.SessionEndingText), (after.State, after.Problem), "after the quit: it says why");
+        Equal(true, after.Open(busy: false), "and Open Grok Bot works");
+    }
+
+    /// <summary>The installer check is awaited off the UI thread; Wingman turning busy meanwhile still stops the start.</summary>
+    private static void NothingIsAwaitedBetweenTheBusyCheckAndTheStart()
+    {
+        var started = new DateTime(2026, 1, 1, 8, 59, 0, DateTimeKind.Utc);
+        var target = new GrokBotProcess(Second, started);
+        var clock = DateTime.UnixEpoch;
+        var log = new List<string>();
+        FakeControl? control = null;
+        control = new FakeControl(new FakeProcess(target, log) { QuitsAfter = 2 }) { DuringInstallerCheck = check => { if (check >= 1) control!.Free = false; } };
+        var result = GrokBotRelaunch.RunAsync(target, control, Limits, () => clock, (wait, _) => { clock += wait; return Task.CompletedTask; }, default).GetAwaiter().GetResult();
+        Equal(GrokBotRelaunchKind.BusyTooLong, result.Kind, "Wingman turned busy during the last installer check: not started");
+        Equal(true, !control.Log.Any(line => line.StartsWith("start", StringComparison.Ordinal)), "nothing started");
+        var launcher = File.ReadAllText(Path.Combine(RepositoryRoot(), "src", "CodexWingman", "GrokBotLauncher.cs"));
+        Equal(true, launcher.Contains("public Task<bool> InstallerRunningAsync() => Task.Run(launcher.InstallerRunning);", StringComparison.Ordinal),
+            "the process listing runs on the thread pool");
+    }
+
+    /// <summary>Grok Bot.exe running its local-exec daemon script as Node is not Grok Bot's main process; the single-instance owner is preferred.</summary>
+    private static void TheMainProcessIsGrokBotItself()
+    {
+        Equal(false, GrokBotLaunchPolicy.IsMainProcess("\"C:\\Grok Bot\\Grok Bot.exe\" \"C:\\Grok Bot\\resources\\local-exec-daemon\\main.cjs\" --port 4100"), "the local-exec daemon");
+        Equal(false, GrokBotLaunchPolicy.IsMainProcess("\"C:\\Grok Bot\\Grok Bot.exe\" C:\\tools\\helper.MJS"), "any script, any case");
+        Equal(true, GrokBotLaunchPolicy.IsMainProcess("\"C:\\Grok Bot\\Grok Bot.exe\" --updated"), "Grok Bot itself");
+        Equal(true, GrokBotLaunchPolicy.IsMainProcess("\"C:\\Grok Bot\\Grok Bot.exe\" grokbot://open"), "a link it was opened with");
+        var early = new GrokBotProcess(10, new DateTime(2026, 1, 1, 8, 0, 0, DateTimeKind.Utc));
+        var owner = new GrokBotProcess(20, new DateTime(2026, 1, 1, 9, 0, 0, DateTimeKind.Utc));
+        Equal(owner, GrokBotLaunchPolicy.ChooseMainProcess([early, owner], new HashSet<int> { 20 }), "the single-instance window's owner, even if started later");
+        Equal(early, GrokBotLaunchPolicy.ChooseMainProcess([owner, early], new HashSet<int>()), "no owner known: the earliest started");
+        Equal(null, GrokBotLaunchPolicy.ChooseMainProcess([], new HashSet<int> { 20 }), "none");
+        StillRunningMeansGrokBotItself();
+    }
+
+    /// <summary>
+    /// "Still running" (the reconnect's settle check and Open window's close wait) counts Grok Bot and its own children only:
+    /// a leftover Grok Bot.exe running a script never blocks a start, unless it holds the single-instance window.
+    /// </summary>
+    private static void StillRunningMeansGrokBotItself()
+    {
+        const string daemon = "\"C:\\Grok Bot\\Grok Bot.exe\" \"C:\\Grok Bot\\resources\\local-exec-daemon\\main.cjs\"";
+        Equal(false, GrokBotLaunchPolicy.KeepsGrokBotRunning(daemon, ownsSingleInstanceWindow: false), "a detached local-exec daemon");
+        Equal(false, GrokBotLaunchPolicy.KeepsGrokBotRunning("\"C:\\Grok Bot\\Grok Bot.exe\" C:\\x\\tool.TS --flag", false), "any script");
+        Equal(true, GrokBotLaunchPolicy.KeepsGrokBotRunning(daemon, ownsSingleInstanceWindow: true), "a script holding the single-instance window: a launch would go to it");
+        Equal(true, GrokBotLaunchPolicy.KeepsGrokBotRunning("\"C:\\Grok Bot\\Grok Bot.exe\" --updated", false), "Grok Bot itself");
+        Equal(true, GrokBotLaunchPolicy.KeepsGrokBotRunning("\"C:\\Grok Bot\\Grok Bot.exe\" --type=renderer --lang=en", false), "its renderer");
+        Equal(true, GrokBotLaunchPolicy.KeepsGrokBotRunning("\"C:\\Grok Bot\\Grok Bot.exe\" --type=utility --utility-sub-type=node.mojom.NodeService", false),
+            "its utility process (how 0.78.1 runs the daemon): ends with Grok Bot");
+        Equal(true, GrokBotLaunchPolicy.KeepsGrokBotRunning("\"C:\\Grok Bot\\Grok Bot.exe\" --type=utility x.cjs", false), "a --type= child with a script still counts");
+        Equal(true, GrokBotLaunchPolicy.KeepsGrokBotRunning("\"C:\\Grok Bot\\Grok Bot.exe\" -- x.cjs", false), "after -- it's a plain argument");
+        Equal(true, GrokBotLaunchPolicy.KeepsGrokBotRunning(null, false), "unreadable: counts, so nothing starts on a guess");
+        var launcher = File.ReadAllText(Path.Combine(RepositoryRoot(), "src", "CodexWingman", "GrokBotLauncher.cs"));
+        Equal(true, launcher.Contains("public bool AnyRunning() => launcher.StillRunning();", StringComparison.Ordinal)
+            && launcher.Contains("while (StillRunning())", StringComparison.Ordinal) && !launcher.Contains("IsRunning()", StringComparison.Ordinal),
+            "the reconnect and Open window both use StillRunning");
+
+        // Open window and Repair use the reconnect's installer guard before any start.
+        var stamp = new GrokBotExecutableStamp(new DateTime(2026, 1, 1, 0, 0, 0, DateTimeKind.Utc), 100);
+        Equal(false, GrokBotRelaunch.UpdateUnderWay(false, stamp, stamp), "no installer, same Grok Bot.exe");
+        Equal(true, GrokBotRelaunch.UpdateUnderWay(true, stamp, stamp), "an installer runs");
+        Equal(true, GrokBotRelaunch.UpdateUnderWay(false, null, stamp), "Grok Bot.exe missing");
+        Equal(true, GrokBotRelaunch.UpdateUnderWay(false, stamp with { Length = 101 }, stamp), "Grok Bot.exe changed");
+        var open = launcher[launcher.IndexOf("public async Task<bool> OpenAsync", StringComparison.Ordinal)..launcher.IndexOf("private async Task ThrowIfUpdateUnderWayAsync", StringComparison.Ordinal)];
+        Equal(true, open.Contains("await ThrowIfUpdateUnderWayAsync(stamp);\n        StartWithPort();", StringComparison.Ordinal)
+            && open.Split("ThrowIfUpdateUnderWayAsync(stamp)").Length == 3 && open.Split("StartWithPort()").Length == 2,
+            "Open window checks before asking and right before its only start");
+
+        // Start times come straight from GetProcessTimes in UTC; image paths of any length.
+        Equal(true, launcher.Contains("DateTime.FromFileTimeUtc(created)", StringComparison.Ordinal) && !launcher.Contains(".StartTime", StringComparison.Ordinal)
+            && !launcher.Contains("FromFileTime(", StringComparison.Ordinal), "start times via FromFileTimeUtc");
+        var calls = new List<int>();
+        Equal("C:\\long", Win32TextBuffer.Read(260, size => { calls.Add(size); return size < 2000 ? (null, true) : ("C:\\long", false); }), "grows until it fits");
+        Equal(true, calls is [260, 520, 1040, 2080], "doubling");
+        calls.Clear();
+        Equal(null, Win32TextBuffer.Read(260, size => { calls.Add(size); return calls.Count < 20 ? (null, true) : throw new InvalidOperationException("never stops growing"); }), "gives up at the limit");
+        Equal(8, calls.Count, "260 to 32768 in eight reads");
+        Equal(Win32TextBuffer.MaxChars, calls[^1], "up to 32768 characters");
+        Equal(null, Win32TextBuffer.Read(260, _ => (null, false)), "any other failure: null at once");
+        var info = File.ReadAllText(Path.Combine(RepositoryRoot(), "src", "CodexWingman", "WindowProcessInfo.cs"));
+        Equal(true, info.Contains("Win32TextBuffer.Read(", StringComparison.Ordinal) && !launcher.Contains("QueryFullProcessImageName", StringComparison.Ordinal),
+            "one image-path reader, with the growing buffer");
+    }
+
+    private static GrokBotReconnectResult GrokBotReconnectRunResult(GrokBotRelaunchResult result) => new(result.Kind switch
+    {
+        GrokBotRelaunchKind.Crashed => GrokBotReconnectOutcome.Crashed,
+        GrokBotRelaunchKind.SessionEnding => GrokBotReconnectOutcome.SessionEnding,
+        _ => throw new InvalidOperationException(result.Kind.ToString()),
+    }, result.Quit);
+
+    /// <summary>While Windows shuts down or signs out, Wingman never starts Grok Bot: not during the quit wait, nor after it.</summary>
+    private static void NothingStartsWhileWindowsShutsDown()
+    {
+        var started = new DateTime(2026, 1, 1, 8, 59, 0, DateTimeKind.Utc);
+        var target = new GrokBotProcess(Second, started);
+        var clock = DateTime.UnixEpoch;
+        GrokBotRelaunchResult Run(FakeControl control) => GrokBotRelaunch.RunAsync(target, control,
+            Limits, () => clock, (wait, _) => { clock += wait; return Task.CompletedTask; }, default).GetAwaiter().GetResult();
+        var log = new List<string>();
+        var duringWait = new FakeControl(new FakeProcess(target, log) { QuitsAfter = 100 }) { EndingAt = check => check >= 5 };
+        Equal(GrokBotRelaunchKind.SessionEnding, Run(duringWait).Kind, "during the 10-minute wait");
+        Equal(true, duringWait.Log is ["forward 200"], "nothing started");
+        // Grok Bot quits cleanly (exit code 0) as Windows shuts down: still nothing starts.
+        var helper = new FakeProcess(new GrokBotProcess(Third, started), log) { QuitsAfter = 6 };
+        var afterQuit = new FakeControl(new FakeProcess(target, log) { QuitsAfter = 2 }, helper) { EndingAt = check => check >= 2 };
+        Equal(GrokBotRelaunchKind.SessionEnding, Run(afterQuit).Kind, "after the quit, while its other processes exit");
+        Equal(true, !afterQuit.Log.Any(line => line.StartsWith("start", StringComparison.Ordinal)), "nothing started");
+        var busy = new FakeControl(new FakeProcess(target, log) { QuitsAfter = 2 }) { Free = false, EndingAt = check => check >= 2 };
+        Equal(GrokBotRelaunchKind.SessionEnding, Run(busy).Kind, "while Wingman is busy");
+        // Quit at once, nothing else running, Wingman free: the only check is the last one before the start.
+        var last = new FakeControl(new FakeProcess(target, log) { QuitsAfter = 2 }) { EndingAt = check => check == 0 };
+        Equal(GrokBotRelaunchKind.SessionEnding, Run(last).Kind, "at the final check before the start");
+        Equal(true, !last.Log.Any(line => line.StartsWith("start", StringComparison.Ordinal)), "nothing started");
+        var open = GrokBotRelaunch.StartWhenClearAsync(Run(new FakeControl(new FakeProcess(target, log) { QuitsAfter = 2, Code = 5 })).Quit!, null,
+            new FakeControl() { EndingAt = _ => true }, Limits, () => clock, (wait, _) => Task.CompletedTask, default).GetAwaiter().GetResult();
+        Equal(GrokBotRelaunchKind.SessionEnding, open.Kind, "Open Grok Bot too");
+
+        var tray = File.ReadAllText(Path.Combine(RepositoryRoot(), "src", "CodexWingman", "TrayApplicationContext.cs"));
+        Equal(true, tray.Contains("Microsoft.Win32.SystemEvents.SessionEnding += OnSessionEnding;", StringComparison.Ordinal)
+            && tray.Contains("Microsoft.Win32.SystemEvents.SessionEnding -= OnSessionEnding;", StringComparison.Ordinal)
+            && tray.Contains("        sessionEnding = true;\n", StringComparison.Ordinal)
+            && tray.Contains("tray.grokLauncher.ReconnectAsync(target, () => !Busy, () => tray.sessionEnding, cancellationToken)", StringComparison.Ordinal)
+            && tray.Contains("tray.grokLauncher.StartAfterQuitAsync(quit, () => !Busy, () => tray.sessionEnding, cancellationToken)", StringComparison.Ordinal),
+            "the tray tells the relaunch when Windows is shutting down or signing out");
+        var launcher = File.ReadAllText(Path.Combine(RepositoryRoot(), "src", "CodexWingman", "GrokBotLauncher.cs"));
+        Equal(true, launcher.Contains("public bool SessionEnding() => sessionEnding();", StringComparison.Ordinal)
+            && launcher.Contains("public int? ExitCode => HasExited && GetExitCodeProcess(handle, out var code) ? unchecked((int)code) : null;", StringComparison.Ordinal),
+            "the launcher passes it on and reads the real exit code from its process handle");
+    }
+
+    /// <summary>The prompt is closed from its own click handlers: hidden at once, disposed after the handler returns.</summary>
+    private static void ThePromptClosesAfterItsOwnClick()
+    {
+        var tray = File.ReadAllText(Path.Combine(RepositoryRoot(), "src", "CodexWingman", "TrayApplicationContext.cs"));
+        var close = tray[tray.IndexOf("private void CloseGrokPrompt(bool now = false)", StringComparison.Ordinal)..];
+        close = close[..close.IndexOf("\n    }\n", StringComparison.Ordinal)];
+        Equal(true, close.Contains("window.Hide();\n        window.BeginInvoke(window.Dispose);", StringComparison.Ordinal)
+            && close.Contains("if (now || !window.IsHandleCreated) { window.Dispose(); return; }", StringComparison.Ordinal)
+            && !tray.Contains("window?.Dispose();", StringComparison.Ordinal)
+            && tray.Contains("CloseGrokPrompt(now: true);", StringComparison.Ordinal) && tray.Split("now: true").Length - 1 == 1,
+            "disposed later (BeginInvoke), except in Wingman's own Dispose");
+    }
+
+    /// <summary>grok-runtime.json is read and written under one lock, by the shortcut thread and the UI thread alike.</summary>
+    private static void TheRuntimeFileHasOneWriterAtATime()
+    {
+        var launcher = File.ReadAllText(Path.Combine(RepositoryRoot(), "src", "CodexWingman", "GrokBotLauncher.cs"));
+        var reserve = launcher[launcher.IndexOf("public int ReservePortForShortcut()", StringComparison.Ordinal)..];
+        reserve = reserve[..reserve.IndexOf("\n    }\n", StringComparison.Ordinal)];
+        var record = launcher[launcher.IndexOf("public bool RecordPort(int port)", StringComparison.Ordinal)..];
+        record = record[..record.IndexOf("\n    }\n", StringComparison.Ordinal)];
+        Equal(true, reserve.Contains("lock (runtimeFile)", StringComparison.Ordinal) && record.Contains("lock (runtimeFile)", StringComparison.Ordinal)
+            && launcher.Contains("lock (runtimeFile) StartWithPortLocked();", StringComparison.Ordinal)
+            && launcher.Split("AppRuntimePortFile.Write(").Length - 1 == 3 && launcher.Split("lock (runtimeFile)").Length - 1 == 3,
+            "every write is under the lock");
+        var tray = File.ReadAllText(Path.Combine(RepositoryRoot(), "src", "CodexWingman", "TrayApplicationContext.cs"));
+        Equal(true, !tray.Contains("AppRuntimePortFile.Write(grokLauncher.RuntimePath", StringComparison.Ordinal)
+            && tray.Contains("if (grokLauncher.RecordPort(port)) WingmanLog.Write(\"grok-bot-port-adopted\"", StringComparison.Ordinal),
+            "adoption records the port through the launcher's lock");
+        Equal(true, !launcher.Contains("using System.Net.NetworkInformation;", StringComparison.Ordinal)
+            && !launcher.Contains("how long its helper processes may take to exit.</summary>\n    private static readonly HttpClient", StringComparison.Ordinal),
+            "no unused using or stray doc comment");
+    }
+
+    /// <summary>
+    /// Codex bring-forward, Open window and Host Action opens keep the old behaviour: SW_RESTORE every time, no flash. Only
+    /// the Grok Bot reconnect keeps the window's size (restores only a minimized one) and flashes when refused the foreground.
+    /// </summary>
+    private static void BringingForwardKeepsTheWindowAsItIs()
+    {
+        static int? Show(bool minimized, bool keepSize) => CodexWingman.Core.Helpers.WindowsForegroundActivator.ShowCommandBeforeActivating(minimized, keepSize);
+        Equal((int?)9, Show(minimized: true, keepSize: false), "old path, minimized: restored");
+        Equal((int?)9, Show(minimized: false, keepSize: false), "old path, maximized or normal: SW_RESTORE as before");
+        Equal((int?)9, Show(minimized: true, keepSize: true), "reconnect, minimized: restored");
+        Equal((int?)null, Show(minimized: false, keepSize: true), "reconnect, maximized or normal: left as it is");
+        var activator = File.ReadAllText(Path.Combine(RepositoryRoot(), "src", "CodexWingman.Core", "Helpers", "WindowsForegroundActivator.cs"));
+        var activate = activator[activator.IndexOf("private static bool Activate(IntPtr handle, bool keepSize)", StringComparison.Ordinal)..];
+        activate = activate[..activate.IndexOf("\n    }\n", StringComparison.Ordinal)];
+        Equal(true, activate.Split("ShowWindowAsync(").Length - 1 == 1
+            && activate.Contains("if (ShowCommandBeforeActivating(keepSize && IsIconic(handle), keepSize) is { } command) _ = ShowWindowAsync(handle, command);", StringComparison.Ordinal),
+            "the only show call goes through ShowCommandBeforeActivating");
+        Equal(true, activator.Contains("public static bool ActivateWindow(IntPtr handle) => Activate(handle, keepSize: false);", StringComparison.Ordinal)
+            && activator.Contains("public static bool BringForwardKeepingSize(IntPtr handle) => Activate(handle, keepSize: true);", StringComparison.Ordinal)
+            && activator.Contains("if (keepSize) Flash(handle);", StringComparison.Ordinal) && activator.Split("Flash(handle)").Length - 1 == 1
+            && activator.Contains("FlashWindowEx(ref info)", StringComparison.Ordinal), "ActivateWindow is the old always-restore, never-flash path");
+        var process = activator[activator.IndexOf("public static Task<bool> ActivateProcessAsync(", StringComparison.Ordinal)..];
+        process = process[..process.IndexOf("\n    }\n", StringComparison.Ordinal)];
+        Equal(true, process.Contains("            ActivateWindow,\n", StringComparison.Ordinal) && !process.Contains("KeepingSize", StringComparison.Ordinal),
+            "Host Action opens (ActivateProcessAsync, 20 tries): old path, always restore, never flash");
+        var hostActions = File.ReadAllText(Path.Combine(RepositoryRoot(), "src", "CodexWingman.Core", "Helpers", "HostActions.cs"));
+        Equal(true, hostActions.Contains("WindowsForegroundActivator.ActivateProcessAsync(process, cancellationToken)", StringComparison.Ordinal)
+            && !hostActions.Contains("KeepingSize", StringComparison.Ordinal), "HostActions uses the old path");
+        var codex = File.ReadAllText(Path.Combine(RepositoryRoot(), "src", "CodexWingman", "CodexLauncher.cs"));
+        Equal(true, codex.Contains("WindowsForegroundActivator.ActivateWindow(windows[0])", StringComparison.Ordinal) && !codex.Contains("KeepingSize", StringComparison.Ordinal),
+            "Codex bring-forward: old path, always restore, never flash");
+        var source = Path.Combine(RepositoryRoot(), "src");
+        var flashing = Directory.EnumerateFiles(source, "*.cs", SearchOption.AllDirectories)
+            .Where(file => !file.Contains($"{Path.DirectorySeparatorChar}obj{Path.DirectorySeparatorChar}", StringComparison.Ordinal))
+            .Sum(file => File.ReadAllText(file).Split("WindowsForegroundActivator.BringForwardKeepingSize(").Length - 1);
+        var launcher = File.ReadAllText(Path.Combine(RepositoryRoot(), "src", "CodexWingman", "GrokBotLauncher.cs"));
+        var bring = launcher[launcher.IndexOf("private sealed class ProcessHandle : IGrokBotProcessHandle", StringComparison.Ordinal)..];
+        bring = bring[..bring.IndexOf("\n    }\n", StringComparison.Ordinal)];
+        Equal((1, true), (flashing, bring.Contains("WindowsForegroundActivator.BringForwardKeepingSize(window)", StringComparison.Ordinal)), "the one keep-size, flashing caller is the reconnect's bring-forward");
+        var open = launcher[launcher.IndexOf("public async Task<bool> OpenAsync(", StringComparison.Ordinal)..];
+        open = open[..open.IndexOf("\n    }\n", StringComparison.Ordinal)];
+        Equal(true, open.Contains("WindowsForegroundActivator.ActivateWindow(window)", StringComparison.Ordinal), "Open window: old path, as before");
+        Equal(false, launcher.Contains("ShowWindowAsync", StringComparison.Ordinal) || launcher.Contains("SW_RESTORE", StringComparison.Ordinal),
+            "Grok Bot's launcher brings windows forward only through the shared activator");
+    }
+
+    /// <summary>
+    /// The quit wait holds its own process handle (SYNCHRONIZE) from the snapshot until the exit and waits on it, so Windows
+    /// can't give the id to another process meanwhile, and the start time comes from that same handle.
+    /// </summary>
+    private static void TheQuitWaitHoldsTheProcessItself()
+    {
+        var launcher = File.ReadAllText(Path.Combine(RepositoryRoot(), "src", "CodexWingman", "GrokBotLauncher.cs"));
+        var handle = launcher[launcher.IndexOf("private sealed class ProcessHandle : IGrokBotProcessHandle", StringComparison.Ordinal)..];
+        handle = handle[..handle.IndexOf("\n    }\n", StringComparison.Ordinal)];
+        Equal(true, handle.Contains("private readonly SafeProcessHandle handle;", StringComparison.Ordinal)
+            && handle.Contains("OpenProcessHandle(Synchronize | ProcessQueryLimitedInformation, false, processId)", StringComparison.Ordinal)
+            && handle.Contains("public bool HasExited => WaitForSingleObject(handle, 0) == WaitObject0;", StringComparison.Ordinal)
+            && handle.Contains("new GrokBotProcess(processId, StartedUtc(handle))", StringComparison.Ordinal)
+            && launcher.Contains("GetProcessTimes(handle, out var created", StringComparison.Ordinal)
+            && handle.Contains("public void Dispose() => handle.Dispose();", StringComparison.Ordinal),
+            "a real process handle, opened at the snapshot, waited on, released at the end");
+        Equal(false, handle.Contains("process.HasExited", StringComparison.Ordinal) || handle.Contains("Process process)", StringComparison.Ordinal),
+            "never a Process object's id-based exit check");
+        Equal(true, launcher.Contains("private const uint Synchronize = 0x00100000;", StringComparison.Ordinal)
+            && launcher.Contains("private const uint ProcessQueryLimitedInformation = 0x1000;", StringComparison.Ordinal)
+            && launcher.Contains("[DllImport(\"kernel32.dll\", EntryPoint = \"OpenProcess\", SetLastError = true)]\n    private static extern SafeProcessHandle OpenProcessHandle(", StringComparison.Ordinal),
+            "SYNCHRONIZE | QUERY_LIMITED_INFORMATION, into a SafeHandle");
+        Equal(true, launcher.Contains("running.Select(process => ProcessHandle.Open(process.Id))", StringComparison.Ordinal)
+            && launcher.Contains("finally { foreach (var process in running) process.Dispose(); }", StringComparison.Ordinal), "the snapshot opens one handle per process");
+        var policy = File.ReadAllText(Path.Combine(RepositoryRoot(), "src", "CodexWingman.Core", "GrokBotReconnectPolicy.cs"));
+        Equal(true, policy.Contains("held by an open process handle (SYNCHRONIZE) from the snapshot until it exits", StringComparison.Ordinal),
+            "the doc promises what the code does");
+    }
+
+    /// <summary>An open prompt keeps checking its process after Grok Bot is uninstalled, so it closes when that process exits.</summary>
+    private static void ThePromptFollowsItsProcessAfterAnUninstall()
+    {
+        var tray = File.ReadAllText(Path.Combine(RepositoryRoot(), "src", "CodexWingman", "TrayApplicationContext.cs"));
+        var tick = tray[tray.IndexOf("private void GrokBotReconnectTick()", StringComparison.Ordinal)..];
+        tick = tick[..tick.IndexOf("\n    }\n", StringComparison.Ordinal)];
+        var observe = tick.IndexOf("prompt.Observe(observation,", StringComparison.Ordinal);
+        Equal(true, tick.Contains("var installed = grokLauncher.IsInstalled();\n        if (!installed && grokPrompt is null) return;", StringComparison.Ordinal)
+            && tick.Split("IsInstalled()").Length - 1 == 1 && tick.IndexOf("if (!installed && grokPrompt is null) return;", StringComparison.Ordinal) < observe,
+            "not installed: stops only when no prompt is open");
+        Equal(true, observe > 0 && tick.IndexOf("if (!installed || busy || grokPromptWait is not null) return;", StringComparison.Ordinal) > observe,
+            "nothing new is offered or adopted while it isn't installed, after the prompt's check");
+        // And the prompt then closes when its process exits.
+        var started = new DateTime(2026, 1, 1, 8, 59, 0, DateTimeKind.Utc);
+        var prompt = new GrokBotReconnectPrompt(new GrokBotReconnectOffer(Second, true, T0, started));
+        prompt.Observe(new GrokBotObservation(null, false, Present), busy: false);
+        Equal((GrokBotPromptState.Closed, "gone"), (prompt.State, prompt.ClosedBecause), "its process exited: closed");
+    }
+
+    /// <summary>
+    /// The user opens Grok Bot again while Wingman waits to start it: Wingman starts nothing and closes the prompt quietly
+    /// (no "still closing"); the new run's own prompt takes over.
+    /// </summary>
+    private static void AReopenDuringTheWaitStartsNothing()
+    {
+        var started = new DateTime(2026, 1, 1, 8, 59, 0, DateTimeKind.Utc);
+        var target = new GrokBotProcess(Second, started);
+        var reopened = new GrokBotProcess(Third, started.AddMinutes(2));
+        var clock = DateTime.UnixEpoch;
+        GrokBotRelaunchResult Run(FakeControl control) => GrokBotRelaunch.RunAsync(target, control,
+            Limits, () => clock, (wait, _) => { clock += wait; return Task.CompletedTask; }, default).GetAwaiter().GetResult();
+        var log = new List<string>();
+
+        var mine = new FakeProcess(reopened, log);
+        var during = new FakeControl(new FakeProcess(target, log) { QuitsAfter = 2 }, mine) { Main = _ => reopened };
+        var before = clock;
+        Equal(GrokBotRelaunchKind.Reopened, Run(during).Kind, "reopened by the user right after the quit: not started");
+        Equal(true, clock - before < TimeSpan.FromSeconds(5) && during.Log is ["forward 200"], "noticed at once, nothing started");
+
+        var whileBusy = new FakeControl(new FakeProcess(target, log) { QuitsAfter = 2 }) { Free = false, Main = check => check < 3 ? null : reopened };
+        Equal(GrokBotRelaunchKind.Reopened, Run(whileBusy).Kind, "reopened while Wingman was busy: not started");
+        Equal(true, whileBusy.Log is ["forward 200"], "never started");
+
+        var lastMoment = new FakeControl(new FakeProcess(target, log) { QuitsAfter = 2 }) { Main = _ => reopened };
+        Equal(GrokBotRelaunchKind.Reopened, Run(lastMoment).Kind, "reopened just before the start: not started");
+        Equal(true, lastMoment.Log is ["forward 200"], "never started");
+
+        var ownQuitOnly = new FakeControl(new FakeProcess(target, log) { QuitsAfter = 2 }) { Main = _ => null };
+        Equal(GrokBotRelaunchKind.Relaunched, Run(ownQuitOnly).Kind, "nobody reopened it: started as before");
+
+        var prompt = new GrokBotReconnectPrompt(new GrokBotReconnectOffer(Second, true, T0, started));
+        prompt.Reconnect(busy: false);
+        prompt.WaitingForQuit();
+        prompt.Finished(new(GrokBotReconnectOutcome.Reopened));
+        Equal(GrokBotPromptState.Closed, prompt.State, "the prompt closes quietly");
+        Equal(null, prompt.Problem, "with no 'still closing' text");
+    }
+
+    /// <summary>No prompt over a full-screen app, game or presentation: it waits until that's over, like the idle gate.</summary>
+    private static void NoPromptOverAFullScreenApp()
+    {
+        Equal(true, GrokBotReconnectPolicy.FullScreen(2) && GrokBotReconnectPolicy.FullScreen(3) && GrokBotReconnectPolicy.FullScreen(4) && GrokBotReconnectPolicy.FullScreen(7),
+            "busy, full-screen Direct3D, presentation mode, a full-screen Store app");
+        Equal(false, GrokBotReconnectPolicy.FullScreen(5) || GrokBotReconnectPolicy.FullScreen(1) || GrokBotReconnectPolicy.FullScreen(6),
+            "accepting notifications, not present, quiet time: shown as usual");
+        var policy = new GrokBotReconnectPolicy();
+        var facts = new Facts();
+        GrokBotReconnectOffer? At(double seconds, int? pid, bool connected, bool fullScreen) =>
+            policy.Observe(new(pid, connected, Present, FullScreen: fullScreen), T0.AddSeconds(seconds), facts);
+        At(0, First, true, false);
+        At(2, null, false, false);
+        Equal(true, At(10, Second, false, true) is null && At(300, Second, false, true) is null, "full screen: waits");
+        Equal(true, At(302, Second, false, false) is not null, "then shown once it's over");
+        var tray = File.ReadAllText(Path.Combine(RepositoryRoot(), "src", "CodexWingman", "TrayApplicationContext.cs"));
+        Equal(true, tray.Contains("GrokBotLauncher.FullScreenInFront());", StringComparison.Ordinal), "the tray observes it");
+    }
+
+    private sealed class FakeProcess(GrokBotProcess identity, List<string> log) : IGrokBotProcessHandle
+    {
+        public GrokBotProcess Identity => identity;
+        public bool Exited;
+        /// <summary>How many checks until the user quits it; null: never.</summary>
+        public int? QuitsAfter;
+        public bool HasExited
+        {
+            get
+            {
+                if (QuitsAfter is { } left) QuitsAfter = left - 1;
+                if (QuitsAfter <= 0) { Exited = true; QuitsAfter = null; }
+                return Exited;
+            }
+        }
+        /// <summary>Its exit code once exited: 0 is the user's quit from Grok Bot's tray; null: Windows can't say.</summary>
+        public int? Code = 0;
+        public int? ExitCode => Exited ? Code : null;
+        public void Dispose() => log.Add("dispose " + identity.Id);
+    }
+
+    private sealed class FakeControl(params FakeProcess[] processes) : IGrokBotProcessControl
+    {
+        public readonly List<string> Log = [];
+        public int Snapshots;
+        public bool Free = true;
+        /// <summary>Checks before Wingman is free again (0: free); counted only while <see cref="Free"/> is false.</summary>
+        public int FreeAfter = -1;
+        public Func<int, bool>? InstallerAt;
+        /// <summary>Grok Bot's main process now (null: none), by check.</summary>
+        public Func<int, GrokBotProcess?>? Main;
+        private int mainChecks;
+        public GrokBotExecutableStamp? Stamp = new(new DateTime(2026, 1, 1, 0, 0, 0, DateTimeKind.Utc), 100);
+        public Func<int, GrokBotExecutableStamp?>? StampAt;
+        public Func<int, bool>? Missing;
+        private int installerChecks, stampChecks;
+        public IReadOnlyList<IGrokBotProcessHandle> Snapshot() { Snapshots++; return processes; }
+        public void BringForward(IGrokBotProcessHandle process) => Log.Add("forward " + process.Identity.Id);
+        public bool AnyRunning() => processes.Any(process => !process.Exited);
+        public bool MayStart()
+        {
+            if (!Free && FreeAfter >= 0 && FreeAfter-- == 0) Free = true;
+            return Free;
+        }
+        public GrokBotExecutableStamp? ExecutableStamp()
+        {
+            var check = stampChecks++;
+            if (Missing?.Invoke(check) == true) return null;
+            return StampAt is null ? Stamp : StampAt(check);
+        }
+        /// <summary>Runs while the installer check is awaited, as other tray work could.</summary>
+        public Action<int>? DuringInstallerCheck;
+        public Task<bool> InstallerRunningAsync()
+        {
+            var check = installerChecks++;
+            DuringInstallerCheck?.Invoke(check);
+            return Task.FromResult(InstallerAt?.Invoke(check) ?? false);
+        }
+        /// <summary>Windows shutting down or signing out, by check.</summary>
+        public Func<int, bool>? EndingAt;
+        private int endingChecks;
+        public bool SessionEnding() => EndingAt?.Invoke(endingChecks++) ?? false;
+        public GrokBotProcess? MainProcess() => Main?.Invoke(mainChecks++);
+        public void Start(GrokBotRelaunch.ClosedProcess proof) => Log.Add("start after " + proof.Process.Id);
+    }
+
+    private static readonly GrokBotRelaunchLimits Limits = GrokBotRelaunchLimits.Default;
+
+    /// <summary>
+    /// The relaunch never closes Grok Bot: it brings the offer's exact process forward, waits up to 10 minutes for the user
+    /// to quit it, then waits (bounded) for other Grok Bot processes and for Wingman to be free before starting it.
+    /// </summary>
+    private static void RelaunchWaitsForTheUsersQuit()
+    {
+        var started = new DateTime(2026, 1, 1, 8, 59, 0, DateTimeKind.Utc);
+        var target = new GrokBotProcess(Second, started);
+        var clock = DateTime.UnixEpoch;
+        GrokBotRelaunchKind Run(FakeControl control, CancellationToken token = default) => GrokBotRelaunch.RunAsync(target, control,
+            Limits, () => clock, (wait, _) => { clock += wait; return Task.CompletedTask; }, token).GetAwaiter().GetResult().Kind;
+
+        Equal((TimeSpan.FromMinutes(10), TimeSpan.FromSeconds(20), TimeSpan.FromSeconds(60)), (Limits.Quit, Limits.Settle, Limits.Busy), "the limits");
+        var shared = new List<string>();
+        var ok = new FakeControl(new FakeProcess(target, shared) { QuitsAfter = 590 }); // 9 min 50 s later
+        Equal(GrokBotRelaunchKind.Relaunched, Run(ok), "quit by the user within the limit: started");
+        Equal(true, ok.Log is ["forward 200", "start after 200"] && ok.Snapshots == 1, "brought forward, then started once, from one snapshot");
+
+        var reused = new FakeControl(new FakeProcess(new GrokBotProcess(Second, started.AddMinutes(1)), shared) { QuitsAfter = 1 });
+        Equal(GrokBotRelaunchKind.Gone, Run(reused), "same id, another start time: not the offer's process");
+        Equal(0, reused.Log.Count, "nothing brought forward, nothing started");
+
+        Equal(GrokBotRelaunchKind.Gone, Run(new FakeControl()), "not running: gone");
+        var bystander = new FakeControl(new FakeProcess(new GrokBotProcess(Third, started), shared));
+        Equal(GrokBotRelaunchKind.Gone, Run(bystander), "only another Grok Bot: gone");
+        Equal(0, bystander.Log.Count, "the other one is never touched");
+
+        var racing = new FakeControl(new FakeProcess(target, shared) { QuitsAfter = 1 });
+        Equal(GrokBotRelaunchKind.Gone, Run(racing), "exited between the snapshot and the check: gone");
+        Equal(0, racing.Log.Count, "nothing started");
+
+        using var cancel = new CancellationTokenSource();
+        var cancelled = new FakeControl(new FakeProcess(target, shared));
+        var waiting = GrokBotRelaunch.RunAsync(target, cancelled, Limits, () => clock,
+            async (wait, token) => { await Task.Yield(); token.ThrowIfCancellationRequested(); }, cancel.Token);
+        cancel.Cancel();
+        Equal(GrokBotRelaunchKind.Cancelled, waiting.GetAwaiter().GetResult().Kind, "Cancel while waiting");
+        Equal(true, cancelled.Log is ["forward 200"], "nothing started");
+
+        shared.Clear();
+        Run(new FakeControl(new FakeProcess(target, shared) { QuitsAfter = 2 }, new FakeProcess(new GrokBotProcess(Third, started), shared)));
+        Equal("dispose 200,dispose 300", string.Join(',', shared), "every handle from the snapshot is released");
+    }
+
+    /// <summary>After the quit Wingman waits, bounded, for helper processes and for itself to be free; it never gives up silently.</summary>
+    private static void AfterTheQuitWingmanWaitsThenSaysSo()
+    {
+        var started = new DateTime(2026, 1, 1, 8, 59, 0, DateTimeKind.Utc);
+        var target = new GrokBotProcess(Second, started);
+        var clock = DateTime.UnixEpoch;
+        GrokBotRelaunchResult Run(FakeControl control) => GrokBotRelaunch.RunAsync(target, control,
+            Limits, () => clock, (wait, _) => { clock += wait; return Task.CompletedTask; }, default).GetAwaiter().GetResult();
+        var log = new List<string>();
+
+        var helper = new FakeProcess(new GrokBotProcess(Third, started), log);
+        var helpers = new FakeControl(new FakeProcess(target, log) { QuitsAfter = 2 }, helper);
+        var exitsLater = GrokBotRelaunch.RunAsync(target, helpers, Limits, () => clock,
+            (wait, _) => { clock += wait; if (clock - DateTime.UnixEpoch > TimeSpan.FromSeconds(10)) helper.Exited = true; return Task.CompletedTask; }, default);
+        Equal(GrokBotRelaunchKind.Relaunched, exitsLater.GetAwaiter().GetResult().Kind, "a helper process exits a few seconds after the quit: waits, then starts");
+
+        var lingering = new FakeControl(new FakeProcess(target, log) { QuitsAfter = 2 }, new FakeProcess(new GrokBotProcess(Third, started), log));
+        var before = clock;
+        var stuck = Run(lingering);
+        Equal((GrokBotRelaunchKind.StillRunning, true), (stuck.Kind, stuck.Quit is not null), "a Grok Bot process still running at the limit: not started, with the proof for Open Grok Bot");
+        Equal(true, clock - before >= Limits.Settle && clock - before < Limits.Settle + TimeSpan.FromSeconds(5), "waited for it, about 20 s");
+        Equal(true, lingering.Log is ["forward 200"], "and never started");
+
+        var busyThenFree = new FakeControl(new FakeProcess(target, log) { QuitsAfter = 2 }) { Free = false, FreeAfter = 30 };
+        Equal(GrokBotRelaunchKind.Relaunched, Run(busyThenFree).Kind, "Wingman busy for 30 s after the quit: waits, then starts");
+
+        var busy = new FakeControl(new FakeProcess(target, log) { QuitsAfter = 2 }) { Free = false };
+        before = clock;
+        var tooLong = Run(busy);
+        Equal((GrokBotRelaunchKind.BusyTooLong, true), (tooLong.Kind, tooLong.Quit is not null), "busy past 60 s: not started, with the proof");
+        Equal(true, clock - before >= Limits.Busy && clock - before < Limits.Busy + TimeSpan.FromSeconds(5), "waited about 60 s");
+        Equal(true, busy.Log is ["forward 200"], "and never started");
+
+        var opened = new FakeControl();
+        Equal(GrokBotRelaunchKind.Relaunched, GrokBotRelaunch.StartWhenClearAsync(tooLong.Quit!, opened.ExecutableStamp(), opened, Limits, () => clock,
+            (wait, _) => { clock += wait; return Task.CompletedTask; }, default).GetAwaiter().GetResult().Kind, "Open Grok Bot then starts it");
+        Equal(true, opened.Log is ["start after 200"], "with the same proof");
+    }
+
+    /// <summary>
+    /// Wingman never starts Grok Bot while its installer or uninstaller runs, or once Grok Bot.exe changed: the wait ends and
+    /// the post-update prompt handles the Grok Bot the installer opens. No quit within 10 minutes: back to the offer.
+    /// </summary>
+    private static void NeverStartsDuringAnUpdate()
+    {
+        var started = new DateTime(2026, 1, 1, 8, 59, 0, DateTimeKind.Utc);
+        var target = new GrokBotProcess(Second, started);
+        var clock = DateTime.UnixEpoch;
+        GrokBotRelaunchKind Run(FakeControl control) => GrokBotRelaunch.RunAsync(target, control,
+            Limits, () => clock, (wait, _) => { clock += wait; return Task.CompletedTask; }, default).GetAwaiter().GetResult().Kind;
+        var log = new List<string>();
+
+        var never = new FakeControl(new FakeProcess(target, log));
+        var before = clock;
+        Equal(GrokBotRelaunchKind.QuitTimedOut, Run(never), "no quit in 10 minutes: the wait ends");
+        Equal(true, clock - before >= Limits.Quit && clock - before < Limits.Quit + TimeSpan.FromSeconds(5), "after 10 minutes");
+        Equal(true, never.Log is ["forward 200"], "nothing started");
+
+        var installerWhileWaiting = new FakeControl(new FakeProcess(target, log)) { InstallerAt = check => check >= 5 };
+        Equal(GrokBotRelaunchKind.UpdateRunning, Run(installerWhileWaiting), "an installer runs while waiting for the quit: the wait ends");
+        Equal(true, installerWhileWaiting.Log is ["forward 200"], "never started");
+
+        // Checks: one while waiting for the quit, then after it.
+        var installerAtQuit = new FakeControl(new FakeProcess(target, log) { QuitsAfter = 3 }) { InstallerAt = check => check >= 1 };
+        Equal(GrokBotRelaunchKind.UpdateRunning, Run(installerAtQuit), "Grok Bot quit into its staged installer: not started");
+        Equal(true, installerAtQuit.Log is ["forward 200"], "never started");
+
+        var installerAfter = new FakeControl(new FakeProcess(target, log) { QuitsAfter = 2 }, new FakeProcess(new GrokBotProcess(Third, started), log) { QuitsAfter = 5 })
+            { InstallerAt = check => check >= 2 };
+        Equal(GrokBotRelaunchKind.UpdateRunning, Run(installerAfter), "an installer starts while helpers exit: not started");
+        Equal(true, installerAfter.Log is ["forward 200"], "never started");
+
+        var installerWhileBusy = new FakeControl(new FakeProcess(target, log) { QuitsAfter = 2 }) { Free = false, InstallerAt = check => check >= 3 };
+        Equal(GrokBotRelaunchKind.UpdateRunning, Run(installerWhileBusy), "an installer starts while Wingman is busy: not started");
+
+        // Quit at once: the only check is the one just before the start.
+        var lastMoment = new FakeControl(new FakeProcess(target, log) { QuitsAfter = 2 }) { InstallerAt = check => check >= 0 };
+        Equal(GrokBotRelaunchKind.UpdateRunning, Run(lastMoment), "an installer just before the start: not started");
+        Equal(true, lastMoment.Log is ["forward 200"], "never started");
+
+        var replaced = new GrokBotExecutableStamp(new DateTime(2026, 1, 2, 0, 0, 0, DateTimeKind.Utc), 120);
+        var exeChanged = new FakeControl(new FakeProcess(target, log) { QuitsAfter = 3 });
+        exeChanged.StampAt = check => check >= 2 ? replaced : exeChanged.Stamp;
+        Equal(GrokBotRelaunchKind.UpdateRunning, Run(exeChanged), "Grok Bot.exe changed since the wait began: not started");
+        Equal(true, exeChanged.Log is ["forward 200"], "never started");
+        var exeMissing = new FakeControl(new FakeProcess(target, log) { QuitsAfter = 3 }) { Missing = check => check >= 2 };
+        Equal(GrokBotRelaunchKind.UpdateRunning, Run(exeMissing), "Grok Bot.exe gone (being replaced): not started");
+        var exeUnreadable = new FakeControl(new FakeProcess(target, log) { QuitsAfter = 3 }) { Missing = _ => true };
+        Equal(GrokBotRelaunchKind.UpdateRunning, Run(exeUnreadable), "Grok Bot.exe unreadable throughout: never started");
+
+        const string Grok = @"C:\Users\a\AppData\Local\Programs\Grok Bot\Grok Bot.exe";
+        Equal(true, GrokBotInstallers.IsInstaller(@"C:\Users\a\AppData\Local\Temp\sand-update-x1\sand-update-0.79.0-x64.exe", Grok), "the staged update installer");
+        Equal(true, GrokBotInstallers.IsInstaller(@"C:\Users\a\AppData\Local\Programs\Grok Bot\Uninstall Grok Bot.exe", Grok), "the uninstaller");
+        Equal(true, GrokBotInstallers.IsInstaller(@"C:\Users\a\AppData\Local\Temp\~nsuA.tmp\Un_A.exe", Grok), "the uninstaller's running copy");
+        Equal(false, GrokBotInstallers.IsInstaller(Grok, Grok), "Grok Bot itself");
+        Equal(false, GrokBotInstallers.IsInstaller(@"C:\Users\a\AppData\Local\Programs\Grok Bot\resources\elevate.exe", Grok), "a subfolder");
+        Equal(false, GrokBotInstallers.IsInstaller(@"C:\Program Files\Other\Uninstall Other.exe", Grok), "another app's uninstaller");
+        Equal(false, GrokBotInstallers.IsInstaller(null, Grok), "unreadable");
+    }
+
+    private static string RepositoryRoot()
+    {
+        for (var folder = new DirectoryInfo(AppContext.BaseDirectory); folder is not null; folder = folder.Parent)
+            if (File.Exists(Path.Combine(folder.FullName, "src", "CodexWingman", "CodexWingman.csproj"))) return folder.FullName;
+        throw new DirectoryNotFoundException("Repository root not found.");
     }
 
     private static void CommandLineSplitting()

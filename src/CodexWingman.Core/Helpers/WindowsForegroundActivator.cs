@@ -53,10 +53,24 @@ public static class WindowsForegroundActivator
         return false;
     }
 
-    /// <summary>Restores a minimized window and brings it to the front.</summary>
-    public static bool ActivateWindow(IntPtr handle)
+    /// <summary>
+    /// The show command before activating: SW_RESTORE always, as before (it also un-maximizes a maximized window), unless
+    /// <paramref name="keepSize"/>, which restores only a minimized window.
+    /// </summary>
+    public static int? ShowCommandBeforeActivating(bool minimized, bool keepSize) => !keepSize || minimized ? RestoreWindow : null;
+
+    /// <summary>Restores the window (SW_RESTORE) and brings it to the front. Codex, Open window and Host Action opens use this.</summary>
+    public static bool ActivateWindow(IntPtr handle) => Activate(handle, keepSize: false);
+
+    /// <summary>
+    /// The Grok Bot reconnect only: brings the window forward keeping its size (a minimized window is restored, a maximized
+    /// one stays maximized), and when Windows refuses the foreground the taskbar button flashes until the user looks.
+    /// </summary>
+    public static bool BringForwardKeepingSize(IntPtr handle) => Activate(handle, keepSize: true);
+
+    private static bool Activate(IntPtr handle, bool keepSize)
     {
-        _ = ShowWindowAsync(handle, RestoreWindow);
+        if (ShowCommandBeforeActivating(keepSize && IsIconic(handle), keepSize) is { } command) _ = ShowWindowAsync(handle, command);
         var currentThread = GetCurrentThreadId();
         var foregroundWindow = GetForegroundWindow();
         var foregroundThread = foregroundWindow == IntPtr.Zero
@@ -76,14 +90,46 @@ public static class WindowsForegroundActivator
             _ = BringWindowToTop(handle);
             _ = SetForegroundWindow(handle);
             _ = SetFocus(handle);
-            return GetForegroundWindow() == handle;
         }
         finally
         {
             if (targetAttached) _ = AttachThreadInput(currentThread, targetThread, false);
             if (foregroundAttached) _ = AttachThreadInput(currentThread, foregroundThread, false);
         }
+        if (GetForegroundWindow() == handle) return true;
+        if (keepSize) Flash(handle);
+        return false;
     }
+
+    private static void Flash(IntPtr handle)
+    {
+        var info = new FlashInfo
+        {
+            Size = (uint)Marshal.SizeOf<FlashInfo>(),
+            Window = handle,
+            Flags = FlashTray | FlashUntilForeground,
+        };
+        _ = FlashWindowEx(ref info);
+    }
+
+    private const uint FlashTray = 0x00000002;
+    private const uint FlashUntilForeground = 0x0000000C;
+
+    [StructLayout(LayoutKind.Sequential)]
+    private struct FlashInfo
+    {
+        public uint Size;
+        public IntPtr Window;
+        public uint Flags;
+        public uint Count;
+        public uint Timeout;
+    }
+
+    [DllImport("user32.dll")]
+    private static extern bool FlashWindowEx(ref FlashInfo info);
+
+    [DllImport("user32.dll")]
+    private static extern bool IsIconic(IntPtr handle);
 
     [DllImport("kernel32.dll")]
     private static extern uint GetCurrentThreadId();
