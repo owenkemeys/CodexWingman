@@ -11,7 +11,7 @@ namespace CodexWingman;
 /// so its sign-in is untouched. Wingman never edits Grok Bot files, never kills it, and never calls
 /// its servers; a relaunch is always asked first.
 /// </summary>
-internal sealed class GrokBotLauncher(string wingmanDataRoot, Func<IEnumerable<int>> reservedPorts)
+internal sealed class GrokBotLauncher(string wingmanDataRoot, Func<IEnumerable<int>> reservedPorts) : IGrokBotFacts
 {
     private static readonly TimeSpan EndpointTimeout = TimeSpan.FromSeconds(45);
     private static readonly TimeSpan CloseTimeout = TimeSpan.FromSeconds(20);
@@ -33,6 +33,85 @@ internal sealed class GrokBotLauncher(string wingmanDataRoot, Func<IEnumerable<i
         catch (HttpRequestException) { return []; }
         catch (TaskCanceledException) when (!cancellationToken.IsCancellationRequested) { return []; }
     }
+
+    /// <summary>The Grok Bot process that owns a window (null when none): one Grok Bot run, for the reconnect prompt.</summary>
+    public int? WindowProcessId()
+    {
+        var processes = Running();
+        try { return processes.Where(process => SafeMainWindow(process) != IntPtr.Zero).Select(process => (int?)process.Id).Min(); }
+        finally { foreach (var process in processes) process.Dispose(); }
+    }
+
+    /// <summary>How long since the last keyboard or mouse input on this session (zero when Windows can't say).</summary>
+    public static TimeSpan UserIdle()
+    {
+        var info = new LastInputInfo { Size = (uint)Marshal.SizeOf<LastInputInfo>() };
+        if (!GetLastInputInfo(ref info)) return TimeSpan.Zero;
+        return TimeSpan.FromMilliseconds(unchecked((uint)Environment.TickCount - info.Time));
+    }
+
+    [StructLayout(LayoutKind.Sequential)]
+    private struct LastInputInfo
+    {
+        public uint Size;
+        public uint Time;
+    }
+
+    [DllImport("user32.dll")]
+    private static extern bool GetLastInputInfo(ref LastInputInfo info);
+
+    /// <summary>Grok Bot.exe's file version (null when unreadable); a change proves Grok Bot updated.</summary>
+    public string? ExecutableVersion()
+    {
+        try { return File.Exists(Executable) ? FileVersionInfo.GetVersionInfo(Executable).FileVersion : null; }
+        catch (Exception error) when (error is IOException or UnauthorizedAccessException) { return null; }
+    }
+
+    /// <summary>
+    /// A process's command line (null when Windows won't say), read with limited query rights only; used to see whether
+    /// Grok Bot's installer started it with --updated. Reads; never writes to or signals the process.
+    /// </summary>
+    public string? CommandLine(int processId)
+    {
+        const uint QueryLimitedInformation = 0x1000;
+        const int ProcessCommandLineInformation = 60;
+        const int InfoLengthMismatch = unchecked((int)0xC0000004), BufferTooSmall = unchecked((int)0xC0000023);
+        var handle = OpenProcess(QueryLimitedInformation, false, processId);
+        if (handle == IntPtr.Zero) return null;
+        try
+        {
+            var size = 2048;
+            for (var attempt = 0; attempt < 4; attempt++)
+            {
+                var buffer = Marshal.AllocHGlobal(size);
+                try
+                {
+                    var status = NtQueryInformationProcess(handle, ProcessCommandLineInformation, buffer, size, out var needed);
+                    if (status == 0)
+                    {
+                        // UNICODE_STRING: ushort Length (bytes), ushort MaximumLength, then the pointer at pointer alignment.
+                        var length = (ushort)Marshal.ReadInt16(buffer);
+                        var text = Marshal.ReadIntPtr(buffer, IntPtr.Size);
+                        return text == IntPtr.Zero ? string.Empty : Marshal.PtrToStringUni(text, length / 2);
+                    }
+                    if (status is not (InfoLengthMismatch or BufferTooSmall)) return null;
+                    size = Math.Max(needed, size * 2);
+                }
+                finally { Marshal.FreeHGlobal(buffer); }
+            }
+            return null;
+        }
+        finally { CloseHandle(handle); }
+    }
+
+    [DllImport("kernel32.dll", SetLastError = true)]
+    private static extern IntPtr OpenProcess(uint access, bool inheritHandle, int processId);
+
+    [DllImport("kernel32.dll")]
+    private static extern bool CloseHandle(IntPtr handle);
+
+    [DllImport("ntdll.dll")]
+    private static extern int NtQueryInformationProcess(IntPtr process, int informationClass, IntPtr information, int length, out int returnLength);
 
     public int OpenWindowCount()
     {
