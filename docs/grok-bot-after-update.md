@@ -52,9 +52,9 @@ Grok Bot 0.78.1 starts its installer while it is still shutting down, for up to 
 
 ## Connecting to a Grok Bot that already has a port
 
-Always on. When Grok Bot runs unconnected with a debugging port on `127.0.0.1`, Wingman records the port in `grok-runtime.json` and connects to it, with no prompt and no restart. It checks at startup, when you choose Grok Bot in Wingman's menu, and every 2 seconds while Grok Bot is unconnected.
+There is no setting for this. When Grok Bot runs unconnected with a debugging port on `127.0.0.1`, Wingman records the port in `grok-runtime.json` and connects to it, with no prompt and no restart. It always checks at startup and when you choose Grok Bot in Wingman's menu. It also checks every 2 seconds while Grok Bot is unconnected, but only once Grok Bot is set up in Wingman.
 
-The 2-second check (this one, and the one that shows the reconnect prompt) runs only once Grok Bot is set up in Wingman: a Grok Bot port is recorded, because Wingman opened Grok Bot or connected to its port before, or the Start menu option below is on. Being installed isn't enough. A Grok Bot that Wingman has never had stays unwatched until Wingman starts or you choose Grok Bot in its menu.
+Set up means a Grok Bot port is recorded, because Wingman opened Grok Bot or connected to its port before, or the Start menu option below is on. That holds for both 2-second checks: this one and the one that shows the reconnect prompt. Being installed isn't enough. A Grok Bot that Wingman has never had stays unwatched until Wingman starts or you choose Grok Bot in its menu.
 
 - The port must be listening on `127.0.0.1` and belong to that Grok Bot process. Grok Bot counts as connected on the same terms.
 - Any other address (`0.0.0.0`, `localhost`, `::1`) and the ports Wingman keeps for Codex and T3 Code are never used.
