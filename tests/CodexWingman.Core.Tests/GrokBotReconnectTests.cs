@@ -1409,6 +1409,18 @@ internal static class GrokBotReconnectTests
         Equal(true, launcher.Contains("Executable, () => CommandLine(id),", StringComparison.Ordinal)
             && launcher.Contains("() => ParentProcessId(id) is { } parent ? WindowProcessInfo.ImagePathOf((uint)parent) : null", StringComparison.Ordinal),
             "the installer check gives an uninstaller copy's command line and parent");
+        // Only these names are asked about; the docs and the class comment say exactly that.
+        var mayBe = launcher[launcher.IndexOf("private static bool MayBeInstaller(", StringComparison.Ordinal)..];
+        mayBe = mayBe[..mayBe.IndexOf(";\n", StringComparison.Ordinal)];
+        Equal(4, new[] { "StartsWith(\"sand-update-\"", "StartsWith(\"Uninstall\"", "Equals(\"Un_A\"", "Equals(\"Au_\"" }.Count(name => mayBe.Contains(name, StringComparison.Ordinal)),
+            "the launcher asks about sand-update-…, Uninstall…, Un_A and Au_");
+        Equal(4, mayBe.Split("StringComparison.OrdinalIgnoreCase").Length - 1, "and nothing else");
+        var installerDocs = File.ReadAllText(Path.Combine(RepositoryRoot(), "docs", "grok-bot-after-update.md"));
+        var policySource = File.ReadAllText(Path.Combine(RepositoryRoot(), "src", "CodexWingman.Core", "GrokBotReconnectPolicy.cs"));
+        Equal(true, installerDocs.Contains("Wingman looks only at programs named `sand-update-…`, `Uninstall…`, `Un_A` or `Au_`", StringComparison.Ordinal)
+            && policySource.Contains("Wingman asks only about programs named <c>sand-update-…</c>, <c>Uninstall…</c>, <c>Un_A</c> or <c>Au_</c>", StringComparison.Ordinal)
+            && !installerDocs.Contains("any other program in Grok Bot's install folder", StringComparison.Ordinal)
+            && !policySource.Contains("Any program in the install folder", StringComparison.Ordinal), "docs and comment match the names checked");
         Equal(false, GrokBotInstallers.IsInstaller(Grok, Grok), "Grok Bot itself");
         Equal(false, GrokBotInstallers.IsInstaller(@"C:\Users\a\AppData\Local\Programs\Grok Bot\resources\elevate.exe", Grok), "a subfolder");
         Equal(false, GrokBotInstallers.IsInstaller(@"C:\Program Files\Other\Uninstall Other.exe", Grok), "another app's uninstaller");

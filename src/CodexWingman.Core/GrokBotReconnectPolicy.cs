@@ -758,9 +758,12 @@ public static class GrokBotRelaunch
 /// <summary>
 /// Grok Bot's installers, recognised by their program file. On Windows Grok Bot stages its update as
 /// <c>%TEMP%\sand-update-…\sand-update-&lt;version&gt;-….exe</c> and runs it when Grok Bot quits (<c>--updated /S</c>).
-/// Any program in the install folder other than Grok Bot.exe counts, such as its uninstaller. An NSIS uninstaller runs
-/// from a <c>%TEMP%\~nsu….tmp</c> copy (<c>Un_A.exe</c> or <c>Au_.exe</c>), and every NSIS app's does, so such a copy counts
-/// only when it is Grok Bot's: its <c>_?=</c> argument names Grok Bot's install folder, or its parent runs from there.
+/// Wingman asks only about programs named <c>sand-update-…</c>, <c>Uninstall…</c>, <c>Un_A</c> or <c>Au_</c>
+/// (GrokBotLauncher.MayBeInstaller); no other program is checked, also not in the install folder. Of those: a
+/// <c>sand-update-…</c> program counts wherever it runs; one running from Grok Bot's install folder counts (such as
+/// <c>Uninstall Grok Bot.exe</c>). An NSIS uninstaller runs from a <c>%TEMP%\~nsu….tmp</c> copy (<c>Un_A.exe</c> or
+/// <c>Au_.exe</c>), and every NSIS app's does, so such a copy counts only when it is Grok Bot's: its <c>_?=</c> argument
+/// names Grok Bot's install folder, or its parent runs from there. Anywhere else nothing counts.
 /// </summary>
 public static class GrokBotInstallers
 {
