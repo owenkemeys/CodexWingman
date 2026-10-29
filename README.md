@@ -4,7 +4,7 @@
 
 ## Not yet released
 
-- **Grok Bot after an update.** When Grok Bot updates itself and comes back without Wingman's connection, Wingman shows a small prompt window. Wingman never closes Grok Bot: after **Reconnect**, you quit Grok Bot and Wingman opens it again connected. A Grok Bot already running with a usable debugging port is connected to without a restart. Optionally (development builds only, off by default, with a backup), Wingman's port can be added to the arguments of Grok Bot's Start menu shortcut, whose target stays Grok Bot. See [Grok Bot after an update](docs/grok-bot-after-update.md).
+- **Grok Bot after an update.** When Grok Bot updates itself and comes back without Wingman's connection, Wingman shows a small prompt window. The reconnect never closes Grok Bot: after **Reconnect**, you close Grok Bot's window and Wingman opens it again connected, also after an update that your close starts. A Grok Bot already running with a usable debugging port is connected to without a restart. Optionally (development builds only, off by default, with a backup), Wingman's port can be added to the arguments of Grok Bot's Start menu shortcut, whose target stays Grok Bot. See [Grok Bot after an update](docs/grok-bot-after-update.md).
 
 ## New in 2.1.1
 
