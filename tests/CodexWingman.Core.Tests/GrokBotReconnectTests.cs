@@ -696,9 +696,16 @@ internal static class GrokBotReconnectTests
         Equal(true, GrokBotRelaunch.UpdateUnderWay(false, null, stamp), "Grok Bot.exe missing");
         Equal(true, GrokBotRelaunch.UpdateUnderWay(false, stamp with { Length = 101 }, stamp), "Grok Bot.exe changed");
         var open = launcher[launcher.IndexOf("public async Task<bool> OpenAsync", StringComparison.Ordinal)..launcher.IndexOf("private async Task ThrowIfUpdateUnderWayAsync", StringComparison.Ordinal)];
-        Equal(true, open.Contains("await ThrowIfUpdateUnderWayAsync(stamp);\n        StartWithPort();", StringComparison.Ordinal)
-            && open.Split("ThrowIfUpdateUnderWayAsync(stamp)").Length == 3 && open.Split("StartWithPort()").Length == 2,
-            "Open window checks before asking and right before its only start");
+        Equal(true, open.Split("ThrowIfUpdateUnderWayAsync(stamp)").Length == 2
+            && open.IndexOf("ThrowIfUpdateUnderWayAsync(stamp)", StringComparison.Ordinal) < open.IndexOf("confirmRelaunch()", StringComparison.Ordinal)
+            && open.Split("StartWithPort()").Length == 2, "Open window checks before asking, and starts in one place");
+        // Its approved close may start the update: then it waits for the update and reopens Grok Bot, as after Reconnect.
+        var afterClose = open[open.IndexOf("while (StillRunning())", StringComparison.Ordinal)..];
+        Equal(true, afterClose.Contains("if (GrokBotRelaunch.UpdateUnderWay(await Task.Run(InstallerRunning), ExecutableStamp(), stamp))", StringComparison.Ordinal)
+            && afterClose.Contains("GrokBotRelaunch.AfterApprovedCloseAsync(closed,", StringComparison.Ordinal)
+            && afterClose.IndexOf("AfterApprovedCloseAsync", StringComparison.Ordinal) < afterClose.IndexOf("StartWithPort()", StringComparison.Ordinal)
+            && afterClose.Contains("if (result.Kind != GrokBotRelaunchKind.Relaunched)", StringComparison.Ordinal),
+            "an update the close starts is waited for, then Grok Bot reopens; nothing else starts it then");
 
         // Start times come straight from GetProcessTimes in UTC; image paths of any length.
         Equal(true, launcher.Contains("DateTime.FromFileTimeUtc(created)", StringComparison.Ordinal) && !launcher.Contains(".StartTime", StringComparison.Ordinal)
@@ -1097,7 +1104,8 @@ internal static class GrokBotReconnectTests
     }
 
     /// <summary>
-    /// Open Grok Bot after Reconnect without the quit's proof: never a start while that exact process runs (up to 30 s, then nothing), never during an update.
+    /// Open Grok Bot after Reconnect without the quit's proof, and Open window or Repair after an approved close that started
+    /// an update: never a start while that exact process runs (up to 30 s, then nothing), never during an update.
     /// </summary>
     private static void OpenWithoutTheQuitsProofIsStillGuarded()
     {
@@ -1106,6 +1114,8 @@ internal static class GrokBotReconnectTests
         var clock = DateTime.UnixEpoch;
         Task Delay(TimeSpan wait, CancellationToken _) { clock += wait; return Task.CompletedTask; }
         GrokBotRelaunchResult Open(FakeControl control) => GrokBotRelaunch.OpenAfterPressAsync(target, control, Limits, () => clock, Delay, default).GetAwaiter().GetResult();
+        GrokBotRelaunchResult AfterClose(FakeControl control, GrokBotProcess? closed) =>
+            GrokBotRelaunch.AfterApprovedCloseAsync(closed, control, Limits, () => clock, Delay, default).GetAwaiter().GetResult();
 
         var gone = new FakeControl();
         Equal((GrokBotRelaunchKind.Relaunched, true), (Open(gone).Kind, gone.Log is ["start after 200"]), "its process is gone: started");
@@ -1126,6 +1136,17 @@ internal static class GrokBotReconnectTests
         var other = new FakeControl(new FakeProcess(new GrokBotProcess(Third, started), []));
         Equal((GrokBotRelaunchKind.StillRunning, 0), (Open(other).Kind, other.Log.Count), "another Grok Bot still runs: nothing started");
 
+        // Open window or Repair: the approved close started an update; Grok Bot is reopened once it has finished.
+        var afterUpdate = new FakeControl { InstallerAt = check => check < 4 };
+        Equal((GrokBotRelaunchKind.Relaunched, true), (AfterClose(afterUpdate, target).Kind, afterUpdate.Log is ["start after 200"]), "reopened after the update");
+        var noMain = new FakeControl { InstallerAt = check => check < 2 };
+        Equal(GrokBotRelaunchKind.Relaunched, AfterClose(noMain, null).Kind, "only leftover processes were closed: reopened after the update too");
+        var notClosed = new FakeControl(new FakeProcess(target, [])) { InstallerAt = _ => false };
+        Equal((GrokBotRelaunchKind.ExitTooLong, 0), (AfterClose(notClosed, target).Kind, notClosed.Log.Count), "the closed process still runs: nothing started");
+        var tooLong = new FakeControl { InstallerAt = _ => true };
+        Equal((GrokBotRelaunchKind.UpdateTooLong, 0), (AfterClose(tooLong, target).Kind, tooLong.Log.Count), "update too long: nothing started");
+        Equal(GrokBotReconnectPolicy.UpdateTooLongText, GrokBotReconnectPrompt.ProblemAfterQuit(GrokBotReconnectRun.OutcomeOf(GrokBotRelaunchKind.UpdateTooLong)),
+            "and Open window says why");
     }
 
     /// <summary>

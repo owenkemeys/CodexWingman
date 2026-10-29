@@ -669,6 +669,26 @@ public static class GrokBotRelaunch
     }
 
     /// <summary>
+    /// Open window or Repair closed Grok Bot after the user's Yes, and that close started its update: the same wait as for
+    /// Reconnect (<see cref="AfterUpdateAsync"/>), so Grok Bot is reopened after the update. <paramref name="closed"/> is
+    /// the main process that was asked to close (null: only leftover processes ran); nothing starts while the snapshot
+    /// still holds it.
+    /// </summary>
+    public static async Task<GrokBotRelaunchResult> AfterApprovedCloseAsync(GrokBotProcess? closed, IGrokBotProcessControl control, GrokBotRelaunchLimits limits,
+        Func<DateTime> now, Func<TimeSpan, CancellationToken, Task> delay, CancellationToken cancellationToken)
+    {
+        var target = closed ?? new GrokBotProcess(0, null);
+        var snapshot = control.Snapshot();
+        try
+        {
+            if (snapshot.FirstOrDefault(process => process.Identity == target) is { } handle
+                && await ExitAsync(handle, control, limits, now, delay, cancellationToken) is { } notClosed) return notClosed;
+        }
+        finally { foreach (var process in snapshot) process.Dispose(); }
+        return await AfterUpdateAsync(new ClosedProcess(target), control, limits, now, delay, cancellationToken);
+    }
+
+    /// <summary>
     /// The user's quit started a Grok Bot update. Waits up to <c>Update</c> for it to finish: no Grok Bot installer runs and
     /// Grok Bot.exe is present and unchanged for <c>Stable</c>. Then opens Grok Bot with the port through
     /// <see cref="StartWhenClearAsync"/>, with the same guards; an installer that starts again meanwhile goes back to waiting.

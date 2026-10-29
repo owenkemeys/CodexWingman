@@ -240,7 +240,9 @@ internal sealed class GrokBotLauncher(string wingmanDataRoot, Func<IEnumerable<i
     /// Already hooked: bring Grok Bot forward. Not running: start it with the debugging port.
     /// Running without the port: ask, close it gracefully, and start it again with the same user data.
     /// </summary>
-    public async Task<bool> OpenAsync(Func<bool> confirmRelaunch, CancellationToken cancellationToken)
+    /// If that close starts Grok Bot's update, Wingman waits for the update and then opens Grok Bot, as after Reconnect
+    /// (<see cref="GrokBotRelaunch.AfterApprovedCloseAsync"/>); <paramref name="updating"/> is called as the wait starts.
+    public async Task<bool> OpenAsync(Func<bool> confirmRelaunch, CancellationToken cancellationToken, Action? updating = null, Func<bool>? sessionEnding = null)
     {
         if (!IsInstalled()) throw new FileNotFoundException("Grok Bot is not installed in its usual folder.");
         var stamp = ExecutableStamp();
@@ -251,6 +253,7 @@ internal sealed class GrokBotLauncher(string wingmanDataRoot, Func<IEnumerable<i
             return true;
         }
         await ThrowIfUpdateUnderWayAsync(stamp);
+        var closed = MainProcess();
         var running = Running();
         try
         {
@@ -275,8 +278,21 @@ internal sealed class GrokBotLauncher(string wingmanDataRoot, Func<IEnumerable<i
                 throw new TimeoutException("Grok Bot did not close, so Wingman left it running. Close it yourself, then choose Open window in the Grok Bot menu again.");
             await Task.Delay(250, cancellationToken);
         }
-        // Closing Grok Bot may start its staged update: the reconnect's installer guard, with nothing awaited after it.
-        await ThrowIfUpdateUnderWayAsync(stamp);
+        // Closing Grok Bot may start its staged update. The user said Yes to closing and reopening it, so Wingman waits
+        // for the update and opens it after, with the reconnect's checks.
+        if (GrokBotRelaunch.UpdateUnderWay(await Task.Run(InstallerRunning), ExecutableStamp(), stamp))
+        {
+            WingmanLog.Write("grok-bot-open-update-after-close");
+            updating?.Invoke();
+            var result = await GrokBotRelaunch.AfterApprovedCloseAsync(closed, new ProcessControl(this, () => true, sessionEnding ?? (() => false)),
+                GrokBotRelaunchLimits.Default, () => DateTime.UtcNow, (wait, token) => Task.Delay(wait, token), cancellationToken);
+            WingmanLog.Write("grok-bot-open-after-update", ("result", result.Kind));
+            cancellationToken.ThrowIfCancellationRequested();
+            if (result.Kind != GrokBotRelaunchKind.Relaunched)
+                throw new InvalidOperationException(GrokBotReconnectPrompt.ProblemAfterQuit(GrokBotReconnectRun.OutcomeOf(result.Kind)));
+            await WaitForWindowAsync(cancellationToken);
+            return true;
+        }
         StartWithPort();
         await WaitForWindowAsync(cancellationToken);
         return true;
