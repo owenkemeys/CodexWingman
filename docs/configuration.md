@@ -82,5 +82,5 @@ T3 web needs the https address of your T3 server and, for automatic sign-in and 
 
 `t3Web.chromePath` overrides Chrome discovery. `t3Web.pairing.label` overrides the session label (default `Wingman T3 web (<PC name>)`). Only https addresses are accepted. Without a pairing folder, T3 web still opens; sign in inside its window with a pairing link from your T3 server, and repeat that when the 30-day session ends. Wingman's T3 web Chrome data stays in `%LOCALAPPDATA%\CodexWingman\t3-web\chrome-data` and its pairing record in `t3-web\pairing.json` (expiry only, no credential).
 
-Grok Bot needs no settings. Wingman uses the standard install (`%LOCALAPPDATA%\Programs\Grok Bot\Grok Bot.exe`) and reads only its local weekly-usage cache under `%APPDATA%\Grok Bot\sand-client-persistence`.
+Grok Bot needs no settings. Wingman uses the standard install (`%LOCALAPPDATA%\Programs\Grok Bot\Grok Bot.exe`) and reads only its local weekly-usage cache under `%APPDATA%\Grok Bot\sand-client-persistence`. It records Grok Bot's debugging port in `%LOCALAPPDATA%\CodexWingman\grok-runtime.json`. The optional Start menu shortcut setting is `%LOCALAPPDATA%\CodexWingman\grok-bot-start-link.json` (missing means off); see [Grok Bot after an update](grok-bot-after-update.md).
 
