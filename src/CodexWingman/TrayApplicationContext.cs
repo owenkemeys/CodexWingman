@@ -1264,8 +1264,8 @@ internal sealed class TrayApplicationContext : ApplicationContext
         GrokBotReconnectResult result;
         try
         {
-            result = step == GrokBotPromptStep.Open && prompt.Quit is { } quit
-                ? await GrokBotReconnectRun.OpenAsync(quit, steps, wait.Token)
+            result = step == GrokBotPromptStep.Open
+                ? await GrokBotReconnectRun.OpenAsync(prompt.Offer.Target, prompt.Quit, steps, wait.Token)
                 : await GrokBotReconnectRun.RunAsync(prompt.Offer, steps, wait.Token);
         }
         catch (Exception error)
@@ -1319,6 +1319,8 @@ internal sealed class TrayApplicationContext : ApplicationContext
             prompt.Updating(quit);
             if (ReferenceEquals(tray.grokPrompt, prompt)) tray.SyncGrokPromptWindow();
         }
+        public Task<GrokBotRelaunchResult> OpenAfterPressAsync(GrokBotProcess target, CancellationToken cancellationToken) =>
+            tray.grokLauncher.OpenAfterPressAsync(target, () => !Busy, () => tray.sessionEnding, cancellationToken);
         public Task<GrokBotRelaunchResult> AfterUpdateAsync(GrokBotRelaunch.ClosedProcess quit, CancellationToken cancellationToken) =>
             tray.grokLauncher.AfterUpdateAsync(quit, () => !Busy, () => tray.sessionEnding, cancellationToken);
     }

@@ -83,7 +83,8 @@ internal sealed class GrokBotPromptWindow : Form
     public void Render(GrokBotReconnectPrompt prompt)
     {
         Text = prompt.Offer.Title;
-        openMode = prompt.Quit is not null;
+        // The primary button is Open Grok Bot only where it shows it, with or without the quit's proof.
+        openMode = prompt.State == GrokBotPromptState.CouldNotStart;
         switch (prompt.State)
         {
             case GrokBotPromptState.WaitingForQuit:
@@ -104,7 +105,7 @@ internal sealed class GrokBotPromptWindow : Form
                 secondary.Text = "Not now";
                 break;
             default:
-                message.Text = openMode ? prompt.Problem ?? GrokBotReconnectPolicy.QuitText : GrokBotReconnectPolicy.PromptText;
+                message.Text = prompt.Problem ?? (prompt.Quit is not null ? GrokBotReconnectPolicy.QuitText : GrokBotReconnectPolicy.PromptText);
                 primary.Visible = true;
                 primary.Enabled = prompt.State == GrokBotPromptState.Offered;
                 primary.Text = prompt.State == GrokBotPromptState.Offered ? "Reconnect" : "Working…";

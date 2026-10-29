@@ -323,6 +323,17 @@ internal sealed class GrokBotLauncher(string wingmanDataRoot, Func<IEnumerable<i
     /// <see cref="GrokBotRelaunch.AfterUpdateAsync"/>). Grok Bot.exe may be missing while the installer replaces it, so
     /// this doesn't require it to be installed up front; the start's own guards do.
     /// </summary>
+    /// <summary>Open Grok Bot after Reconnect without the quit's proof (<see cref="GrokBotRelaunch.OpenAfterPressAsync"/>).</summary>
+    public async Task<GrokBotRelaunchResult> OpenAfterPressAsync(GrokBotProcess target, Func<bool> mayStart, Func<bool> sessionEnding, CancellationToken cancellationToken)
+    {
+        if (!IsInstalled()) throw new FileNotFoundException("Grok Bot is not installed in its usual folder.");
+        var control = new ProcessControl(this, mayStart, sessionEnding);
+        var result = await GrokBotRelaunch.OpenAfterPressAsync(target, control, GrokBotRelaunchLimits.Default,
+            () => DateTime.UtcNow, (wait, token) => Task.Delay(wait, token), cancellationToken);
+        WingmanLog.Write("grok-bot-reconnect-open-after-press", ("process", target.Id), ("result", result.Kind));
+        return result;
+    }
+
     public async Task<GrokBotRelaunchResult> AfterUpdateAsync(GrokBotRelaunch.ClosedProcess quit, Func<bool> mayStart, Func<bool> sessionEnding, CancellationToken cancellationToken)
     {
         var control = new ProcessControl(this, mayStart, sessionEnding);
