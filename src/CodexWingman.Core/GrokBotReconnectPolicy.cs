@@ -649,8 +649,8 @@ public static class GrokBotRelaunch
     /// Open Grok Bot after Reconnect when there is no proof of the quit yet: the offer's process was gone or replaced at
     /// the press, or hadn't finished closing. The user pressed Open Grok Bot, so starting is their choice. One snapshot:
     /// if it still holds that exact process (id and start time), waits up to <c>Exit</c> for it to exit; a process the
-    /// snapshot doesn't hold has exited. Then the same as after the quit: an update under way is waited for by the caller
-    /// (<see cref="GrokBotRelaunchKind.UpdateRunning"/> with the proof), else <see cref="StartWhenClearAsync"/>.
+    /// snapshot doesn't hold has exited. Then <see cref="StartWhenClearAsync"/>, as after the quit: an update under way comes
+    /// back as <see cref="GrokBotRelaunchKind.UpdateRunning"/> with the proof, and the caller waits for it.
     /// </summary>
     public static async Task<GrokBotRelaunchResult> OpenAfterPressAsync(GrokBotProcess target, IGrokBotProcessControl control, GrokBotRelaunchLimits limits,
         Func<DateTime> now, Func<TimeSpan, CancellationToken, Task> delay, CancellationToken cancellationToken)
@@ -663,9 +663,7 @@ public static class GrokBotRelaunch
                 && await ExitAsync(handle, control, limits, now, delay, cancellationToken) is { } notClosed) return notClosed;
         }
         finally { foreach (var process in snapshot) process.Dispose(); }
-        var quit = new ClosedProcess(target);
-        if (await UpdateUnderWayAsync(control, stamp)) return new(GrokBotRelaunchKind.UpdateRunning, quit);
-        return await StartWhenClearAsync(quit, stamp, control, limits, now, delay, cancellationToken);
+        return await StartWhenClearAsync(new ClosedProcess(target), stamp, control, limits, now, delay, cancellationToken);
     }
 
     /// <summary>

@@ -241,6 +241,8 @@ internal static class GrokBotReconnectTests
         gone.Finished(new(GrokBotReconnectOutcome.Gone));
         Equal((GrokBotPromptState.CouldNotStart, GrokBotReconnectPolicy.GoneText), (gone.State, gone.Problem), "and the prompt says so, with Open Grok Bot");
         Equal(true, gone.Open(busy: false), "Open Grok Bot without the quit's proof");
+        gone.Finished(new(GrokBotReconnectOutcome.Busy));
+        Equal(GrokBotPromptStep.Open, gone.Observe(Seen(null), busy: false), "busy then: Open Grok Bot is kept, not turned into Reconnect");
 
         var quitting = new GrokBotReconnectPrompt(offer);
         quitting.Reconnect(busy: false);
@@ -703,6 +705,8 @@ internal static class GrokBotReconnectTests
         var afterClose = open[open.IndexOf("while (StillRunning())", StringComparison.Ordinal)..];
         Equal(true, afterClose.Contains("if (GrokBotRelaunch.UpdateUnderWay(await Task.Run(InstallerRunning), ExecutableStamp(), stamp))", StringComparison.Ordinal)
             && afterClose.Contains("GrokBotRelaunch.AfterApprovedCloseAsync(closed,", StringComparison.Ordinal)
+            && !afterClose[afterClose.IndexOf("if (GrokBotRelaunch.UpdateUnderWay(", StringComparison.Ordinal)..afterClose.IndexOf("AfterApprovedCloseAsync", StringComparison.Ordinal)]
+                .Contains("throw ", StringComparison.Ordinal)
             && afterClose.IndexOf("AfterApprovedCloseAsync", StringComparison.Ordinal) < afterClose.IndexOf("StartWithPort()", StringComparison.Ordinal)
             && afterClose.Contains("if (result.Kind != GrokBotRelaunchKind.Relaunched)", StringComparison.Ordinal),
             "an update the close starts is waited for, then Grok Bot reopens; nothing else starts it then");
