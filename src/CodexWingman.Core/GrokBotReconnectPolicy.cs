@@ -198,7 +198,7 @@ public enum GrokBotPromptStep { None, Reconnect, Open }
 /// <summary>
 /// The reconnect prompt window's state, bound to one offer: its exact Grok Bot process (id and start time). It replaces
 /// tray balloons, whose clicks Windows can't tie to one balloon. Until Reconnect it has no time limit, and closes when
-/// that process exits or is replaced, when Grok Bot connects, or after Not now. Once the user has quit Grok Bot for it,
+/// that process exits or is replaced, when Grok Bot connects, or after Not now. Once the user has pressed Reconnect,
 /// it never closes silently: it closes once Grok Bot is reconnected (or the user cancels), moves to a Grok Bot opened again
 /// meanwhile, shows "Grok Bot is updating…" while an update runs, or stays and says why Wingman couldn't open it, with an
 /// Open Grok Bot button. A button pressed while Wingman is busy shows "Working…" and
