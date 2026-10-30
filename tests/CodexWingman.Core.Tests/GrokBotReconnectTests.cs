@@ -650,6 +650,22 @@ internal static class GrokBotReconnectTests
         var repair = tray[tray.IndexOf("private async Task RepairGrokBotAsync", StringComparison.Ordinal)..tray.IndexOf("private async Task EnsureGrokBotReadyAsync", StringComparison.Ordinal)];
         Equal(true, repair.Contains("catch (OperationCanceledException)", StringComparison.Ordinal) && repair.Contains("MessageBox.Show(RepairStoppedText,", StringComparison.Ordinal),
             "Repair's stop is plain words too");
+
+        // The guide says the same: the prompt keeps saying it is opening or connecting until the Helpers are connected, and
+        // every other result after the user acted stays in that prompt with a reason and Open Grok Bot.
+        var guide = File.ReadAllText(Path.Combine(RepositoryRoot(), "docs", "grok-bot-after-update.md"));
+        var every = guide[guide.IndexOf("## Every result after you act", StringComparison.Ordinal)..guide.IndexOf("## Connecting to a Grok Bot that already has a port", StringComparison.Ordinal)];
+        Equal(true, every.Contains("the prompt closes only when Wingman has connected the Helpers, or when you press **Cancel** or **Not now**", StringComparison.Ordinal)
+            && every.Contains("It is never a message box, never a raw error text, and never **Reconnect** again.", StringComparison.Ordinal)
+            && every.Contains("said Yes to `Open window` or `Repair`", StringComparison.Ordinal)
+            && every.Contains("didn't close within 20 seconds", StringComparison.Ordinal) && GrokBotReconnectPolicy.NotClosedText.Contains("within 20 seconds", StringComparison.Ordinal)
+            && every.Contains("wasn't closed within 10 minutes", StringComparison.Ordinal) && GrokBotReconnectPolicy.QuitTimedOutText.Contains("within 10 minutes", StringComparison.Ordinal)
+            && every.Contains("\"" + GrokBotReconnectPolicy.ConnectFailedText[..GrokBotReconnectPolicy.ConnectFailedText.IndexOf(". ", StringComparison.Ordinal)] + ".\"", StringComparison.Ordinal)
+            && guide.Contains("\"" + GrokBotReconnectPolicy.ConnectingText + "\"", StringComparison.Ordinal)
+            && guide.Contains("\"" + GrokBotReconnectPolicy.ReopenedText + "\"", StringComparison.Ordinal)
+            && guide.Contains("\"Grok Bot is updating...\"", StringComparison.Ordinal) && GrokBotReconnectPolicy.UpdatingText.StartsWith("Grok Bot is updating...", StringComparison.Ordinal)
+            && !guide.Contains("it offers **Reconnect** again", StringComparison.Ordinal) && !guide.Contains("goes back to **Reconnect**", StringComparison.Ordinal),
+            "the guide says exactly what the prompt does after the user acted");
     }
 
     /// <summary>The tray's side of a prompt run, over a fake Grok Bot.</summary>

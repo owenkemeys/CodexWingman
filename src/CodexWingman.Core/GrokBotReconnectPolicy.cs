@@ -460,7 +460,7 @@ public enum GrokBotReconnectOutcome
     Busy,
     /// <summary>Not now or Cancel: nothing started.</summary>
     Cancelled,
-    /// <summary>Not quit within the limit: back to the offer.</summary>
+    /// <summary>Not quit within the limit: Grok Bot is left running; the prompt says so, with Open Grok Bot.</summary>
     QuitTimedOut,
     /// <summary>
     /// A Grok Bot installer or update is running. Before the quit: nothing started, and the post-update prompt handles what

@@ -29,27 +29,36 @@ It closes when that Grok Bot exits or connects, or after **Not now**. To reconne
 2. Otherwise Wingman brings Grok Bot's window forward and the prompt says "Close Grok Bot's window. Wingman reopens it." On Windows Grok Bot has no tray icon, and closing its last window quits it. Grok Bot offers no outside way to quit it gracefully, so you close it yourself.
 3. Once Grok Bot has quit, Wingman opens it again with the port. Grok Bot keeps its sign-in and data.
 
-While Wingman waits, the prompt shows **Cancel**, which stops the wait and starts nothing. After 10 minutes without a quit, the prompt goes back to **Reconnect** and **Not now**.
+While Wingman waits, the prompt shows **Cancel**, which stops the wait, starts nothing and closes the prompt.
 
 If an update is waiting, quitting Grok Bot starts it, and its installer doesn't reopen Grok Bot. You already chose Reconnect, so Wingman finishes the job:
 
-1. The prompt says "Grok Bot is updating…" and shows **Cancel**.
+1. The prompt says "Grok Bot is updating..." and shows **Cancel**.
 2. Wingman waits, for up to 5 minutes, until no Grok Bot installer runs and Grok Bot.exe has stayed unchanged for 5 seconds.
 3. Then it opens Grok Bot with the port, with the same checks as any start. If an installer starts again in the meantime, Wingman waits for that too.
 
-If Grok Bot opens again by itself during the update, or you open it yourself, Wingman starts nothing. If that Grok Bot has a port Wingman can use, Wingman connects to it. Otherwise the prompt moves to it. After an update the prompt goes straight on to "Close Grok Bot's window. Wingman reopens it." with no second **Reconnect**; after your own reopen it offers **Reconnect** again.
+Once Grok Bot is open with the port, the prompt says "Wingman is connecting Grok Bot's Helpers..." until they are connected, and closes then.
 
-Once you have pressed **Reconnect**, the prompt closes only when Grok Bot is connected again, when you press **Cancel** or **Not now**, or when it moves to a prompt for another Grok Bot. If another Grok Bot opens after your quit while Wingman isn't already opening Grok Bot, the prompt says "Grok Bot was opened again without Wingman." and moves to a prompt for that one, or stays with that reason and **Open Grok Bot** if that Grok Bot is gone again or already connected. If you don't quit within 10 minutes, or Windows begins to shut down or sign out before your quit and another app cancels that, it offers **Reconnect** again. In every other case Wingman starts nothing, and the prompt says why with an **Open Grok Bot** button:
+If Grok Bot opens again by itself during the update, or you open it yourself, Wingman starts nothing. If that Grok Bot has a port Wingman can use, Wingman connects to it. Otherwise the prompt says "Grok Bot was opened again without Wingman." and a prompt for that Grok Bot takes its place. After an update it goes straight on to "Close Grok Bot's window. Wingman reopens it." with no second **Reconnect**; after your own reopen it offers **Reconnect** for that new Grok Bot. If that Grok Bot is gone again, the prompt stays with the reason and **Open Grok Bot**.
 
+## Every result after you act
+
+Once you have pressed **Reconnect** or **Open Grok Bot**, or said Yes to `Open window` or `Repair` closing Grok Bot, the prompt closes only when Wingman has connected the Helpers, or when you press **Cancel** or **Not now**. Every other result stays in the same prompt window, with a plain reason and **Open Grok Bot** and **Not now**. It is never a message box, never a raw error text, and never **Reconnect** again. Wingman starts nothing in these cases:
+
+- Grok Bot wasn't closed within 10 minutes of **Reconnect**; Wingman left it running;
+- Grok Bot didn't close within 20 seconds of your Yes to `Open window` or `Repair`; Wingman left it running;
 - the update is still running after 5 minutes;
 - an update started but Grok Bot hadn't finished closing 30 seconds later;
 - the Grok Bot you pressed **Reconnect** for had already closed, or was replaced by another one;
-- a Grok Bot process is still running 20 seconds after the quit, or Wingman stays busy for 60 seconds;
+- a Grok Bot process is still running 20 seconds after the quit or the update, or Wingman stays busy for 60 seconds;
 - Grok Bot ended with an error (a crash, or ended from Task Manager) instead of your quit;
-- Windows began to shut down or sign out after your quit, and another app cancelled it.
-- something went wrong inside Wingman while it reopened Grok Bot. The prompt says so in plain words, and the error is in Wingman's log. If that happens before your quit, it offers **Reconnect** again instead.
+- Windows began to shut down or sign out, and another app cancelled it;
+- Wingman stopped first, for example because you chose Reload Helpers;
+- something went wrong inside Wingman. The prompt says so in plain words, and the error is in Wingman's log.
 
-Grok Bot 0.78.1 starts its installer while it is still shutting down, for up to a few seconds. So when an installer appears while Wingman waits for your quit, Wingman keeps waiting, for up to 30 seconds, for that same Grok Bot to exit, and then waits for the update as above. When Wingman never saw your quit (the second and third cases above), **Open Grok Bot** checks again: it waits up to 30 seconds for that Grok Bot to exit, waits for an update it finds, and starts nothing while another Grok Bot runs.
+If Grok Bot did open but the Helpers didn't connect, the prompt says "Grok Bot is open, but Wingman couldn't connect its Helpers." with **Open Grok Bot**, which tries again.
+
+Grok Bot 0.78.1 starts its installer while it is still shutting down, for up to a few seconds. So when an installer appears while Wingman waits for your quit, Wingman keeps waiting, for up to 30 seconds, for that same Grok Bot to exit, and then waits for the update as above. When Wingman never saw your quit, **Open Grok Bot** checks again: it waits up to 30 seconds for that Grok Bot to exit, waits for an update it finds, and starts nothing while another Grok Bot runs. If that Grok Bot is still running, **Open Grok Bot** asks you to close its window, as **Reconnect** does.
 
 ## Connecting to a Grok Bot that already has a port
 
@@ -86,7 +95,7 @@ Run these from the Wingman folder. To make the terminal wait for the output, pip
 
 - Grok Bot's main process is a Grok Bot.exe with no `--type=` switch and no script argument; with several, the one owning Chromium's single-instance window (`Chrome_MessageWindow`) wins.
 - "Still running" (before Reconnect, `Open window` or `Repair` starts Grok Bot) means any Grok Bot.exe in your session. In 0.78.1 the only ones besides Grok Bot itself are its `--type=` children, including its local-exec daemon (a `--type=utility` child), and they end with it.
-- `Open window` and `Repair` use the same installer guard: they start nothing while a Grok Bot installer or uninstaller runs or Grok Bot.exe changed, checked before asking. After your Yes they wait up to 20 seconds for Grok Bot to close (`GrokBotRelaunch.AfterCloseRequestAsync`). If that close starts Grok Bot's update, also while Grok Bot is still closing, they wait for it as after **Reconnect** (`GrokBotRelaunch.AfterApprovedCloseAsync`, up to 5 minutes) and then open Grok Bot; otherwise they say why.
+- `Open window` and `Repair` use the same installer guard: they start nothing while a Grok Bot installer or uninstaller runs or Grok Bot.exe changed, checked before asking, and say why in a message box. After your Yes they ask Grok Bot to close and show the prompt (title **Grok Bot**), whose run (`GrokBotPromptRun`, step `ApprovedClose`) waits up to 20 seconds for Grok Bot to close (`GrokBotRelaunch.AfterCloseRequestAsync`). If that close starts Grok Bot's update, also while Grok Bot is still closing, the prompt says "Grok Bot is updating..." while Wingman waits for it as after **Reconnect** (`GrokBotRelaunch.AfterApprovedCloseAsync`, up to 5 minutes), then opens Grok Bot and connects the Helpers. Every result is shown as in [Every result after you act](#every-result-after-you-act).
 - The prompt is bound to one Grok Bot main process by id and start time. During the quit wait Wingman holds that process by its own process handle, so Windows can't give the id to another process, and reads its exit code there: only exit code 0 (the user's quit) is followed by a start, and an installer, uninstaller or Grok Bot.exe change is checked first, so an installer ending Grok Bot counts as an update. The once-a-second installer check lists processes on the thread pool.
 - Installers are recognised by their program file, and Wingman looks only at programs named `sand-update-…`, `Uninstall…`, `Un_A` or `Au_`; no other program counts, also not one in Grok Bot's install folder. A `sand-update-…` program (the staged `%TEMP%\sand-update-…\sand-update-<version>-….exe`) counts wherever it runs; an `Uninstall…`, `Un_A` or `Au_` program counts when it runs from Grok Bot's install folder (such as `Uninstall Grok Bot.exe`). Grok Bot.exe changing or disappearing counts too. Every NSIS app's uninstaller runs from a `%TEMP%\~nsu….tmp` copy (`Un_A.exe` or `Au_.exe`); such a copy counts only when its `_?=` argument names Grok Bot's install folder or its parent runs from there, so another app's uninstall doesn't hold up Grok Bot.
 - The update wait after the quit is `GrokBotRelaunch.AfterUpdateAsync`; it ends in the same guarded start as every other reopen. An installer seen while Grok Bot is still closing counts as after the quit: the run waits up to 30 seconds (`GrokBotRelaunchLimits.Exit`) for that held process to exit, then takes the update path with the proof. **Open Grok Bot** without that proof is `GrokBotRelaunch.OpenAfterPressAsync`.
