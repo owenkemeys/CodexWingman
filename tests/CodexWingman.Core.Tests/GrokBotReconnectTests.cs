@@ -49,6 +49,7 @@ internal static class GrokBotReconnectTests
         NothingStartsWhileWindowsShutsDown();
         ThePromptClosesAfterItsOwnClick();
         TryAgainAsksForTheCloseAgain();
+        AGrokBotThatAppearsWhileWingmanIsBusyStartsNothing();
         EveryResultEndsInTheSamePrompt();
         EveryResultTimesEveryStatePicksItsEnding();
         OpenWindowAfterTheYesEndsInThePrompt();
@@ -1769,6 +1770,32 @@ internal static class GrokBotReconnectTests
             "Grok Bot stays open through the wait: it says so and starts nothing");
     }
 
+    /// <summary>
+    /// The last check before the start: a Grok Bot.exe that appeared while Wingman waited to be free (not Grok Bot's main
+    /// window, so it isn't a reopen) means Grok Bot isn't closed, and nothing starts.
+    /// </summary>
+    private static void AGrokBotThatAppearsWhileWingmanIsBusyStartsNothing()
+    {
+        var target = new GrokBotProcess(Second, new DateTime(2026, 1, 1, 8, 59, 0, DateTimeKind.Utc));
+        var quit = QuitProof(target);
+        var late = new FakeProcess(new(Third, new DateTime(2026, 1, 1, 9, 0, 30, DateTimeKind.Utc)), []) { Exited = true };
+        var control = new FakeControl(late) { Free = false, FreeAfter = 3, Starts = new(Third + 1, DateTime.UnixEpoch) };
+        var appeared = false;
+        control.DuringInstallerCheck = check => { if (check == 1) { late.Exited = false; appeared = true; } };
+        var clock = DateTime.UnixEpoch;
+        var result = GrokBotRelaunch.StartWhenClearAsync(quit, control.ExecutableStamp(), control, Limits, () => clock,
+            (wait, _) => { clock += wait; return Task.CompletedTask; }, CancellationToken.None).GetAwaiter().GetResult();
+        Equal(true, appeared && control.MainProcess() is null, "a non-main Grok Bot.exe appeared while Wingman was busy");
+        Equal((GrokBotRelaunchKind.StillRunning, true, true), (result.Kind, ReferenceEquals(result.Quit, quit), result.Started is null),
+            "Wingman is free, but a Grok Bot runs: still running, the proof kept");
+        Equal(true, control.Log.All(line => !line.StartsWith("start", StringComparison.Ordinal)), "nothing started");
+
+        // The same wait with no Grok Bot appearing starts Grok Bot once: the check is what stops it.
+        var clear = new FakeControl(new FakeProcess(new(Third, DateTime.UnixEpoch), []) { Exited = true }) { Free = false, FreeAfter = 3, Starts = new(Third + 1, DateTime.UnixEpoch) };
+        var started = GrokBotRelaunch.StartWhenClearAsync(quit, clear.ExecutableStamp(), clear, Limits, () => clock,
+            (wait, _) => { clock += wait; return Task.CompletedTask; }, CancellationToken.None).GetAwaiter().GetResult();
+        Equal((GrokBotRelaunchKind.Relaunched, true), (started.Kind, clear.Log is ["start after 200"]), "with nothing open, the same wait starts Grok Bot once");
+    }
 
     /// <summary>
     /// The user's quit started Grok Bot's update. Wingman waits up to 5 minutes until no installer runs and Grok Bot.exe
