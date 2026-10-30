@@ -419,18 +419,51 @@ public sealed class GrokBotReconnectPrompt(GrokBotReconnectOffer offer)
     public string Message => Shown.Message;
 
     /// <summary>
-    /// The window's title, decided with <see cref="Message"/> from the same state, so the two never disagree and only change
-    /// together. While the message speaks for Wingman (opening Grok Bot, having opened it, connecting its Helpers, or failing
-    /// to), the title is Wingman's: Grok Bot, or Grok Bot updated for a proven update. Otherwise it says how the Grok Bot the
-    /// prompt holds opened, as before any press.
+    /// The window's title, decided with <see cref="Message"/> from the same state, so the two never disagree. Grok Bot updated
+    /// for a proven update. Otherwise, once the message has spoken for Wingman for this offer (opening Grok Bot, having opened
+    /// it, connecting its Helpers, or failing to), the title is Wingman's neutral Grok Bot, and it stays so for the rest of the
+    /// offer whatever the words say next, such as an update that starts first or a run that ends without a start. Before that
+    /// it says how the Grok Bot the prompt holds opened, as before any press. So within one offer the title changes at most
+    /// once, with the words or as Wingman's start becomes the Grok Bot the prompt holds (<see cref="Hold"/>), and never goes
+    /// back; only a hand-over to another Grok Bot (<see cref="Follow"/>) starts a new offer, whose title follows how that one
+    /// opened, even while the words stay the same.
     /// </summary>
     public string Title => Shown.Title;
+
+    /// <summary>
+    /// Set the moment the message first speaks for Wingman in this offer (<see cref="Settle"/>, after every change), and
+    /// cleared only when the prompt follows another Grok Bot: Wingman's choice to open Grok Bot only moves forward.
+    /// </summary>
+    private bool spokeForWingman;
+
+    /// <summary>Every public change ends here, so the title's one fact is taken from the state the window shows next.</summary>
+    private void Settle()
+    {
+        if (Words.ForWingman) spokeForWingman = true;
+    }
 
     private (string Title, string Message) Shown
     {
         get
         {
-            var (message, forWingman) = State switch
+            var (message, forWingman) = Words;
+            var title = Offer.OpenedBy switch
+            {
+                GrokBotOpenedBy.AfterUpdate => GrokBotReconnectPolicy.UpdatedTitle,
+                _ when forWingman || spokeForWingman => GrokBotReconnectPolicy.ApprovedTitle,
+                GrokBotOpenedBy.Wingman => GrokBotReconnectPolicy.ApprovedTitle,
+                _ => GrokBotReconnectPolicy.ReopenedTitle,
+            };
+            return (title, message);
+        }
+    }
+
+    /// <summary>The message for the current state, and whether it speaks for Wingman.</summary>
+    private (string Message, bool ForWingman) Words
+    {
+        get
+        {
+            return State switch
             {
                 GrokBotPromptState.WaitingForQuit => (GrokBotReconnectPolicy.QuitText, false),
                 GrokBotPromptState.Updating => (GrokBotReconnectPolicy.UpdatingText, false),
@@ -440,14 +473,6 @@ public sealed class GrokBotReconnectPrompt(GrokBotReconnectOffer offer)
                 GrokBotPromptState.Connecting => (connectingText, true),
                 _ => (Quit is not null ? GrokBotReconnectPolicy.QuitText : GrokBotReconnectPolicy.PromptText, false),
             };
-            var title = Offer.OpenedBy switch
-            {
-                GrokBotOpenedBy.AfterUpdate => GrokBotReconnectPolicy.UpdatedTitle,
-                _ when forWingman => GrokBotReconnectPolicy.ApprovedTitle,
-                GrokBotOpenedBy.Wingman => GrokBotReconnectPolicy.ApprovedTitle,
-                _ => GrokBotReconnectPolicy.ReopenedTitle,
-            };
-            return (title, message);
         }
     }
 
@@ -498,6 +523,7 @@ public sealed class GrokBotReconnectPrompt(GrokBotReconnectOffer offer)
             State = GrokBotPromptState.Working, Pressed = true, ApprovedSince = since, UpdateProven = updateProven ?? NoUpdateProof,
         };
         prompt.lastStep = GrokBotPromptStep.ApprovedClose;
+        prompt.Settle();
         return prompt;
     }
 
@@ -540,6 +566,7 @@ public sealed class GrokBotReconnectPrompt(GrokBotReconnectOffer offer)
         Pressed = true;
         lastStep = step;
         pending = busy ? step : GrokBotPromptStep.None;
+        Settle();
         return !busy;
     }
 
@@ -557,6 +584,12 @@ public sealed class GrokBotReconnectPrompt(GrokBotReconnectOffer offer)
     /// the prompt says Wingman was busy (<see cref="GrokBotReconnectOutcome.BusyTooLong"/>'s reason) with its button.
     /// </param>
     public GrokBotPromptStep Observe(GrokBotObservation current, bool busy, DateTimeOffset? now = null)
+    {
+        try { return See(current, busy, now); }
+        finally { Settle(); }
+    }
+
+    private GrokBotPromptStep See(GrokBotObservation current, bool busy, DateTimeOffset? now)
     {
         if (State == GrokBotPromptState.Closed) return GrokBotPromptStep.None;
         if (!Pressed)
@@ -639,6 +672,7 @@ public sealed class GrokBotReconnectPrompt(GrokBotReconnectOffer offer)
     {
         Offer = Offer with { ProcessId = process.Id, ProcessStarted = process.Started, OpenedBy = openedBy };
         Quit = null;
+        spokeForWingman = false;
         Stay(why, GrokBotHeldState.Open);
     }
 
@@ -667,6 +701,7 @@ public sealed class GrokBotReconnectPrompt(GrokBotReconnectOffer offer)
     public void WaitingForQuit()
     {
         if (State == GrokBotPromptState.Working) State = GrokBotPromptState.WaitingForQuit;
+        Settle();
     }
 
     /// <summary>
@@ -678,6 +713,7 @@ public sealed class GrokBotReconnectPrompt(GrokBotReconnectOffer offer)
         if (State == GrokBotPromptState.Closed) return;
         Quit ??= quit;
         if (State == GrokBotPromptState.WaitingForQuit) State = GrokBotPromptState.Working;
+        Settle();
     }
 
     /// <summary>The user quit Grok Bot and its update is running: the prompt says so and keeps [Cancel].</summary>
@@ -687,6 +723,7 @@ public sealed class GrokBotReconnectPrompt(GrokBotReconnectOffer offer)
         if (quit is not null) Quit = quit;
         reason = null;
         State = GrokBotPromptState.Updating;
+        Settle();
     }
 
     /// <summary>
@@ -698,6 +735,12 @@ public sealed class GrokBotReconnectPrompt(GrokBotReconnectOffer offer)
     /// Wingman couldn't look); a failed connect says whether Grok Bot is still open or closed meanwhile.
     /// </summary>
     public void Finished(GrokBotReconnectResult result, GrokBotObservation? now)
+    {
+        try { End(result, now); }
+        finally { Settle(); }
+    }
+
+    private void End(GrokBotReconnectResult result, GrokBotObservation? now)
     {
         if (State == GrokBotPromptState.Closed) return;
         // A quit's proof that Wingman used to start a Grok Bot (Started) is spent: that start is the prompt's Grok Bot now.

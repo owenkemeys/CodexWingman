@@ -2009,8 +2009,9 @@ internal static class GrokBotReconnectTests
     /// Wingman's start, and the checks between runs with every hand-over, from every kind of offer. In every state: while the
     /// message speaks for Wingman (opening Grok Bot, having opened it, connecting its Helpers, or failing to), the title is
     /// Grok Bot, or Grok Bot updated for a proven update, never reopened without Wingman; otherwise it says how the held Grok
-    /// Bot opened, and before any press it is the offer's title as it always was; and the title never changes while the
-    /// message stays the same for the same Grok Bot.
+    /// Bot opened (or Grok Bot, once Wingman's words have shown for this offer), and before any press it is the offer's title as
+    /// it always was. Within one offer (until the prompt follows another Grok Bot than Wingman's start) the title changes at
+    /// most once, together with the words or as Wingman's start becomes the Grok Bot it holds, and never goes back to a title it had.
     /// </summary>
     private static void TheTitleAndTheMessageAgreeInEveryStateThePromptCanShow()
     {
@@ -2044,6 +2045,10 @@ internal static class GrokBotReconnectTests
             var steps = new List<string>();
             var last = (Title: prompt.Title, Message: prompt.Message, Target: prompt.Offer.Target);
             var leftTheOffer = false;
+            // The test's own account of the offer: Wingman's words seen since the last hand-over, and the titles shown in it.
+            var spoke = false;
+            var titles = new List<string> { prompt.Title };
+            GrokBotProcess? startedNow = null;
             for (var step = 0; step < 14 && prompt.State != GrokBotPromptState.Closed; step++)
             {
                 GrokBotObservation? Look()
@@ -2056,6 +2061,7 @@ internal static class GrokBotReconnectTests
                 }
                 var busy = random.Next(3) == 0;
                 var held = prompt.Offer.Target;
+                startedNow = null;
                 // The run's calls come only while a run is under way (a run only follows a press); the buttons and checks any time.
                 var action = random.Next(9);
                 if (action is >= 2 and <= 6 && !prompt.InRun) action = random.Next(2) == 0 ? random.Next(2) : 7;
@@ -2093,6 +2099,7 @@ internal static class GrokBotReconnectTests
                         var start = outcome == GrokBotReconnectOutcome.Relaunched || random.Next(2) == 0 ? processes[1 + random.Next(processes.Length - 1)] : (GrokBotProcess?)null;
                         var quit = random.Next(3) == 0 ? proofs.GetValueOrDefault(held) : null;
                         var end = Look();
+                        startedNow = start;
                         prompt.Finished(new(outcome, quit, start) { WingmanBusy = random.Next(4) == 0 }, end);
                         Count(start is null ? "result" : "result after Wingman's start");
                         // The prompt holds Wingman's start from now on, whatever it shows next.
@@ -2105,6 +2112,8 @@ internal static class GrokBotReconnectTests
                         var did = prompt.Observe(current, busy, clock);
                         if (did != GrokBotPromptStep.None) Count("check: " + did);
                         if (prompt.InRun || prompt.State == GrokBotPromptState.Working) Count("check: waits");
+                        // The window shows Connecting before the connect's result.
+                        if (did == GrokBotPromptStep.Connect) spoke |= wingmanVoice.Contains(prompt.Message);
                         if (did == GrokBotPromptStep.Connect) prompt.Finished(new(random.Next(2) == 0 ? GrokBotReconnectOutcome.NotConnected : GrokBotReconnectOutcome.Connected) { WingmanBusy = busy }, Look());
                         steps.Add($"Observe({current.ProcessId}, connected {current.Connected}, busy {busy}) -> {did}");
                         break;
@@ -2114,6 +2123,23 @@ internal static class GrokBotReconnectTests
                 var name = $"{how} offer, walk {walk}: {string.Join(" > ", steps)}";
                 var shown = (Title: prompt.Title, Message: prompt.Message, Target: prompt.Offer.Target);
                 Count("state: " + prompt.State);
+                // A new offer: the prompt followed another Grok Bot than the one Wingman just started (also back to the one it
+                // held before that start).
+                var newOffer = shown.Target != startedNow && (shown.Target != last.Target || startedNow is not null);
+                if (newOffer)
+                {
+                    spoke = false;
+                    titles.Clear();
+                    Count("new offer");
+                }
+                spoke |= wingmanVoice.Contains(shown.Message);
+                string ByHow(GrokBotOpenedBy opened) => opened switch
+                {
+                    GrokBotOpenedBy.AfterUpdate => GrokBotReconnectPolicy.UpdatedTitle,
+                    GrokBotOpenedBy.Wingman => GrokBotReconnectPolicy.ApprovedTitle,
+                    _ when spoke => GrokBotReconnectPolicy.ApprovedTitle,
+                    _ => GrokBotReconnectPolicy.ReopenedTitle,
+                };
                 if (wingmanVoice.Contains(shown.Message))
                 {
                     Count("Wingman's words");
@@ -2121,24 +2147,25 @@ internal static class GrokBotReconnectTests
                         name + $": over \"{shown.Message}\" the title is Wingman's");
                 }
                 else
-                    Equal(prompt.Offer.OpenedBy switch
-                        {
-                            GrokBotOpenedBy.AfterUpdate => GrokBotReconnectPolicy.UpdatedTitle,
-                            GrokBotOpenedBy.Wingman => GrokBotReconnectPolicy.ApprovedTitle,
-                            _ => GrokBotReconnectPolicy.ReopenedTitle,
-                        }, shown.Title, name + $": over \"{shown.Message}\" the title says how the held Grok Bot opened");
+                {
+                    if (spoke) Count("other words after Wingman's");
+                    Equal(ByHow(prompt.Offer.OpenedBy), shown.Title,
+                        name + $": over \"{shown.Message}\" the title says how the held Grok Bot opened, or Grok Bot once Wingman's words showed");
+                }
                 leftTheOffer |= shown.Target != offered;
                 if (!leftTheOffer && !wingmanVoice.Contains(shown.Message))
-                    Equal(how switch
-                        {
-                            GrokBotOpenedBy.AfterUpdate => GrokBotReconnectPolicy.UpdatedTitle,
-                            GrokBotOpenedBy.Wingman => GrokBotReconnectPolicy.ApprovedTitle,
-                            _ => GrokBotReconnectPolicy.ReopenedTitle,
-                        }, shown.Title, name + $": over \"{shown.Message}\" until the prompt first leaves the offered Grok Bot, the title says how that one opened");
+                    Equal(ByHow(how), shown.Title, name + $": over \"{shown.Message}\" until the prompt first leaves the offered Grok Bot, the title says how that one opened");
                 if (!prompt.Pressed)
                     Equal(how == GrokBotOpenedBy.AfterUpdate ? GrokBotReconnectPolicy.UpdatedTitle : GrokBotReconnectPolicy.ReopenedTitle, shown.Title, name + ": before any press, the offer's title");
-                if (shown.Target == last.Target && shown.Message == last.Message)
-                    Equal(last.Title, shown.Title, name + $": the same words \"{shown.Message}\" for the same Grok Bot keep their title");
+                if (!newOffer && shown.Title != last.Title)
+                {
+                    Count("title change");
+                    Equal(false, titles.Contains(shown.Title), name + $": within one offer the title never goes back to \"{shown.Title}\"");
+                    if (startedNow is not null && shown.Message == last.Message) Count("title change at Wingman's start");
+                    Equal(true, shown.Message != last.Message || startedNow is not null, name + ": within one offer the title changes only with the words or Wingman's start");
+                }
+                if (titles.Count == 0 || titles[^1] != shown.Title) titles.Add(shown.Title);
+                Equal(true, titles.Count <= 2, name + $": within one offer the title changes at most once ({string.Join(" > ", titles)})");
                 if (shown.Target != last.Target) Count("hand-over");
                 last = shown;
             }
@@ -2147,6 +2174,7 @@ internal static class GrokBotReconnectTests
         {
             "Reconnect", "Reconnect kept", "Try again", "Open Grok Bot", "press kept while busy", "waiting for the quit", "Exited, opening", "updating",
             "result", "result after Wingman's start", "check: HandOver", "check: Connect", "check: waits", "hand-over", "Wingman's words",
+            "new offer", "title change", "other words after Wingman's",
             "state: Offered", "state: Working", "state: WaitingForQuit", "state: Updating", "state: CouldNotStart", "state: Connecting",
         })
             Equal(true, seen.GetValueOrDefault(must) > 20, $"the walks reach \"{must}\" ({seen.GetValueOrDefault(must)} times)");
@@ -2168,6 +2196,25 @@ internal static class GrokBotReconnectTests
                 (GrokBotReconnectPolicy.ReopenedTitle, GrokBotReconnectPolicy.QuitText), (GrokBotReconnectPolicy.ApprovedTitle, GrokBotReconnectPolicy.OpeningText),
                 (GrokBotReconnectPolicy.ApprovedTitle, GrokBotReconnectPolicy.OpeningText),
             }), string.Join(" | ", seenSteps), "Reconnect: offered, working, waiting for the quit, Exited, the start");
+        // The main update path: Grok Bot is closed and its installer starts at the same moment, so Wingman's opening words
+        // show while it looks, then the update's. The title turns once, with Wingman's words, and stays.
+        var update = new GrokBotReconnectPrompt(new GrokBotReconnectOffer(Second, GrokBotOpenedBy.WithoutWingman, T0, started));
+        var updateSteps = new List<(string, string)> { (update.Title, update.Message) };
+        update.Reconnect(busy: false);
+        update.WaitingForQuit();
+        updateSteps.Add((update.Title, update.Message));
+        update.Exited(proofs[offered]);
+        updateSteps.Add((update.Title, update.Message));
+        update.Updating(proofs[offered]);
+        updateSteps.Add((update.Title, update.Message));
+        update.Finished(new(GrokBotReconnectOutcome.Relaunched, proofs[offered], processes[1]), new(Third, false, Present, processes[1].Started));
+        updateSteps.Add((update.Title, update.Message));
+        Equal(string.Join(" | ", new[]
+            {
+                (GrokBotReconnectPolicy.ReopenedTitle, GrokBotReconnectPolicy.PromptText), (GrokBotReconnectPolicy.ReopenedTitle, GrokBotReconnectPolicy.QuitText),
+                (GrokBotReconnectPolicy.ApprovedTitle, GrokBotReconnectPolicy.OpeningText), (GrokBotReconnectPolicy.ApprovedTitle, GrokBotReconnectPolicy.UpdatingText),
+                (GrokBotReconnectPolicy.ApprovedTitle, GrokBotReconnectPolicy.OpeningText),
+            }), string.Join(" | ", updateSteps), "update at the close: the title turns once and doesn't flicker");
         var window = File.ReadAllText(Path.Combine(RepositoryRoot(), "src", "CodexWingman", "GrokBotPromptWindow.cs"));
         Equal(true, window.Contains("Text = prompt.Title;", StringComparison.Ordinal) && !window.Contains("Offer.Title", StringComparison.Ordinal),
             "the window shows only the prompt's one title");
