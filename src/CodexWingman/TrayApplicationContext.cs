@@ -60,7 +60,9 @@ internal sealed class TrayApplicationContext : ApplicationContext
     private bool exiting;
     private readonly GrokBotReconnectPolicy grokReconnect = new();
     // The reconnect prompt window and, while the user quits Grok Bot for it, its wait (cancelled by Not now or Cancel).
-    private GrokBotReconnectPrompt? grokPrompt;
+    // The prompt is held only by the slot, so a pressed prompt can't be swapped for an unpressed one.
+    private readonly GrokBotPromptSlot grokPrompts = new();
+    private GrokBotReconnectPrompt? grokPrompt => grokPrompts.Current;
     private GrokBotPromptWindow? grokPromptWindow;
     private CancellationTokenSource? grokPromptWait;
     private GrokBotProcess? lastGrokProcess;
@@ -1076,7 +1078,7 @@ internal sealed class TrayApplicationContext : ApplicationContext
             {
                 // After the Yes, every result ends in the prompt: connected (it closes), the user's Not now, or a plain
                 // reason with Open Grok Bot. Reload Helpers stops the run, and the prompt says so.
-                var prompt = GrokBotReconnectPrompt.AfterYes(open.Closed, open.Since, DateTimeOffset.UtcNow);
+                var prompt = grokPrompts.AfterYes(open.Closed, open.Since, DateTimeOffset.UtcNow);
                 ShowGrokPrompt(prompt);
                 await ActOnGrokPromptAsync(prompt, GrokBotPromptStep.ApprovedClose, session, deadline.Token);
                 return;
@@ -1131,8 +1133,9 @@ internal sealed class TrayApplicationContext : ApplicationContext
                 switch (prompt.Observe(observation, busy || initializing))
                 {
                     case GrokBotPromptStep.HandOver:
-                        WingmanLog.Write("grok-bot-reconnect-replaced", ("process", prompt.Offer.ProcessId), ("by", observation.ProcessId));
-                        HandOverGrokPrompt(prompt, goOn: false);
+                        // The same prompt now follows the Grok Bot opened after the press; it is that one's only prompt.
+                        WingmanLog.Write("grok-bot-reconnect-followed", ("process", prompt.Offer.ProcessId));
+                        grokReconnect.Following(prompt.Offer.Target);
                         break;
                     case GrokBotPromptStep.None:
                         break;
@@ -1160,8 +1163,9 @@ internal sealed class TrayApplicationContext : ApplicationContext
             // A prompt the user has pressed stays until it is connected or they close it: no new offer replaces it.
             if (grokPrompt is { Pressed: true }) return;
             if (grokReconnect.Observe(observation, DateTimeOffset.UtcNow, grokLauncher) is not { } offer) return;
+            if (grokPrompts.Offer(offer) is not { } offered) return;
             WingmanLog.Write("grok-bot-reconnect-offered", ("process", offer.ProcessId), ("updated", offer.Updated));
-            ShowGrokPrompt(offer);
+            ShowGrokPrompt(offered);
         }
         catch (Exception error) { Debug.WriteLine($"[Grok Bot reconnect] {error.Message}"); }
     }
@@ -1217,22 +1221,19 @@ internal sealed class TrayApplicationContext : ApplicationContext
             GrokBotLauncher.FullScreenInFront());
     }
 
-    /// <summary>Shows the prompt window for <paramref name="offer"/> without taking focus, replacing any earlier one.</summary>
     private const string OpenStoppedText = "Wingman stopped opening Grok Bot before it finished. Choose Open window again.";
     private const string RepairStoppedText = "Wingman stopped repairing Grok Bot before it finished. Choose Repair again.";
 
-    private void ShowGrokPrompt(GrokBotReconnectOffer offer) => ShowGrokPrompt(new GrokBotReconnectPrompt(offer));
-
+    /// <summary>Shows the window for the slot's prompt without taking focus, replacing any earlier window.</summary>
     private void ShowGrokPrompt(GrokBotReconnectPrompt prompt)
     {
-        CloseGrokPrompt();
-        var offer = prompt.Offer;
+        CloseGrokPromptWindow();
         var window = new GrokBotPromptWindow(tray.Icon);
         window.ReconnectClicked += () =>
         {
             if (!ReferenceEquals(grokPrompt, prompt)) return;
             var actNow = prompt.Reconnect(busy || initializing || exiting);
-            WingmanLog.Write("grok-bot-reconnect-clicked", ("process", offer.ProcessId), ("now", actNow));
+            WingmanLog.Write("grok-bot-reconnect-clicked", ("process", prompt.Offer.ProcessId), ("now", actNow));
             if (actNow) _ = ActOnGrokPromptAsync(prompt, GrokBotPromptStep.Reconnect);
             SyncGrokPromptWindow();
         };
@@ -1240,18 +1241,17 @@ internal sealed class TrayApplicationContext : ApplicationContext
         {
             if (!ReferenceEquals(grokPrompt, prompt)) return;
             var actNow = prompt.Open(busy || initializing || exiting);
-            WingmanLog.Write("grok-bot-reconnect-open-clicked", ("process", offer.ProcessId), ("now", actNow));
+            WingmanLog.Write("grok-bot-reconnect-open-clicked", ("process", prompt.Offer.ProcessId), ("now", actNow));
             if (actNow) _ = ActOnGrokPromptAsync(prompt, GrokBotPromptStep.Open);
             SyncGrokPromptWindow();
         };
         window.NotNowClicked += () =>
         {
             if (!ReferenceEquals(grokPrompt, prompt)) return;
-            WingmanLog.Write("grok-bot-reconnect-not-now", ("process", offer.ProcessId), ("state", prompt.State));
+            WingmanLog.Write("grok-bot-reconnect-not-now", ("process", prompt.Offer.ProcessId), ("state", prompt.State));
             prompt.NotNow();
             SyncGrokPromptWindow();
         };
-        grokPrompt = prompt;
         grokPromptWindow = window;
         window.Render(prompt);
         window.ShowWithoutFocus();
@@ -1276,7 +1276,13 @@ internal sealed class TrayApplicationContext : ApplicationContext
     /// </summary>
     private void CloseGrokPrompt(bool now = false)
     {
-        grokPrompt = null;
+        grokPrompts.Release(exiting || now);
+        CloseGrokPromptWindow(now);
+    }
+
+    /// <summary>Stops any wait for the quit and closes the window; the slot keeps its prompt.</summary>
+    private void CloseGrokPromptWindow(bool now = false)
+    {
         grokPromptWait?.Cancel();
         var window = grokPromptWindow;
         grokPromptWindow = null;
@@ -1318,23 +1324,8 @@ internal sealed class TrayApplicationContext : ApplicationContext
         var steps = new GrokBotPromptSteps(prompt, new TrayPromptHost(this, prompt, session, owned), GrokBotRelaunchLimits.Default);
         var result = await GrokBotPromptRun.ActAsync(prompt, step, steps, wait.Token,
             ended: () => { if (ReferenceEquals(grokPromptWait, wait)) grokPromptWait = null; });
-        if (result.Outcome is GrokBotReconnectOutcome.Reopened or GrokBotReconnectOutcome.UpdatedAndReopened && ReferenceEquals(grokPrompt, prompt))
-            HandOverGrokPrompt(prompt, goOn: result.Outcome == GrokBotReconnectOutcome.UpdatedAndReopened);
-    }
-
-    /// <summary>
-    /// Grok Bot was opened again without a usable port while the reconnect waited to reopen it: the prompt moves to that
-    /// new process at once. After an update the user's quit started, it goes straight on to the quit step, since the user
-    /// already chose Reconnect. If no unconnected Grok Bot is running any more, the old prompt stays and says what happened.
-    /// </summary>
-    private void HandOverGrokPrompt(GrokBotReconnectPrompt from, bool goOn)
-    {
-        if (grokReconnect.HandOver(ObserveGrokBot(), DateTimeOffset.UtcNow, grokLauncher) is not { } offer) return;
-        WingmanLog.Write("grok-bot-reconnect-handed-over", ("from", from.Offer.ProcessId), ("process", offer.ProcessId), ("go-on", goOn));
-        ShowGrokPrompt(offer);
-        if (!goOn || grokPrompt is not { } prompt) return;
-        if (prompt.Reconnect(busy || initializing || exiting)) _ = ActOnGrokPromptAsync(prompt, GrokBotPromptStep.Reconnect);
-        SyncGrokPromptWindow();
+        // Opened again without Wingman: the same prompt now follows that Grok Bot (GrokBotReconnectPrompt.Finished).
+        if (ReferenceEquals(grokPrompt, prompt)) grokReconnect.Following(prompt.Offer.Target);
     }
 
     private sealed class TrayPromptHost(TrayApplicationContext tray, GrokBotReconnectPrompt prompt, GrokBotSessionWatch.Run session, CancellationToken? owned) : IGrokBotPromptHost

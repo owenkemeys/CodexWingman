@@ -39,7 +39,7 @@ If an update is waiting, quitting Grok Bot starts it, and its installer doesn't 
 
 Once Grok Bot is open with the port, the prompt says "Wingman is connecting Grok Bot's Helpers..." until they are connected, and closes then.
 
-If Grok Bot opens again by itself during the update, or you open it yourself, Wingman starts nothing. If that Grok Bot has a port Wingman can use, Wingman connects to it. Otherwise the prompt says "Grok Bot was opened again without Wingman." and a prompt for that Grok Bot takes its place. After an update it goes straight on to "Close Grok Bot's window. Wingman reopens it." with no second **Reconnect**; after your own reopen it offers **Reconnect** for that new Grok Bot. If that Grok Bot is gone again, the prompt stays with the reason and **Open Grok Bot**.
+If Grok Bot opens again by itself during the update, or you open it yourself, Wingman starts nothing. If that Grok Bot has a port Wingman can use, Wingman connects to it. Otherwise the same prompt window now follows that Grok Bot. After an update it goes straight on to "Close Grok Bot's window. Wingman reopens it." with no second **Reconnect**. After your own reopen it says "Grok Bot was opened again without Wingman." with **Open Grok Bot**, which asks you to close that Grok Bot's window, as **Reconnect** does. If that Grok Bot closes too, the prompt says "Grok Bot closed before Wingman could reopen it." and **Open Grok Bot** starts Grok Bot. The prompt follows every Grok Bot opened like this, for as long as it is open.
 
 ## Every result after you act
 

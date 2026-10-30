@@ -318,12 +318,13 @@ internal static class GrokBotReconnectTests
         openBusy.Finished(new(GrokBotReconnectOutcome.Connected, quit));
         Equal(GrokBotPromptState.Closed, openBusy.State, "connected: closed");
 
-        // After the quit another Grok Bot started: never a silent close. The prompt asks the tray to hand over once, and
-        // if nothing takes over it stays, says what happened and offers Open Grok Bot.
+        // After the quit another Grok Bot started: never a silent close. The same prompt follows it, still pressed, says
+        // what happened and offers Open Grok Bot.
         var replaced = Waiting();
         replaced.Finished(new(GrokBotReconnectOutcome.BusyTooLong, quit));
-        Equal(GrokBotPromptStep.HandOver, replaced.Observe(Seen(Third), busy: false), "another Grok Bot started: hand over");
-        Equal((GrokBotPromptState.CouldNotStart, GrokBotReconnectPolicy.ReopenedText), (replaced.State, replaced.Problem), "and it says what happened");
+        Equal(GrokBotPromptStep.HandOver, replaced.Observe(Seen(Third), busy: false), "another Grok Bot started: the prompt follows it");
+        Equal((GrokBotPromptState.CouldNotStart, GrokBotReconnectPolicy.ReopenedText, Third, true, (object?)null, ("Open Grok Bot", true, "Not now")),
+            (replaced.State, replaced.Problem, replaced.Offer.ProcessId, replaced.Pressed, (object?)replaced.Quit, replaced.Buttons), "and it says what happened, never Reconnect");
         for (var tick = 0; tick < 10; tick++) Equal(GrokBotPromptStep.None, replaced.Observe(Seen(Third), busy: false), "asked once for that Grok Bot");
         Equal((GrokBotPromptState.CouldNotStart, true), (replaced.State, replaced.Open(busy: false)), "still there, with Open Grok Bot");
         Equal(GrokBotPromptStep.None, replaced.Observe(Seen(400), busy: false), "while Open Grok Bot runs, the run sees a new Grok Bot itself");
@@ -391,7 +392,7 @@ internal static class GrokBotReconnectTests
         Equal((GrokBotPromptState.CouldNotStart, GrokBotReconnectPolicy.FailedText, true), (failed.State, failed.Problem, failed.Open(busy: false)),
             "an error after the quit: stays with a plain reason and Open Grok Bot");
         var trayText = File.ReadAllText(Path.Combine(RepositoryRoot(), "src", "CodexWingman", "TrayApplicationContext.cs"));
-        var act = trayText[trayText.IndexOf("private async Task ActOnGrokPromptAsync", StringComparison.Ordinal)..trayText.IndexOf("private void HandOverGrokPrompt", StringComparison.Ordinal)];
+        var act = trayText[trayText.IndexOf("private async Task ActOnGrokPromptAsync", StringComparison.Ordinal)..trayText.IndexOf("private sealed class TrayPromptHost", StringComparison.Ordinal)];
         Equal(true, !act.Contains("MessageBox", StringComparison.Ordinal) && act.Contains("new GrokBotPromptSteps(prompt, new TrayPromptHost(this, prompt, session, owned), GrokBotRelaunchLimits.Default)", StringComparison.Ordinal),
             "the tray runs the prompt through the same run and steps, with no message box");
         var connectPart = trayText[trayText.IndexOf("private sealed class TrayPromptHost", StringComparison.Ordinal)..trayText.IndexOf("private static bool ConfirmGrokBotRelaunch", StringComparison.Ordinal)];
@@ -575,12 +576,35 @@ internal static class GrokBotReconnectTests
                     Equal((true, ("Open Grok Bot", true, "Not now")), (!string.IsNullOrWhiteSpace(prompt.Problem), prompt.Buttons), name + ": a plain reason and Open Grok Bot");
                     break;
                 case GrokBotPromptState.Working:
-                    Equal((true, ("Working...", false, "Not now")), (ending == "busy" && result.Outcome == GrokBotReconnectOutcome.Busy, prompt.Buttons), name + ": Working only for a press kept while busy");
+                    var goesOn = result.Outcome == GrokBotReconnectOutcome.UpdatedAndReopened && prompt.Offer.ProcessId == Third;
+                    Equal((true, ("Working...", false, "Not now")), (ending == "busy" && result.Outcome == GrokBotReconnectOutcome.Busy || goesOn, prompt.Buttons),
+                        name + ": Working only for a press kept while busy, or going on to the quit of the Grok Bot opened during the update");
+                    if (goesOn) Equal(GrokBotPromptStep.Reconnect, prompt.Observe(final with { Connected = false }, busy: false), name + ": asks for that Grok Bot's quit at once");
                     steps.IsBusy = false;
                     break;
                 default:
                     throw new InvalidOperationException(name + ": ended in " + prompt.State);
             }
+            if (prompt.State != GrokBotPromptState.CouldNotStart) continue;
+            // Then, between runs: another Grok Bot opens, it closes again, a third one opens, and that one comes up with the
+            // port. The same prompt follows each, stays pressed, never says Reconnect, and closes only once connected.
+            var shownBefore = prompt.Message;
+            Equal(GrokBotPromptStep.HandOver, prompt.Observe(new(401, false, Present, started.AddMinutes(5)), busy: false), name + ": follows a Grok Bot opened now");
+            Equal((401, true, GrokBotPromptState.CouldNotStart, GrokBotReconnectPolicy.ReopenedText, ("Open Grok Bot", true, "Not now")),
+                (prompt.Offer.ProcessId, prompt.Pressed, prompt.State, prompt.Message, prompt.Buttons), name + ": the same prompt, pressed, for that Grok Bot");
+            table.Add($"{path} | then another Grok Bot opens | {prompt.State}: \"{prompt.Message}\" {prompt.Buttons}");
+            Equal(GrokBotPromptStep.None, prompt.Observe(new(null, false, Present), busy: false), name + ": that Grok Bot closes");
+            Equal((true, GrokBotPromptState.CouldNotStart, GrokBotReconnectPolicy.GoneText, ("Open Grok Bot", true, "Not now")),
+                (prompt.Pressed, prompt.State, prompt.Message, prompt.Buttons), name + ": says it closed; never closed as gone");
+            table.Add($"{path} | then that Grok Bot closes | {prompt.State}: \"{prompt.Message}\" {prompt.Buttons}");
+            Equal(GrokBotPromptStep.HandOver, prompt.Observe(new(402, false, Present, started.AddMinutes(6)), busy: false), name + ": follows a second Grok Bot");
+            Equal((402, true, GrokBotReconnectPolicy.ReopenedText, ("Open Grok Bot", true, "Not now")), (prompt.Offer.ProcessId, prompt.Pressed, prompt.Message, prompt.Buttons),
+                name + ": the second hand-over keeps the press too");
+            table.Add($"{path} | then a second Grok Bot opens | {prompt.State}: \"{prompt.Message}\" {prompt.Buttons}");
+            Equal((GrokBotPromptStep.Connect, GrokBotPromptState.Connecting), (prompt.Observe(new(402, true, Present, started.AddMinutes(6)), busy: false), prompt.State),
+                name + ": it comes up with the port: Wingman connects its Helpers");
+            prompt.Finished(new(GrokBotReconnectOutcome.Connected));
+            Equal((GrokBotPromptState.Closed, "connected"), (prompt.State, prompt.ClosedBecause), name + ": closed once connected (before: " + shownBefore + ")");
         }
         Equal(true, runs > 5000, "every combination ran");
         var texts = typeof(GrokBotReconnectPolicy).GetFields().Where(field => field.IsLiteral && field.FieldType == typeof(string)).Select(field => (string)field.GetRawConstantValue()!)
@@ -647,7 +671,7 @@ internal static class GrokBotReconnectTests
         var ensure = tray[tray.IndexOf("private async Task EnsureGrokBotReadyAsync", StringComparison.Ordinal)..tray.IndexOf("private void GrokBotReconnectTick()", StringComparison.Ordinal)];
         var afterYes = ensure[ensure.IndexOf("if (open.Step == GrokBotOpenStep.CloseRequested)", StringComparison.Ordinal)..];
         afterYes = afterYes[..(afterYes.IndexOf("return;", StringComparison.Ordinal) + 7)];
-        Equal(true, afterYes.Contains("var prompt = GrokBotReconnectPrompt.AfterYes(open.Closed, open.Since, DateTimeOffset.UtcNow);", StringComparison.Ordinal)
+        Equal(true, afterYes.Contains("var prompt = grokPrompts.AfterYes(open.Closed, open.Since, DateTimeOffset.UtcNow);", StringComparison.Ordinal)
             && afterYes.IndexOf("ShowGrokPrompt(prompt);", StringComparison.Ordinal) < afterYes.IndexOf("await ActOnGrokPromptAsync(prompt, GrokBotPromptStep.ApprovedClose, session, deadline.Token);", StringComparison.Ordinal)
             && !afterYes.Contains("MessageBox", StringComparison.Ordinal), "after the Yes the tray shows the prompt, then runs it; no message box");
         Equal(true, ensure.Contains("catch (OperationCanceledException)", StringComparison.Ordinal) && ensure.Contains("MessageBox.Show(OpenStoppedText,", StringComparison.Ordinal)
@@ -669,6 +693,8 @@ internal static class GrokBotReconnectTests
             && guide.Contains("\"" + GrokBotReconnectPolicy.ConnectingText + "\"", StringComparison.Ordinal)
             && guide.Contains("\"" + GrokBotReconnectPolicy.ReopenedText + "\"", StringComparison.Ordinal)
             && guide.Contains("\"Grok Bot is updating...\"", StringComparison.Ordinal) && GrokBotReconnectPolicy.UpdatingText.StartsWith("Grok Bot is updating...", StringComparison.Ordinal)
+            && guide.Contains("the same prompt window now follows that Grok Bot", StringComparison.Ordinal) && !guide.Contains("takes its place", StringComparison.Ordinal)
+            && !guide.Contains("offers **Reconnect** for that new Grok Bot", StringComparison.Ordinal)
             && !guide.Contains("it offers **Reconnect** again", StringComparison.Ordinal) && !guide.Contains("goes back to **Reconnect**", StringComparison.Ordinal),
             "the guide says exactly what the prompt does after the user acted");
     }
@@ -1142,7 +1168,7 @@ internal static class GrokBotReconnectTests
     private static void ThePromptClosesAfterItsOwnClick()
     {
         var tray = File.ReadAllText(Path.Combine(RepositoryRoot(), "src", "CodexWingman", "TrayApplicationContext.cs"));
-        var close = tray[tray.IndexOf("private void CloseGrokPrompt(bool now = false)", StringComparison.Ordinal)..];
+        var close = tray[tray.IndexOf("private void CloseGrokPromptWindow(bool now = false)", StringComparison.Ordinal)..];
         close = close[..close.IndexOf("\n    }\n", StringComparison.Ordinal)];
         Equal(true, close.Contains("window.Hide();\n        window.BeginInvoke(window.Dispose);", StringComparison.Ordinal)
             && close.Contains("if (now || !window.IsHandleCreated) { window.Dispose(); return; }", StringComparison.Ordinal)
@@ -1673,7 +1699,7 @@ internal static class GrokBotReconnectTests
         Equal((GrokBotPromptState.CouldNotStart, GrokBotReconnectPolicy.UpdateTooLongText), (prompt.State, prompt.Problem), "too long: says so, with Open Grok Bot");
 
         var plainReopen = new Steps(unconnected, reopened) { Result = GrokBotRelaunchKind.Reopened, RelaunchQuit = quit };
-        Equal(GrokBotReconnectOutcome.Reopened, Run(plainReopen).Outcome, "reopened by the user without an update: handed over, waiting for Reconnect");
+        Equal(GrokBotReconnectOutcome.Reopened, Run(plainReopen).Outcome, "reopened by the user without an update: the prompt follows it, with Open Grok Bot");
         Equal(false, plainReopen.Log.Contains("updating 200"), "no update shown");
 
         var beforeQuit = new Steps(unconnected) { Result = GrokBotRelaunchKind.UpdateRunning };
@@ -1691,12 +1717,38 @@ internal static class GrokBotReconnectTests
             "Open Grok Bot during an update: waits for it too");
         Equal(true, opened.Log is ["start 200", "updating 200", "after update 200"], "Open waited for the update");
 
+        // The prompt itself follows the reopened Grok Bot: after the update it goes straight on to asking for the quit,
+        // after the user's own reopen it says so with Open Grok Bot. Pressed throughout; never Reconnect.
+        foreach (var (outcome, goesOn) in new[] { (GrokBotReconnectOutcome.UpdatedAndReopened, true), (GrokBotReconnectOutcome.Reopened, false) })
+        {
+            var follows = new GrokBotReconnectPrompt(offer);
+            follows.Reconnect(busy: false);
+            follows.Finished(new(outcome, quit), reopened);
+            Equal((Third, true, goesOn ? GrokBotPromptState.Working : GrokBotPromptState.CouldNotStart, goesOn ? ("Working...", false, "Not now") : ("Open Grok Bot", true, "Not now")),
+                (follows.Offer.ProcessId, follows.Pressed, follows.State, follows.Buttons), outcome + ": the same prompt follows the new Grok Bot");
+            Equal(goesOn ? GrokBotPromptStep.Reconnect : GrokBotPromptStep.None, follows.Observe(reopened, busy: false), outcome + ": after the update it asks for the quit at once");
+        }
         var tray = File.ReadAllText(Path.Combine(RepositoryRoot(), "src", "CodexWingman", "TrayApplicationContext.cs"));
-        Equal(true, tray.Contains("HandOverGrokPrompt(prompt, goOn: result.Outcome == GrokBotReconnectOutcome.UpdatedAndReopened)", StringComparison.Ordinal)
-            && tray.Contains("grokReconnect.HandOver(", StringComparison.Ordinal), "the tray moves the prompt to the reopened Grok Bot");
         var tickHandOver = tray.IndexOf("case GrokBotPromptStep.HandOver:", StringComparison.Ordinal);
-        Equal(true, tickHandOver > 0 && tray.IndexOf("HandOverGrokPrompt(prompt, goOn: false);", tickHandOver, StringComparison.Ordinal) is var call
-            && call > 0 && call < tray.IndexOf("break;", tickHandOver, StringComparison.Ordinal), "the tick hands over to a Grok Bot opened after the quit");
+        Equal(true, tickHandOver > 0 && tray.IndexOf("grokReconnect.Following(prompt.Offer.Target);", tickHandOver, StringComparison.Ordinal) is var call
+            && call > 0 && call < tray.IndexOf("break;", tickHandOver, StringComparison.Ordinal), "the tick tells the policy which Grok Bot the prompt follows");
+        // Structural: the tray holds its prompt only through the slot, never makes one itself, and has no separate hand-over window.
+        Equal((false, false, false, false, true),
+            (tray.Contains("new GrokBotReconnectPrompt(", StringComparison.Ordinal), tray.Contains("grokPrompt = ", StringComparison.Ordinal),
+                tray.Contains("HandOverGrokPrompt", StringComparison.Ordinal), tray.Contains("GrokBotReconnectPrompt.AfterYes(", StringComparison.Ordinal),
+                tray.Contains("private GrokBotReconnectPrompt? grokPrompt => grokPrompts.Current;", StringComparison.Ordinal)),
+            "the tray's prompt lives in the slot");
+        var slot = new GrokBotPromptSlot();
+        var first = slot.Offer(offer)!;
+        first.Reconnect(busy: false);
+        Equal((true, true), (slot.Offer(offer with { ProcessId = Third }) is null, ReferenceEquals(slot.Current, first)), "a pressed prompt can't be replaced by an offer");
+        slot.Release();
+        Equal(true, ReferenceEquals(slot.Current, first), "nor let go while open");
+        first.NotNow();
+        slot.Release();
+        Equal(true, slot.Current is null && slot.Offer(offer) is { Pressed: false }, "once closed, the next offer shows");
+        var yes = slot.AfterYes(offer.Target, null, T0);
+        Equal((true, true), (yes.Pressed, slot.Offer(offer) is null), "the Yes's prompt is pressed from the start");
     }
 
     /// <summary>
@@ -1724,19 +1776,18 @@ internal static class GrokBotReconnectTests
             "startup and the Grok Bot menu still adopt a running port");
     }
 
-    /// <summary>The handed-over prompt is its process's one prompt: no settle, and no second offer later.</summary>
+    /// <summary>The Grok Bot a pressed prompt follows has that one prompt: no second offer later, also after Not now.</summary>
     private static void AHandOverIsTheOnlyPromptForItsProcess()
     {
         var policy = new GrokBotReconnectPolicy();
         var facts = new Facts("1.0.0");
         policy.Observe(new(First, true, Present), T0, facts);
         facts.Version = "1.1.0";
-        var offer = policy.HandOver(new(Third, false, Present), T0.AddSeconds(1), facts);
-        Equal((Third, true), (offer?.ProcessId, offer?.Updated ?? false), "handed over at once, and the new version proves the update");
+        policy.Following(new GrokBotProcess(Third, null));
         var later = Enumerable.Range(1, 60).Select(second => policy.Observe(new(Third, false, Present), T0.AddSeconds(1 + second), facts)).ToArray();
         Equal(true, later.All(next => next is null), "no second prompt for it");
-        Equal(true, policy.HandOver(new(Third, true, Present), T0, facts) is null && policy.HandOver(new(null, false, Present), T0, facts) is null,
-            "nothing to hand over to when connected or not running");
+        Equal(true, policy.Observe(new(400, false, Present), T0.AddSeconds(70), facts) is null
+            && policy.Observe(new(400, false, Present), T0.AddSeconds(80), facts) is { ProcessId: 400 }, "another Grok Bot later still gets its own offer");
     }
 
     /// <summary>
