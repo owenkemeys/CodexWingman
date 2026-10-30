@@ -1101,7 +1101,18 @@ internal sealed class TrayApplicationContext : ApplicationContext
             var observation = ObserveGrokBot();
             if (grokPrompt is { } prompt)
             {
-                if (prompt.Observe(observation, busy || initializing) is var step and not GrokBotPromptStep.None) _ = ActOnGrokPromptAsync(prompt, step);
+                switch (prompt.Observe(observation, busy || initializing))
+                {
+                    case GrokBotPromptStep.HandOver:
+                        WingmanLog.Write("grok-bot-reconnect-replaced", ("process", prompt.Offer.ProcessId), ("by", observation.ProcessId));
+                        HandOverGrokPrompt(prompt, goOn: false);
+                        break;
+                    case GrokBotPromptStep.None:
+                        break;
+                    case var step:
+                        _ = ActOnGrokPromptAsync(prompt, step);
+                        break;
+                }
                 SyncGrokPromptWindow();
             }
             // While busy Wingman may itself be closing and reopening Grok Bot, and during a reconnect it is waiting for the

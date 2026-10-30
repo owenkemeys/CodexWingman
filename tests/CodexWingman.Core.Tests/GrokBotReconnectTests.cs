@@ -293,10 +293,21 @@ internal static class GrokBotReconnectTests
         openBusy.Finished(new(GrokBotReconnectOutcome.Relaunched, quit));
         Equal(GrokBotPromptState.Closed, openBusy.State, "opened: closed");
 
+        // After the quit another Grok Bot started: never a silent close. The prompt asks the tray to hand over once, and
+        // if nothing takes over it stays, says what happened and offers Open Grok Bot.
         var replaced = Waiting();
         replaced.Finished(new(GrokBotReconnectOutcome.BusyTooLong, quit));
-        replaced.Observe(Seen(Third), busy: false);
-        Equal((GrokBotPromptState.Closed, "replaced"), (replaced.State, replaced.ClosedBecause), "another Grok Bot started: it gets its own prompt");
+        Equal(GrokBotPromptStep.HandOver, replaced.Observe(Seen(Third), busy: false), "another Grok Bot started: hand over");
+        Equal((GrokBotPromptState.CouldNotStart, GrokBotReconnectPolicy.ReopenedText), (replaced.State, replaced.Problem), "and it says what happened");
+        for (var tick = 0; tick < 10; tick++) Equal(GrokBotPromptStep.None, replaced.Observe(Seen(Third), busy: false), "asked once for that Grok Bot");
+        Equal((GrokBotPromptState.CouldNotStart, true), (replaced.State, replaced.Open(busy: false)), "still there, with Open Grok Bot");
+        Equal(GrokBotPromptStep.None, replaced.Observe(Seen(400), busy: false), "while Open Grok Bot runs, the run sees a new Grok Bot itself");
+        Equal(GrokBotPromptState.Working, replaced.State, "not closed or handed over mid-run");
+        var pendingOpen = Waiting();
+        pendingOpen.Finished(new(GrokBotReconnectOutcome.StillRunning, quit));
+        pendingOpen.Open(busy: true);
+        Equal(GrokBotPromptStep.HandOver, pendingOpen.Observe(Seen(Third), busy: true), "a kept Open Grok Bot press: handed over instead");
+        Equal((GrokBotPromptState.CouldNotStart, GrokBotReconnectPolicy.ReopenedText), (pendingOpen.State, pendingOpen.Problem), "and it says what happened");
 
         var timedOut = Waiting();
         timedOut.Finished(new(GrokBotReconnectOutcome.QuitTimedOut));
@@ -1212,6 +1223,9 @@ internal static class GrokBotReconnectTests
         var tray = File.ReadAllText(Path.Combine(RepositoryRoot(), "src", "CodexWingman", "TrayApplicationContext.cs"));
         Equal(true, tray.Contains("HandOverGrokPrompt(prompt, goOn: result.Outcome == GrokBotReconnectOutcome.UpdatedAndReopened)", StringComparison.Ordinal)
             && tray.Contains("grokReconnect.HandOver(", StringComparison.Ordinal), "the tray moves the prompt to the reopened Grok Bot");
+        var tickHandOver = tray.IndexOf("case GrokBotPromptStep.HandOver:", StringComparison.Ordinal);
+        Equal(true, tickHandOver > 0 && tray.IndexOf("HandOverGrokPrompt(prompt, goOn: false);", tickHandOver, StringComparison.Ordinal) is var call
+            && call > 0 && call < tray.IndexOf("break;", tickHandOver, StringComparison.Ordinal), "the tick hands over to a Grok Bot opened after the quit");
     }
 
     /// <summary>

@@ -193,21 +193,26 @@ public enum GrokBotPromptState
     Closed,
 }
 
-/// <summary>What the tray should do now for the prompt.</summary>
-public enum GrokBotPromptStep { None, Reconnect, Open }
+/// <summary>
+/// What the tray should do now for the prompt. HandOver: after the quit another Grok Bot started; the tray moves the prompt
+/// to it (<see cref="GrokBotReconnectPolicy.HandOver"/>), and if it can't, the prompt stays and says what happened.
+/// </summary>
+public enum GrokBotPromptStep { None, Reconnect, Open, HandOver }
 
 /// <summary>
 /// The reconnect prompt window's state, bound to one offer: its exact Grok Bot process (id and start time). It replaces
 /// tray balloons, whose clicks Windows can't tie to one balloon. Until Reconnect it has no time limit, and closes when
 /// that process exits or is replaced, when Grok Bot connects, or after Not now. Once the user has pressed Reconnect,
-/// it never closes silently: it closes once Grok Bot is reconnected (or the user cancels), moves to a Grok Bot opened again
-/// meanwhile, shows "Grok Bot is updating…" while an update runs, or stays and says why Wingman couldn't open it, with an
+/// it never closes silently: it closes once Grok Bot is reconnected (or the user cancels); when another Grok Bot opens
+/// after the quit it hands over to a prompt for that one, or else stays and says "Grok Bot was opened again without
+/// Wingman."; it shows "Grok Bot is updating…" while an update runs, or stays and says why Wingman couldn't open it, with an
 /// Open Grok Bot button. A button pressed while Wingman is busy shows "Working…" and
 /// acts once Wingman is free.
 /// </summary>
 public sealed class GrokBotReconnectPrompt(GrokBotReconnectOffer offer)
 {
     private GrokBotPromptStep pending;
+    private GrokBotProcess? handedOverTo;
 
     public GrokBotReconnectOffer Offer { get; } = offer;
     public GrokBotPromptState State { get; private set; } = GrokBotPromptState.Offered;
@@ -251,12 +256,16 @@ public sealed class GrokBotReconnectPrompt(GrokBotReconnectOffer offer)
             // what became of it.
             if (!Pressed && !Offer.Owns(current)) { Close("gone"); return GrokBotPromptStep.None; }
         }
-        else if (State != GrokBotPromptState.Updating && current.Process is { } other && other != Offer.Target)
+        else if (State != GrokBotPromptState.Updating && !(State == GrokBotPromptState.Working && pending == GrokBotPromptStep.None)
+            && current.Process is { } other && other != Offer.Target && other != handedOverTo)
         {
-            // After the quit: another Grok Bot started (by the user, or an installer); it gets its own prompt. While
-            // updating, the run itself sees it and moves the prompt to it.
-            Close("replaced");
-            return GrokBotPromptStep.None;
+            // After the quit another Grok Bot started (by the user, or an installer). The prompt says so and the tray
+            // hands over to a prompt for that one; if it can't, this one stays with the reason and Open Grok Bot. While a
+            // run is under way (updating, or opening Grok Bot), the run itself sees it and says what happened.
+            handedOverTo = other;
+            Problem = GrokBotReconnectPolicy.ReopenedText;
+            State = GrokBotPromptState.CouldNotStart;
+            return GrokBotPromptStep.HandOver;
         }
         if (State != GrokBotPromptState.Working || pending == GrokBotPromptStep.None || busy) return GrokBotPromptStep.None;
         var step = pending;
