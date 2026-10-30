@@ -320,6 +320,8 @@ internal static class GrokBotStartLinkTests
         Equal(true, question.Contains("exactly the debugging port it added (127.0.0.1, port 9523)", StringComparison.Ordinal)
             && question.Contains("didn't add, is left alone", StringComparison.Ordinal)
             && question.Contains("still opens Grok Bot", StringComparison.Ordinal), "turning off explains itself like turning on");
+        Equal((true, false), (question.EndsWith("Wingman shows its reconnect prompt instead of reconnecting on its own.", StringComparison.Ordinal),
+            question.Contains("ask again", StringComparison.Ordinal)), "turning off says what happens after the next update: the reconnect prompt");
         Equal(true, GrokBotStartLinkRestore.Question(null).Contains("no record", StringComparison.Ordinal), "no record: says nothing is removed");
         // Turning the option off from the development toggle shows that same message, like turning it on confirms.
         var tray = File.ReadAllText(Path.Combine(FindRepositoryRoot(), "src", "CodexWingman", "TrayApplicationContext.cs"));

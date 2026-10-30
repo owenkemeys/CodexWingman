@@ -311,7 +311,7 @@ public sealed record GrokBotStartLinkRestore(GrokBotStartLinkRestoreKind Kind, i
             : "Wingman has no record of adding a debugging port, so it removes nothing from the shortcut. ")
         + "Any other setting on the shortcut, including a debugging port Wingman didn't add, is left alone. "
         + "The shortcut still opens Grok Bot, with its name, icon and grouping unchanged. "
-        + "After Grok Bot's next self-update, Wingman will ask again before reopening Grok Bot instead of reconnecting on its own.";
+        + "After Grok Bot's next self-update, Wingman shows its reconnect prompt instead of reconnecting on its own.";
 
     public string Message
     {
