@@ -1026,6 +1026,13 @@ internal sealed class TrayApplicationContext : ApplicationContext
                 throw new InvalidOperationException("Grok Bot is open, but its Helpers could not be checked.");
             SynchronizeHelpersMenu();
         }
+        catch (OperationCanceledException)
+        {
+            // Reload Helpers (or the deadline) stopped it: never the raw cancel text; a queued reload says nothing more.
+            WingmanLog.Write("grok-bot-repair-stopped", ("reload", reloadPending));
+            grok.SetMenuStatus();
+            if (!reloadPending) MessageBox.Show(RepairStoppedText, "Grok Bot needs attention", MessageBoxButtons.OK, MessageBoxIcon.Warning);
+        }
         catch (Exception error)
         {
             Debug.WriteLine($"[Grok Bot repair] {error}");
@@ -1057,11 +1064,21 @@ internal sealed class TrayApplicationContext : ApplicationContext
             Func<bool> confirm = () => GrokBotAnswerTime.AskOffTheClock(deadline, GrokBotAnswerTime.AfterYes(GrokBotRelaunchLimits.Default), ask);
             // A Grok Bot already running with a usable port Wingman didn't launch is adopted first, so nothing restarts.
             if (grokLauncher.MainProcess() is { } running) AdoptGrokBotPort(running.Id, "open");
-            if (!await grokLauncher.OpenAsync(confirm, deadline.Token, () => SetBusy(true, "Grok Bot is updating..."), () => session.Ending))
+            var open = await grokLauncher.OpenAsync(confirm, deadline.Token);
+            if (open.Step == GrokBotOpenStep.Declined)
             {
                 if (plainEntry)
                     WingmanLog.Write("plain-launch", ("app", WingmanLaunchTarget.GrokBot), ("step", PlainLaunchPolicy.Decide(AppState.RunningNotConnected)));
                 grok.SetMenuStatus();
+                return;
+            }
+            if (open.Step == GrokBotOpenStep.CloseRequested)
+            {
+                // After the Yes, every result ends in the prompt: connected (it closes), the user's Not now, or a plain
+                // reason with Open Grok Bot. Reload Helpers stops the run, and the prompt says so.
+                var prompt = GrokBotReconnectPrompt.AfterYes(open.Closed, open.Since, DateTimeOffset.UtcNow);
+                ShowGrokPrompt(prompt);
+                await ActOnGrokPromptAsync(prompt, GrokBotPromptStep.ApprovedClose, session, deadline.Token);
                 return;
             }
             grok.Menu.Visible = true;
@@ -1069,6 +1086,13 @@ internal sealed class TrayApplicationContext : ApplicationContext
             if (grok.CheckFailed)
                 throw new InvalidOperationException("Grok Bot started, but its Helpers could not be checked.");
             SynchronizeHelpersMenu();
+        }
+        catch (OperationCanceledException)
+        {
+            // Before any Yes (or with none to ask): Reload Helpers or the deadline stopped it. Never the raw cancel text.
+            WingmanLog.Write("grok-bot-open-stopped", ("reload", reloadPending));
+            grok.SetMenuStatus();
+            if (!atStartup && !reloadPending) MessageBox.Show(OpenStoppedText, "Grok Bot needs attention", MessageBoxButtons.OK, MessageBoxIcon.Warning);
         }
         catch (Exception error)
         {
@@ -1133,6 +1157,8 @@ internal sealed class TrayApplicationContext : ApplicationContext
                 observation = ObserveGrokBot();
                 uiContext.Post(async _ => await ConnectToListeningGrokBotAsync("grok-bot-started"), null);
             }
+            // A prompt the user has pressed stays until it is connected or they close it: no new offer replaces it.
+            if (grokPrompt is { Pressed: true }) return;
             if (grokReconnect.Observe(observation, DateTimeOffset.UtcNow, grokLauncher) is not { } offer) return;
             WingmanLog.Write("grok-bot-reconnect-offered", ("process", offer.ProcessId), ("updated", offer.Updated));
             ShowGrokPrompt(offer);
@@ -1192,10 +1218,15 @@ internal sealed class TrayApplicationContext : ApplicationContext
     }
 
     /// <summary>Shows the prompt window for <paramref name="offer"/> without taking focus, replacing any earlier one.</summary>
-    private void ShowGrokPrompt(GrokBotReconnectOffer offer)
+    private const string OpenStoppedText = "Wingman stopped opening Grok Bot before it finished. Choose Open window again.";
+    private const string RepairStoppedText = "Wingman stopped repairing Grok Bot before it finished. Choose Repair again.";
+
+    private void ShowGrokPrompt(GrokBotReconnectOffer offer) => ShowGrokPrompt(new GrokBotReconnectPrompt(offer));
+
+    private void ShowGrokPrompt(GrokBotReconnectPrompt prompt)
     {
         CloseGrokPrompt();
-        var prompt = new GrokBotReconnectPrompt(offer);
+        var offer = prompt.Offer;
         var window = new GrokBotPromptWindow(tray.Icon);
         window.ReconnectClicked += () =>
         {
@@ -1272,10 +1303,19 @@ internal sealed class TrayApplicationContext : ApplicationContext
     /// </summary>
     private async Task ActOnGrokPromptAsync(GrokBotReconnectPrompt prompt, GrokBotPromptStep step)
     {
-        using var wait = new CancellationTokenSource();
-        grokPromptWait = wait;
         using var session = sessionWatch.Begin();
-        var steps = new GrokBotPromptSteps(prompt, new TrayPromptHost(this, prompt, session), GrokBotRelaunchLimits.Default);
+        await ActOnGrokPromptAsync(prompt, step, session, owned: null);
+    }
+
+    /// <param name="owned">
+    /// Open window or Repair's deadline: that run already holds Wingman's busy state, so the prompt's run neither waits for
+    /// Wingman to be free nor takes it, and the deadline (or Reload Helpers, which cancels it) stops it.
+    /// </param>
+    private async Task ActOnGrokPromptAsync(GrokBotReconnectPrompt prompt, GrokBotPromptStep step, GrokBotSessionWatch.Run session, CancellationToken? owned)
+    {
+        using var wait = CancellationTokenSource.CreateLinkedTokenSource(owned ?? CancellationToken.None);
+        grokPromptWait = wait;
+        var steps = new GrokBotPromptSteps(prompt, new TrayPromptHost(this, prompt, session, owned), GrokBotRelaunchLimits.Default);
         var result = await GrokBotPromptRun.ActAsync(prompt, step, steps, wait.Token,
             ended: () => { if (ReferenceEquals(grokPromptWait, wait)) grokPromptWait = null; });
         if (result.Outcome is GrokBotReconnectOutcome.Reopened or GrokBotReconnectOutcome.UpdatedAndReopened && ReferenceEquals(grokPrompt, prompt))
@@ -1297,19 +1337,20 @@ internal sealed class TrayApplicationContext : ApplicationContext
         SyncGrokPromptWindow();
     }
 
-    private sealed class TrayPromptHost(TrayApplicationContext tray, GrokBotReconnectPrompt prompt, GrokBotSessionWatch.Run session) : IGrokBotPromptHost
+    private sealed class TrayPromptHost(TrayApplicationContext tray, GrokBotReconnectPrompt prompt, GrokBotSessionWatch.Run session, CancellationToken? owned) : IGrokBotPromptHost
     {
         public GrokBotObservation Observe() => tray.ObserveGrokBot();
         public bool AdoptListeningPort(int process) => tray.AdoptGrokBotPort(process, "reconnect");
-        public bool Busy => tray.busy || tray.initializing || tray.exiting;
+        public bool Busy => tray.exiting || owned is null && (tray.busy || tray.initializing);
         public bool Installed => tray.grokLauncher.IsInstalled();
         public bool SessionEnding => session.Ending;
         public IGrokBotProcessControl Control() => tray.grokLauncher.Control(() => !Busy, () => session.Ending);
         public void Changed()
         {
+            if (owned is not null && prompt.State == GrokBotPromptState.Updating) tray.SetBusy(true, "Grok Bot is updating...");
             if (ReferenceEquals(tray.grokPrompt, prompt)) tray.SyncGrokPromptWindow();
         }
-        public Task<bool> ConnectAsync(bool started, CancellationToken cancellationToken) => tray.ConnectGrokBotAsync(started);
+        public Task<bool> ConnectAsync(bool started, CancellationToken cancellationToken) => tray.ConnectGrokBotAsync(started, owned);
     }
 
     /// <summary>
@@ -1317,8 +1358,9 @@ internal sealed class TrayApplicationContext : ApplicationContext
     /// Bot's window if Wingman just started it, and connects the Helpers. True once they are connected; the prompt shows
     /// "opening" until then, and says so if it fails. No message box.
     /// </summary>
-    private async Task<bool> ConnectGrokBotAsync(bool started)
+    private async Task<bool> ConnectGrokBotAsync(bool started, CancellationToken? owned)
     {
+        if (owned is { } token) return await ConnectHelpersAsync(started, token);
         var free = DateTime.UtcNow + TimeSpan.FromSeconds(60);
         while (busy || initializing)
         {
@@ -1333,11 +1375,21 @@ internal sealed class TrayApplicationContext : ApplicationContext
         using var deadline = new CancellationTokenSource(TimeSpan.FromMinutes(2));
         activeInteractiveOperation = deadline;
         SetBusy(true, "Reconnecting Grok Bot...");
+        try { return await ConnectHelpersAsync(started, deadline.Token); }
+        finally
+        {
+            if (ReferenceEquals(activeInteractiveOperation, deadline)) activeInteractiveOperation = null;
+            SetBusy(false);
+        }
+    }
+
+    private async Task<bool> ConnectHelpersAsync(bool started, CancellationToken cancellationToken)
+    {
         try
         {
-            if (started) await grokLauncher.WaitForWindowAsync(deadline.Token);
+            if (started) await grokLauncher.WaitForWindowAsync(cancellationToken);
             grok.Menu.Visible = true;
-            await grok.ReconcileAsync(() => grok.Host.ResumeAndReconcileAsync(deadline.Token), deadline.Token);
+            await grok.ReconcileAsync(() => grok.Host.ResumeAndReconcileAsync(cancellationToken), cancellationToken);
             if (!grok.CheckFailed)
             {
                 SynchronizeHelpersMenu();
@@ -1350,11 +1402,6 @@ internal sealed class TrayApplicationContext : ApplicationContext
         {
             WingmanLog.Write("grok-bot-reconnect-connect-failed", ("error", error.GetType().Name));
             grok.CheckFailed = true;
-        }
-        finally
-        {
-            if (ReferenceEquals(activeInteractiveOperation, deadline)) activeInteractiveOperation = null;
-            SetBusy(false);
         }
         grok.SetMenuStatus();
         return false;

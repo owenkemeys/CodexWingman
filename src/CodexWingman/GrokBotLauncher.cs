@@ -16,7 +16,6 @@ namespace CodexWingman;
 internal sealed class GrokBotLauncher(string wingmanDataRoot, Func<IEnumerable<int>> reservedPorts) : IGrokBotFacts
 {
     private static readonly TimeSpan EndpointTimeout = TimeSpan.FromSeconds(45);
-    private static readonly TimeSpan CloseTimeout = TimeSpan.FromSeconds(20);
     private static readonly HttpClient Http = new() { Timeout = TimeSpan.FromSeconds(2) };
     public string RuntimePath { get; } = GrokBotLaunchPolicy.RuntimePath(wingmanDataRoot);
     public string Executable { get; } = GrokBotLaunchPolicy.ExecutablePath(
@@ -237,12 +236,12 @@ internal sealed class GrokBotLauncher(string wingmanDataRoot, Func<IEnumerable<i
     }
 
     /// <summary>
-    /// Already hooked: bring Grok Bot forward. Not running: start it with the debugging port.
-    /// Running without the port: ask, close it gracefully, and start it again with the same user data. If that close
-    /// starts Grok Bot's update, Wingman waits for the update and then opens Grok Bot, as after Reconnect
-    /// (<see cref="GrokBotRelaunch.AfterCloseRequestAsync"/>); <paramref name="updating"/> is called as the wait starts.
+    /// Already hooked: bring Grok Bot forward. Not running: start it with the debugging port. Running without the port:
+    /// ask; after the Yes, ask it to close gracefully and return <see cref="GrokBotOpenStep.CloseRequested"/> with the main
+    /// process asked to close and Grok Bot.exe before the close. The caller's prompt run then waits for the close (and an
+    /// update it starts) and reopens Grok Bot with the same user data (<see cref="GrokBotRelaunch.AfterCloseRequestAsync"/>).
     /// </summary>
-    public async Task<bool> OpenAsync(Func<bool> confirmRelaunch, CancellationToken cancellationToken, Action? updating = null, Func<bool>? sessionEnding = null)
+    public async Task<GrokBotOpen> OpenAsync(Func<bool> confirmRelaunch, CancellationToken cancellationToken)
     {
         if (!IsInstalled()) throw new FileNotFoundException("Grok Bot is not installed in its usual folder.");
         var stamp = ExecutableStamp();
@@ -250,46 +249,29 @@ internal sealed class GrokBotLauncher(string wingmanDataRoot, Func<IEnumerable<i
         {
             try { foreach (var process in hooked) if (SafeMainWindow(process) is var window && window != IntPtr.Zero) Core.Helpers.WindowsForegroundActivator.ActivateWindow(window); }
             finally { foreach (var process in hooked) process.Dispose(); }
-            return true;
+            return new(GrokBotOpenStep.Brought);
         }
         await ThrowIfUpdateUnderWayAsync(stamp);
         var closed = MainProcess();
         var running = Running();
         try
         {
-            if (running.Length > 0)
+            if (running.Length == 0)
             {
-                if (!confirmRelaunch()) return false;
-                WingmanLog.Write("grok-bot-close", ("processes", running.Length), ("forced", false));
-                foreach (var process in running)
-                {
-                    try { if (SafeMainWindow(process) != IntPtr.Zero) process.CloseMainWindow(); }
-                    catch (InvalidOperationException) { }
-                }
+                StartWithPort();
+                await WaitForWindowAsync(cancellationToken);
+                return new(GrokBotOpenStep.Started);
             }
+            if (!confirmRelaunch()) return new(GrokBotOpenStep.Declined);
+            WingmanLog.Write("grok-bot-close", ("processes", running.Length), ("forced", false));
+            foreach (var process in running)
+            {
+                try { if (SafeMainWindow(process) != IntPtr.Zero) process.CloseMainWindow(); }
+                catch (InvalidOperationException) { }
+            }
+            return new(GrokBotOpenStep.CloseRequested, closed, stamp);
         }
         finally { foreach (var process in running) process.Dispose(); }
-
-        // Closing Grok Bot may start its staged update, also before every Grok Bot process has gone. The user said Yes to
-        // closing and reopening it, so Wingman waits for the update and opens it after, with the reconnect's checks.
-        var updated = false;
-        var result = await GrokBotRelaunch.AfterCloseRequestAsync(closed, stamp, new ProcessControl(this, () => true, sessionEnding ?? (() => false)),
-            CloseTimeout, TimeSpan.FromMilliseconds(250), () => { updated = true; WingmanLog.Write("grok-bot-open-update-after-close"); updating?.Invoke(); },
-            GrokBotRelaunchLimits.Default, () => DateTime.UtcNow, (wait, token) => Task.Delay(wait, token), cancellationToken);
-        cancellationToken.ThrowIfCancellationRequested();
-        if (result is null)
-        {
-            StartWithPort();
-            await WaitForWindowAsync(cancellationToken);
-            return true;
-        }
-        WingmanLog.Write(updated ? "grok-bot-open-after-update" : "grok-bot-open-close-wait", ("result", result.Kind));
-        if (!updated && result.Kind == GrokBotRelaunchKind.StillRunning)
-            throw new TimeoutException("Grok Bot did not close, so Wingman left it running. Close it yourself, then choose Open window in the Grok Bot menu again.");
-        if (result.Kind != GrokBotRelaunchKind.Relaunched)
-            throw new InvalidOperationException(GrokBotReconnectPrompt.ProblemAfterQuit(GrokBotReconnectRun.OutcomeOf(result.Kind)));
-        await WaitForWindowAsync(cancellationToken);
-        return true;
     }
 
     private async Task ThrowIfUpdateUnderWayAsync(GrokBotExecutableStamp? since)
@@ -583,3 +565,8 @@ internal sealed class GrokBotLauncher(string wingmanDataRoot, Func<IEnumerable<i
         throw new IOException("No free local port was available for Grok Bot.");
     }
 }
+
+internal enum GrokBotOpenStep { Brought, Started, Declined, CloseRequested }
+
+/// <summary>What Open window did before any wait: for <see cref="GrokBotOpenStep.CloseRequested"/>, the process asked to close and Grok Bot.exe before.</summary>
+internal sealed record GrokBotOpen(GrokBotOpenStep Step, GrokBotProcess? Closed = null, GrokBotExecutableStamp? Since = null);

@@ -85,6 +85,22 @@ public sealed class GrokBotPromptSteps(GrokBotReconnectPrompt prompt, IGrokBotPr
 
     public Task<bool> ConnectAsync(bool started, CancellationToken cancellationToken) => host.ConnectAsync(started, cancellationToken);
 
+    /// <summary>
+    /// Open window or Repair after the Yes and the close request: up to <c>Close</c> for Grok Bot to close; an update that
+    /// close starts shows in the prompt, and Grok Bot is reopened after it.
+    /// </summary>
+    public async Task<GrokBotRelaunchResult> AfterApprovedCloseAsync(GrokBotProcess? closed, GrokBotExecutableStamp? since, CancellationToken cancellationToken)
+    {
+        var result = await GrokBotRelaunch.AfterCloseRequestAsync(closed, since, host.Control(), limits.Close, limits.Poll, () =>
+        {
+            WingmanLog.Write("grok-bot-open-update-after-close");
+            prompt.Updating(null);
+            host.Changed();
+        }, limits, now, delay, cancellationToken, Exited);
+        WingmanLog.Write("grok-bot-open-close-wait", ("result", result.Kind));
+        return result;
+    }
+
     private void Exited(GrokBotRelaunch.ClosedProcess quit)
     {
         prompt.Exited(quit);
@@ -116,6 +132,8 @@ public static class GrokBotPromptRun
             {
                 GrokBotPromptStep.Open => await GrokBotReconnectRun.OpenAsync(prompt.Offer.Target, prompt.Quit, steps, cancellationToken, prompt.Offer),
                 GrokBotPromptStep.Connect => new(GrokBotReconnectOutcome.AlreadyConnected, prompt.Quit),
+                GrokBotPromptStep.ApprovedClose => await GrokBotReconnectRun.ApprovedCloseAsync(prompt.Offer.ProcessId == 0 ? null : prompt.Offer.Target,
+                    prompt.ApprovedSince, steps, cancellationToken),
                 _ => await GrokBotReconnectRun.RunAsync(prompt.Offer, steps, cancellationToken),
             };
         }
