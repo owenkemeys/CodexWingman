@@ -519,7 +519,8 @@ internal static class GrokBotReconnectTests
         var table = new SortedSet<string>(StringComparer.Ordinal);
         var runs = 0;
         const string Approved = "Open window or Repair after the Yes";
-        foreach (var path in new[] { "Reconnect", "Open Grok Bot after the quit", "Open Grok Bot without the proof", "Open Grok Bot while it still runs", Approved })
+        const string Replaced = "Reconnect after it was replaced";
+        foreach (var path in new[] { "Reconnect", Replaced, "Open Grok Bot after the quit", "Open Grok Bot without the proof", "Open Grok Bot while it still runs", Approved })
         foreach (var kind in kinds)
         foreach (var afterUpdate in kind == GrokBotRelaunchKind.UpdateRunning ? kinds : [GrokBotRelaunchKind.Relaunched])
         foreach (var ending in new[] { "returns", "throws", "user cancels", "Wingman stops", "shutdown", "busy" })
@@ -529,7 +530,8 @@ internal static class GrokBotReconnectTests
             runs++;
             var prompt = path == Approved ? GrokBotReconnectPrompt.AfterYes(offer.Target, null, T0) : new GrokBotReconnectPrompt(offer);
             var quit = QuitProof(offer.Target);
-            var steps = new Steps(path is "Reconnect" or "Open Grok Bot while it still runs" ? owned : new GrokBotObservation(null, false, Present), final)
+            var steps = new Steps(path is "Reconnect" or "Open Grok Bot while it still runs" ? owned
+                : path == Replaced ? new GrokBotObservation(Third, false, Present, started.AddMinutes(1)) : new GrokBotObservation(null, false, Present), final)
             {
                 Result = kind, AfterUpdate = afterUpdate, OpenAfterPress = kind,
                 RelaunchQuit = kind is GrokBotRelaunchKind.Relaunched or GrokBotRelaunchKind.UpdateRunning or GrokBotRelaunchKind.Reopened
@@ -549,7 +551,7 @@ internal static class GrokBotReconnectTests
                     (prompt.State, prompt.Message, prompt.Pressed, prompt.Offer.Title), "after the Yes: the prompt is already working");
                 step = GrokBotPromptStep.ApprovedClose;
             }
-            else if (path == "Reconnect")
+            else if (path is "Reconnect" or Replaced)
             {
                 prompt.Reconnect(busy: false);
                 step = GrokBotPromptStep.Reconnect;
@@ -573,6 +575,10 @@ internal static class GrokBotReconnectTests
             var message = prompt.State == GrokBotPromptState.Closed ? "" : prompt.Message;
             var shown = prompt.State == GrokBotPromptState.Closed ? "closed (" + prompt.ClosedBecause + ")" : $"{prompt.State}: \"{message}\" {prompt.Buttons}";
             table.Add($"{path} | {result.Outcome} | {shown}");
+            if (path == Replaced)
+                Equal((GrokBotReconnectOutcome.Replaced, true, false), (result.Outcome, prompt.State == GrokBotPromptState.CouldNotStart && prompt.Problem == GrokBotReconnectPolicy.ReplacedText
+                    || prompt.ClosedBecause == "not-now", steps.Log.Any(line => line.StartsWith("relaunch", StringComparison.Ordinal) || line.StartsWith("start", StringComparison.Ordinal))),
+                    name + ": replaced at the press: says so, starts nothing");
             Equal(false, shown.Contains('…') || prompt.Offer.Title.Contains('…'), name + ": plain ASCII dots, never the ellipsis character");
             Equal(false, prompt.State is GrokBotPromptState.WaitingForQuit or GrokBotPromptState.Updating or GrokBotPromptState.Connecting, name + ": the run's end leaves no waiting state");
             Equal(false, message.Contains("operation was canceled", StringComparison.OrdinalIgnoreCase) || message.Contains("denied", StringComparison.OrdinalIgnoreCase),
@@ -587,7 +593,8 @@ internal static class GrokBotReconnectTests
                         name + ": closed only once the Helpers connected, or by the user");
                     break;
                 case GrokBotPromptState.CouldNotStart:
-                    Equal(true, ending is not ("Wingman stops" or "shutdown") || prompt.Problem is GrokBotReconnectPolicy.StoppedText or GrokBotReconnectPolicy.SessionEndingText,
+                    // A Grok Bot replaced at the press ends the run before any wait a stop could interrupt.
+                    Equal(true, ending is not ("Wingman stops" or "shutdown") || path == Replaced || prompt.Problem is GrokBotReconnectPolicy.StoppedText or GrokBotReconnectPolicy.SessionEndingText,
                         name + ": a stop says Wingman stopped");
                     var stillOpen = result.Outcome is GrokBotReconnectOutcome.NotClosed or GrokBotReconnectOutcome.QuitTimedOut && steps.LastSeen is not { Process: null };
                     Equal((true, (stillOpen ? "Try again" : "Open Grok Bot", true, "Not now")), (!string.IsNullOrWhiteSpace(prompt.Problem), prompt.Buttons),
