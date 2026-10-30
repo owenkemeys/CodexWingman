@@ -480,8 +480,8 @@ public sealed class GrokBotReconnectPrompt(GrokBotReconnectOffer offer)
     }
 
     /// <summary>
-    /// The window's text for the current state. "Working..." never shows the reason from before the press: it says Wingman is
-    /// opening Grok Bot after Open Grok Bot, and the prompt's own text after Reconnect.
+    /// The window's text for the current state. "Working..." never shows the reason from before the press: it says the
+    /// prompt's own text until Wingman has actually started Grok Bot, and Wingman is opening Grok Bot from then on.
     /// </summary>
     public string Message => Shown.Message;
 
@@ -544,17 +544,18 @@ public sealed class GrokBotReconnectPrompt(GrokBotReconnectOffer offer)
     }
 
     /// <summary>
-    /// "Working..."'s words claim only what is decided: Wingman is opening Grok Bot only once the run has decided to start it
-    /// (<see cref="Opening"/>: the close was the user's own and no update runs, or the press allows it), or after the Yes to
-    /// Open window or Repair; Try again for the Grok Bot whose Helpers didn't connect says Wingman connects them, which is
-    /// its next step. Before that, also while a press waits for Wingman to be free, the words are the prompt's own.
+    /// "Working..."'s words claim only what has happened, so nothing they say is taken back later: Wingman is opening Grok
+    /// Bot only once the single start point has started it (<see cref="WingmanStarted"/>), never while the run still checks
+    /// for an update, for Grok Bot's other processes to close or for Wingman to be free, and also not after the Yes to Open
+    /// window or Repair until that start. Try again for the Grok Bot whose Helpers didn't connect says Wingman connects
+    /// them, which is its next step. Otherwise, also while a press waits for Wingman to be free, the words are the prompt's own.
     /// </summary>
     private (string Text, bool ForWingman) WorkingText =>
-        opening || lastStep == GrokBotPromptStep.ApprovedClose ? (GrokBotReconnectPolicy.OpeningText, true)
+        opening ? (GrokBotReconnectPolicy.OpeningText, true)
         : lastStep == GrokBotPromptStep.Open && Held == GrokBotHeldState.Open && connectFailedFor == Offer.Target ? (GrokBotReconnectPolicy.ConnectingText, true)
         : (GrokBotReconnectPolicy.PromptText, false);
 
-    /// <summary>Set once this run has decided to start Grok Bot (<see cref="Opening"/>); cleared at every press and every run's end.</summary>
+    /// <summary>Set only once this run has started Grok Bot (<see cref="WingmanStarted"/>); cleared at every press and every run's end.</summary>
     private bool opening;
 
     /// <summary>
@@ -794,8 +795,8 @@ public sealed class GrokBotReconnectPrompt(GrokBotReconnectOffer offer)
 
     /// <summary>
     /// The offer's process has exited (the relaunch calls this the moment it does, before it goes on): the prompt keeps the
-    /// proof whatever happens next, and stops asking for the quit. It doesn't yet say Wingman is opening Grok Bot: the
-    /// update and exit-code checks decide that next (<see cref="Opening"/>).
+    /// proof whatever happens next, and stops asking for the quit. It doesn't say Wingman is opening Grok Bot: only the start
+    /// itself does (<see cref="WingmanStarted"/>).
     /// </summary>
     public void Exited(GrokBotRelaunch.ClosedProcess quit)
     {
@@ -806,12 +807,13 @@ public sealed class GrokBotReconnectPrompt(GrokBotReconnectOffer offer)
     }
 
     /// <summary>
-    /// The run has decided to start Grok Bot (the relaunch has the fact that allows it, and no update runs): only now does
-    /// "Working..." say Wingman is opening Grok Bot.
+    /// Windows has just started Grok Bot for this prompt's run. Only the run's control calls this, from the single start
+    /// point (<see cref="GrokBotStarts.Start"/>, which spends the start's permit), so "Wingman is opening Grok Bot..." can
+    /// show only once a start has happened: never before the update, exit, still-running or busy checks are behind it.
     /// </summary>
-    public void Opening()
+    internal void WingmanStarted()
     {
-        if (State is GrokBotPromptState.WaitingForQuit or GrokBotPromptState.Working)
+        if (State is GrokBotPromptState.WaitingForQuit or GrokBotPromptState.Working or GrokBotPromptState.Updating)
         {
             State = GrokBotPromptState.Working;
             opening = true;
@@ -1240,12 +1242,11 @@ public static class GrokBotRelaunch
     /// <summary>
     /// Waits for the user to quit exactly <paramref name="target"/>, then starts Grok Bot with the port. The moment that
     /// process has exited, <paramref name="exited"/> gets the quit's proof, before anything else can go wrong, so a later
-    /// error still leaves the caller holding it. <paramref name="opening"/> hears once the start is decided: after the update
-    /// and exit-code checks, never before.
+    /// error still leaves the caller holding it. Nothing here says Wingman is opening Grok Bot: only the start itself does
+    /// (<see cref="GrokBotStarts.Start"/> tells the caller's control).
     /// </summary>
     public static async Task<GrokBotRelaunchResult> RunAsync(GrokBotProcess target, IGrokBotProcessControl control, GrokBotRelaunchLimits limits,
-        Func<DateTime> now, Func<TimeSpan, CancellationToken, Task> delay, CancellationToken cancellationToken, Action<ClosedProcess>? exited = null,
-        Action? opening = null)
+        Func<DateTime> now, Func<TimeSpan, CancellationToken, Task> delay, CancellationToken cancellationToken, Action<ClosedProcess>? exited = null)
     {
         var snapshot = control.Snapshot();
         GrokBotExecutableStamp? stamp;
@@ -1278,7 +1279,6 @@ public static class GrokBotRelaunch
             permit = own;
         }
         finally { foreach (var process in snapshot) process.Dispose(); }
-        opening?.Invoke();
         return await StartWhenClearAsync(permit, stamp, control, limits, now, delay, cancellationToken);
     }
 
@@ -1359,7 +1359,7 @@ public static class GrokBotRelaunch
     /// </summary>
     public static async Task<GrokBotRelaunchResult> OpenAfterPressAsync(GrokBotProcess target, GrokBotOpenPress? press, IGrokBotProcessControl control,
         GrokBotRelaunchLimits limits, Func<DateTime> now, Func<TimeSpan, CancellationToken, Task> delay, CancellationToken cancellationToken,
-        Action<ClosedProcess>? exited = null, Action? opening = null)
+        Action<ClosedProcess>? exited = null)
     {
         var stamp = control.ExecutableStamp();
         var snapshot = control.Snapshot();
@@ -1378,7 +1378,6 @@ public static class GrokBotRelaunch
         var quit = Exited(target, exited);
         var permit = held ? GrokBotStartPermit.OwnClose(quit, exitCode) : GrokBotStartPermit.OpenPressed(press, quit);
         if (permit is null) return new(held ? GrokBotRelaunchKind.Crashed : GrokBotRelaunchKind.Gone, quit);
-        opening?.Invoke();
         return await StartWhenClearAsync(permit, stamp, control, limits, now, delay, cancellationToken);
     }
 

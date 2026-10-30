@@ -36,7 +36,19 @@ public sealed class GrokBotPromptSteps(GrokBotReconnectPrompt prompt, IGrokBotPr
     /// <summary>The exact Grok Bot this run started, recorded the moment it started; null when it started none.</summary>
     public GrokBotProcess? Started { get; private set; }
 
-    private IGrokBotProcessControl Control() => host.Control(process => Started = process);
+    /// <summary>
+    /// The control for this run. The single start point (<see cref="GrokBotStarts.Start"/>) tells it the moment Windows has
+    /// started Grok Bot, and that is the only place the prompt hears Wingman is opening it
+    /// (<see cref="GrokBotReconnectPrompt.WingmanStarted"/>): no step can say so before a start has happened.
+    /// </summary>
+    private IGrokBotProcessControl Control() => host.Control(process =>
+    {
+        Started = process;
+        prompt.WingmanStarted();
+        // Grok Bot has started: a window that can't be shown must not stop the start's own bookkeeping (its port file).
+        try { host.Changed(); }
+        catch (Exception error) { WingmanLog.Write("grok-bot-prompt-show-failed", ("error", error.GetType().Name)); }
+    });
 
     public GrokBotObservation Observe() => host.Observe();
     public bool AdoptListeningPort(int process) => host.AdoptListeningPort(process);
@@ -53,7 +65,7 @@ public sealed class GrokBotPromptSteps(GrokBotReconnectPrompt prompt, IGrokBotPr
     public async Task<GrokBotRelaunchResult> RelaunchAfterQuitAsync(GrokBotProcess target, CancellationToken cancellationToken)
     {
         RequireInstalled();
-        var result = await GrokBotRelaunch.RunAsync(target, Control(), limits, now, delay, cancellationToken, Exited, Opening);
+        var result = await GrokBotRelaunch.RunAsync(target, Control(), limits, now, delay, cancellationToken, Exited);
         WingmanLog.Write("grok-bot-reconnect-relaunch", ("process", target.Id), ("result", result.Kind));
         return result;
     }
@@ -63,7 +75,6 @@ public sealed class GrokBotPromptSteps(GrokBotReconnectPrompt prompt, IGrokBotPr
     {
         RequireInstalled();
         var control = Control();
-        Opening();
         var result = await GrokBotRelaunch.StartWhenClearAsync(permit, control.ExecutableStamp(), control, limits, now, delay, cancellationToken);
         WingmanLog.Write("grok-bot-reconnect-open", ("process", permit.After?.Process.Id), ("result", result.Kind));
         return result;
@@ -72,7 +83,7 @@ public sealed class GrokBotPromptSteps(GrokBotReconnectPrompt prompt, IGrokBotPr
     public async Task<GrokBotRelaunchResult> OpenAfterPressAsync(GrokBotProcess target, GrokBotOpenPress? press, CancellationToken cancellationToken)
     {
         RequireInstalled();
-        var result = await GrokBotRelaunch.OpenAfterPressAsync(target, press, Control(), limits, now, delay, cancellationToken, Exited, Opening);
+        var result = await GrokBotRelaunch.OpenAfterPressAsync(target, press, Control(), limits, now, delay, cancellationToken, Exited);
         WingmanLog.Write("grok-bot-reconnect-open-after-press", ("process", target.Id), ("result", result.Kind));
         return result;
     }
@@ -116,13 +127,6 @@ public sealed class GrokBotPromptSteps(GrokBotReconnectPrompt prompt, IGrokBotPr
     private void Exited(GrokBotRelaunch.ClosedProcess quit)
     {
         prompt.Exited(quit);
-        host.Changed();
-    }
-
-    /// <summary>The run has decided to start Grok Bot: only now does the prompt say Wingman is opening it.</summary>
-    private void Opening()
-    {
-        prompt.Opening();
         host.Changed();
     }
 
