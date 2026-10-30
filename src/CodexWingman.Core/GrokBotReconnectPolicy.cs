@@ -115,6 +115,7 @@ public sealed class GrokBotReconnectPolicy
     /// <summary>Grok Bot runs with Wingman's port, but connecting the Helpers to it failed.</summary>
     public const string ConnectFailedText = "Grok Bot is open, but Wingman couldn't connect its Helpers. Details are in Wingman's log.";
     /// <summary>Wingman itself opened Grok Bot after the press, but couldn't connect the Helpers to it.</summary>
+    public const string NotConnectedUnseenText = "Wingman couldn't connect Grok Bot's Helpers. Details are in Wingman's log.";
     public const string OpenedNotConnectedText = "Wingman opened Grok Bot, but couldn't connect its Helpers. Details are in Wingman's log.";
     public const string ConnectingText = "Wingman is connecting Grok Bot's Helpers...";
     /// <summary>Grok Bot exited while Wingman was connecting its Helpers, or after that failed.</summary>
@@ -240,10 +241,13 @@ public sealed record GrokBotPromptReason(string WhileOpen, string WhenGone, stri
         _ => new(StillOpenText, GrokBotReconnectPolicy.CouldNotOpenText),
     };
 
-    /// <summary>The Helpers didn't connect: to a Grok Bot Wingman opened itself, or to one that was open already.</summary>
-    public static GrokBotPromptReason NotConnected(bool openedByWingman) => openedByWingman
-        ? new(GrokBotReconnectPolicy.OpenedNotConnectedText, GrokBotReconnectPolicy.ClosedBeforeConnectText, GrokBotReconnectPolicy.OpenedNotConnectedText)
-        : new(GrokBotReconnectPolicy.ConnectFailedText, GrokBotReconnectPolicy.ClosedBeforeConnectText, GrokBotReconnectPolicy.ConnectFailedText);
+    /// <summary>
+    /// The Helpers didn't connect: open, to the exact Grok Bot Wingman started (<paramref name="openedByWingman"/>) or to
+    /// another; gone, it closed meanwhile; not seen, neutral words.
+    /// </summary>
+    public static GrokBotPromptReason NotConnected(bool openedByWingman) => new(
+        openedByWingman ? GrokBotReconnectPolicy.OpenedNotConnectedText : GrokBotReconnectPolicy.ConnectFailedText,
+        GrokBotReconnectPolicy.ClosedBeforeConnectText, GrokBotReconnectPolicy.NotConnectedUnseenText);
 }
 
 /// <summary>What the prompt window shows.</summary>
@@ -369,8 +373,6 @@ public sealed class GrokBotReconnectPrompt(GrokBotReconnectOffer offer)
     private GrokBotProcess? connectFailedFor;
     /// <summary>When the press now kept while Wingman is busy was first kept (see <see cref="Observe"/>).</summary>
     private DateTimeOffset? keptSince;
-    /// <summary>The run's Relaunched: the Grok Bot now being connected is one Wingman opened itself.</summary>
-    private bool openedByWingman;
 
     /// <summary>
     /// Open window or Repair after the user's Yes: the prompt for that run, already pressed and working, so every result
@@ -533,8 +535,7 @@ public sealed class GrokBotReconnectPrompt(GrokBotReconnectOffer offer)
                 return;
             case GrokBotReconnectOutcome.Relaunched or GrokBotReconnectOutcome.Adopted or GrokBotReconnectOutcome.AlreadyConnected:
                 reason = null;
-                openedByWingman = result.Outcome == GrokBotReconnectOutcome.Relaunched;
-                connectingText = openedByWingman ? GrokBotReconnectPolicy.OpeningText : GrokBotReconnectPolicy.ConnectingText;
+                connectingText = result.Outcome == GrokBotReconnectOutcome.Relaunched ? GrokBotReconnectPolicy.OpeningText : GrokBotReconnectPolicy.ConnectingText;
                 State = GrokBotPromptState.Connecting;
                 return;
         }
@@ -543,9 +544,9 @@ public sealed class GrokBotReconnectPrompt(GrokBotReconnectOffer offer)
         if (outcome == GrokBotReconnectOutcome.NotConnected)
         {
             // The Grok Bot Wingman was connecting, still open, is the prompt's own from now on, so a Grok Bot Wingman opened
-            // itself never reads as opened without Wingman; the words follow it if it closes.
-            var why = GrokBotPromptReason.NotConnected(openedByWingman);
-            openedByWingman = false;
+            // itself never reads as opened without Wingman; the words follow it if it closes. "Wingman opened Grok Bot" only
+            // for the exact process Wingman started; when Wingman couldn't look, words that guess neither way.
+            var why = GrokBotPromptReason.NotConnected(result.Started is { } started && now?.Process == started);
             if (now?.Process is { } open)
             {
                 Follow(open, why);
@@ -664,8 +665,8 @@ public enum GrokBotReconnectOutcome
     NotClosed,
 }
 
-/// <summary>An outcome, and the proof that the offer's process quit once it has.</summary>
-public sealed record GrokBotReconnectResult(GrokBotReconnectOutcome Outcome, GrokBotRelaunch.ClosedProcess? Quit = null);
+/// <summary>An outcome, the proof that the offer's process quit once it has, and the exact process Wingman started, if it started one.</summary>
+public sealed record GrokBotReconnectResult(GrokBotReconnectOutcome Outcome, GrokBotRelaunch.ClosedProcess? Quit = null, GrokBotProcess? Started = null);
 
 /// <summary>What the reconnect needs from the tray, so its order of checks can be tested.</summary>
 public interface IGrokBotReconnectSteps
@@ -763,7 +764,7 @@ public static class GrokBotReconnectRun
         return Result(result);
     }
 
-    private static GrokBotReconnectResult Result(GrokBotRelaunchResult result) => new(OutcomeOf(result.Kind), result.Quit);
+    private static GrokBotReconnectResult Result(GrokBotRelaunchResult result) => new(OutcomeOf(result.Kind), result.Quit, result.Started);
 
     public static GrokBotReconnectOutcome OutcomeOf(GrokBotRelaunchKind kind) => kind switch
     {
@@ -785,8 +786,8 @@ public static class GrokBotReconnectRun
 
 public enum GrokBotRelaunchKind { Relaunched, Gone, Cancelled, QuitTimedOut, UpdateRunning, StillRunning, BusyTooLong, Reopened, Crashed, SessionEnding, UpdateTooLong, ExitTooLong, NotClosed }
 
-/// <summary>What the relaunch step did, and the proof that the process quit once it has.</summary>
-public sealed record GrokBotRelaunchResult(GrokBotRelaunchKind Kind, GrokBotRelaunch.ClosedProcess? Quit = null);
+/// <summary>What the relaunch step did, the proof that the process quit once it has, and the exact process Wingman started, if it started one.</summary>
+public sealed record GrokBotRelaunchResult(GrokBotRelaunchKind Kind, GrokBotRelaunch.ClosedProcess? Quit = null, GrokBotProcess? Started = null);
 
 /// <summary>Grok Bot.exe as last seen: a changed file means an update or reinstall wrote it.</summary>
 public sealed record GrokBotExecutableStamp(DateTime WrittenUtc, long Length);
@@ -824,8 +825,11 @@ public interface IGrokBotProcessControl
     Task<bool> InstallerRunningAsync();
     /// <summary>True once Windows has said it is shutting down or signing out: Grok Bot is never started then.</summary>
     bool SessionEnding();
-    /// <summary>Starts Grok Bot with Wingman's port. Only <see cref="GrokBotRelaunch"/> can make the proof it needs.</summary>
-    void Start(GrokBotRelaunch.ClosedProcess proof);
+    /// <summary>
+    /// Starts Grok Bot with Wingman's port. Only <see cref="GrokBotRelaunch"/> can make the proof it needs. Returns the
+    /// exact process started (null when Windows didn't say), so the prompt says "Wingman opened Grok Bot" only for that one.
+    /// </summary>
+    GrokBotProcess? Start(GrokBotRelaunch.ClosedProcess proof);
 }
 
 /// <summary>
@@ -958,8 +962,7 @@ public static class GrokBotRelaunch
                 if (Stopped(control, cancellationToken, quit) is { } last) return last;
                 if (Reopened(control, quit)) return new(GrokBotRelaunchKind.Reopened, quit);
                 if (control.AnyRunning()) return new(GrokBotRelaunchKind.StillRunning, quit);
-                control.Start(quit);
-                return new(GrokBotRelaunchKind.Relaunched, quit);
+                return new(GrokBotRelaunchKind.Relaunched, quit, control.Start(quit));
             }
             if (now() >= free) return new(GrokBotRelaunchKind.BusyTooLong, quit);
             if (!await Wait(delay, limits.Poll, cancellationToken)) return Stopped(control, cancellationToken, quit) ?? new(GrokBotRelaunchKind.Cancelled, quit);

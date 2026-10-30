@@ -313,7 +313,7 @@ internal sealed class GrokBotLauncher(string wingmanDataRoot, Func<IEnumerable<i
         // Lists every process once a second during the wait: on the thread pool, never on the UI thread.
         public Task<bool> InstallerRunningAsync() => Task.Run(launcher.InstallerRunning);
         public bool SessionEnding() => sessionEnding();
-        public void Start(GrokBotRelaunch.ClosedProcess proof) => launcher.StartWithPort();
+        public GrokBotProcess? Start(GrokBotRelaunch.ClosedProcess proof) => launcher.StartWithPort();
     }
 
     /// <summary>Grok Bot.exe's write time and size; null when missing or unreadable (an installer may be replacing it).</summary>
@@ -483,12 +483,13 @@ internal sealed class GrokBotLauncher(string wingmanDataRoot, Func<IEnumerable<i
         return main;
     }
 
-    private void StartWithPort()
+    /// <summary>Starts Grok Bot with Wingman's port; the exact process started.</summary>
+    private GrokBotProcess StartWithPort()
     {
-        lock (runtimeFile) StartWithPortLocked();
+        lock (runtimeFile) return StartWithPortLocked();
     }
 
-    private void StartWithPortLocked()
+    private GrokBotProcess StartWithPortLocked()
     {
         var port = SelectPort(Port());
         var start = new ProcessStartInfo(Executable)
@@ -497,9 +498,12 @@ internal sealed class GrokBotLauncher(string wingmanDataRoot, Func<IEnumerable<i
             WorkingDirectory = Path.GetDirectoryName(Executable)!,
         };
         foreach (var argument in GrokBotLaunchPolicy.Arguments(port)) start.ArgumentList.Add(argument);
-        using (Process.Start(start) ?? throw new InvalidOperationException("Grok Bot did not start.")) { }
+        GrokBotProcess started;
+        using (var process = Process.Start(start) ?? throw new InvalidOperationException("Grok Bot did not start."))
+            started = new GrokBotProcess(process.Id, StartedUtc(process));
         AppRuntimePortFile.Write(RuntimePath, port);
         WingmanLog.Write("grok-bot-start", ("port", port));
+        return started;
     }
 
     public async Task WaitForWindowAsync(CancellationToken cancellationToken)
