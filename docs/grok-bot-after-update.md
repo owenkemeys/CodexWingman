@@ -49,7 +49,7 @@ Once you have pressed **Reconnect** or **Open Grok Bot**, or said Yes to `Open w
 - Grok Bot didn't close within 20 seconds of your Yes to `Open window` or `Repair`; Wingman left it running;
 - the update is still running after 5 minutes;
 - an update started but Grok Bot hadn't finished closing 30 seconds later;
-- the Grok Bot you pressed **Reconnect** for had already closed, or was replaced by another one;
+- the Grok Bot you pressed **Reconnect** for had already closed, or was replaced by another one; the prompt then follows the new one and says "Another Grok Bot replaced the one you chose, so Grok Bot is still open." while it is open;
 - a Grok Bot process is still running 20 seconds after the quit or the update, or Wingman stays busy for 60 seconds;
 - Grok Bot ended with an error (a crash, or ended from Task Manager) instead of your quit;
 - Windows began to shut down or sign out, and another app cancelled it;

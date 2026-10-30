@@ -269,6 +269,16 @@ internal static class GrokBotReconnectTests
         Equal(GrokBotPromptStep.Reconnect, gone.Observe(Seen(Third), busy: false), "replaced while waiting to act: the run re-checks");
         gone.Finished(new(GrokBotReconnectOutcome.Replaced), null);
         Equal((GrokBotPromptState.CouldNotStart, GrokBotReconnectPolicy.ReplacedText), (gone.State, gone.Problem), "and the prompt says it was replaced (not closed), with Open Grok Bot");
+        var replacedNow = new GrokBotReconnectPrompt(offer);
+        replacedNow.Reconnect(busy: false);
+        replacedNow.Finished(new(GrokBotReconnectOutcome.Replaced), Seen(Third));
+        var replacedText = (replacedNow.Offer.ProcessId, replacedNow.Problem, replacedNow.Buttons);
+        for (var tick = 0; tick < 5; tick++) Equal(None, replacedNow.Observe(Seen(Third), busy: false), "the replacement is already followed: no second hand-over");
+        Equal((Third, "Another Grok Bot replaced the one you chose, so Grok Bot is still open.", ("Try again", true, "Not now"), replacedText),
+            (replacedNow.Offer.ProcessId, replacedNow.Problem, replacedNow.Buttons, (replacedNow.Offer.ProcessId, replacedNow.Problem, replacedNow.Buttons)),
+            "replaced, the replacement open: the prompt follows it and keeps one steady text");
+        replacedNow.Observe(Seen(null), busy: false);
+        Equal((GrokBotReconnectPolicy.ReplacedText, ("Open Grok Bot", true, "Not now")), (replacedNow.Problem, replacedNow.Buttons), "and once it closes: didn't reopen it, Open Grok Bot");
         Equal((GrokBotReconnectOutcome.Gone, GrokBotReconnectOutcome.Replaced),
             (GrokBotReconnectRun.RunAsync(gone.Offer, new Steps(new GrokBotObservation(null, false, Present)), CancellationToken.None).GetAwaiter().GetResult().Outcome,
              GrokBotReconnectRun.RunAsync(gone.Offer, new Steps(Seen(Third)), CancellationToken.None).GetAwaiter().GetResult().Outcome),
@@ -630,8 +640,9 @@ internal static class GrokBotReconnectTests
             var shown = prompt.State == GrokBotPromptState.Closed ? "closed (" + prompt.ClosedBecause + ")" : $"{prompt.State}: \"{message}\" {prompt.Buttons}";
             table.Add($"{path} | {result.Outcome} | {shown}");
             if (path == Replaced)
-                Equal((GrokBotReconnectOutcome.Replaced, true, false), (result.Outcome, prompt.State == GrokBotPromptState.CouldNotStart && (prompt.Problem == GrokBotPromptReason.For(GrokBotReconnectOutcome.Replaced).WhenGone
-                    || prompt.Problem == GrokBotPromptReason.For(GrokBotReconnectOutcome.Replaced).WhileOpen)
+                Equal((GrokBotReconnectOutcome.Replaced, true, false), (result.Outcome, prompt.State == GrokBotPromptState.CouldNotStart
+                    && prompt.Problem == GrokBotReconnectPrompt.Ending(GrokBotPromptReason.For(GrokBotReconnectOutcome.Replaced), prompt.Held).Text
+                    && (final.Process is not { } other || other == offer.Target || prompt.Offer.Target == other)
                     || prompt.ClosedBecause == "not-now", steps.Log.Any(line => line.StartsWith("relaunch", StringComparison.Ordinal) || line.StartsWith("start", StringComparison.Ordinal))),
                     name + ": replaced at the press: says so, starts nothing");
             Equal(false, shown.Contains('…') || prompt.Offer.Title.Contains('…'), name + ": plain ASCII dots, never the ellipsis character");

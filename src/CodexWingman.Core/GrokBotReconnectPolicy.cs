@@ -558,10 +558,12 @@ public sealed class GrokBotReconnectPrompt(GrokBotReconnectOffer offer)
             }
             return;
         }
-        if (outcome is GrokBotReconnectOutcome.Reopened or GrokBotReconnectOutcome.UpdatedAndReopened && now?.Process is { } reopened && reopened != Offer.Target)
+        if (outcome is GrokBotReconnectOutcome.Reopened or GrokBotReconnectOutcome.UpdatedAndReopened or GrokBotReconnectOutcome.Replaced
+            && now?.Process is { } reopened && reopened != Offer.Target)
         {
-            // Opened again without Wingman: the same prompt follows that Grok Bot. After an update the user's quit started,
-            // it goes straight on to asking for the quit, since the user already chose to reconnect.
+            // Opened again without Wingman, or the one the user chose replaced: the same prompt follows that Grok Bot, with
+            // the reason it already has, so the next look doesn't hand over again and change the words. After an update the
+            // user's quit started, it goes straight on to asking for the quit, since the user already chose to reconnect.
             Follow(reopened, GrokBotPromptReason.For(outcome));
             if (outcome == GrokBotReconnectOutcome.UpdatedAndReopened)
             {
