@@ -232,7 +232,7 @@ public sealed class GrokBotReconnectPrompt(GrokBotReconnectOffer offer)
         GrokBotPromptState.WaitingForQuit => GrokBotReconnectPolicy.QuitText,
         GrokBotPromptState.Updating => GrokBotReconnectPolicy.UpdatingText,
         GrokBotPromptState.CouldNotStart => Problem ?? GrokBotReconnectPolicy.StillRunningText,
-        GrokBotPromptState.Working => lastStep == GrokBotPromptStep.Open ? GrokBotReconnectPolicy.OpeningText : GrokBotReconnectPolicy.PromptText,
+        GrokBotPromptState.Working => lastStep == GrokBotPromptStep.Open || Quit is not null ? GrokBotReconnectPolicy.OpeningText : GrokBotReconnectPolicy.PromptText,
         _ => Problem ?? (Quit is not null ? GrokBotReconnectPolicy.QuitText : GrokBotReconnectPolicy.PromptText),
     };
 
@@ -291,6 +291,17 @@ public sealed class GrokBotReconnectPrompt(GrokBotReconnectOffer offer)
     public void WaitingForQuit()
     {
         if (State == GrokBotPromptState.Working) State = GrokBotPromptState.WaitingForQuit;
+    }
+
+    /// <summary>
+    /// The offer's process has exited (the relaunch calls this the moment it does, before it goes on): the prompt keeps the
+    /// proof whatever happens next, and stops asking for the quit; it says Wingman is opening Grok Bot.
+    /// </summary>
+    public void Exited(GrokBotRelaunch.ClosedProcess quit)
+    {
+        if (State == GrokBotPromptState.Closed) return;
+        Quit ??= quit;
+        if (State == GrokBotPromptState.WaitingForQuit) State = GrokBotPromptState.Working;
     }
 
     /// <summary>The user quit Grok Bot and its update is running: the prompt says so and keeps [Cancel].</summary>
@@ -607,11 +618,17 @@ public static class GrokBotRelaunch
         public GrokBotProcess Process { get; }
     }
 
+    /// <summary>
+    /// Waits for the user to quit exactly <paramref name="target"/>, then starts Grok Bot with the port. The moment that
+    /// process has exited, <paramref name="exited"/> gets the quit's proof, before anything else can go wrong, so a later
+    /// error still leaves the caller holding it.
+    /// </summary>
     public static async Task<GrokBotRelaunchResult> RunAsync(GrokBotProcess target, IGrokBotProcessControl control, GrokBotRelaunchLimits limits,
-        Func<DateTime> now, Func<TimeSpan, CancellationToken, Task> delay, CancellationToken cancellationToken)
+        Func<DateTime> now, Func<TimeSpan, CancellationToken, Task> delay, CancellationToken cancellationToken, Action<ClosedProcess>? exited = null)
     {
         var snapshot = control.Snapshot();
         GrokBotExecutableStamp? stamp;
+        ClosedProcess quit;
         try
         {
             var handle = snapshot.FirstOrDefault(process => process.Identity == target);
@@ -627,18 +644,27 @@ public static class GrokBotRelaunch
                 // the update with the quit's proof.
                 if (await UpdateUnderWayAsync(control, stamp))
                     return await ExitAsync(handle, control, limits, now, delay, cancellationToken)
-                        ?? new(GrokBotRelaunchKind.UpdateRunning, new ClosedProcess(target));
+                        ?? new(GrokBotRelaunchKind.UpdateRunning, Exited(target, exited));
                 if (now() >= quitBy) return new(GrokBotRelaunchKind.QuitTimedOut);
                 if (!await Wait(delay, limits.Poll, cancellationToken)) return Stopped(control, cancellationToken) ?? new(GrokBotRelaunchKind.Cancelled);
             }
             // An update first: Grok Bot's installer may end it with a failure code after the user's quit, and that is an
             // update, not a crash. Then only the user's quit (exit code 0) is followed by a start; a crash or a kill is not
             // reopened behind their back.
-            if (await UpdateUnderWayAsync(control, stamp)) return new(GrokBotRelaunchKind.UpdateRunning, new ClosedProcess(target));
-            if (handle.ExitCode is not 0) return new(GrokBotRelaunchKind.Crashed, new ClosedProcess(target));
+            quit = Exited(target, exited);
+            if (await UpdateUnderWayAsync(control, stamp)) return new(GrokBotRelaunchKind.UpdateRunning, quit);
+            if (handle.ExitCode is not 0) return new(GrokBotRelaunchKind.Crashed, quit);
         }
         finally { foreach (var process in snapshot) process.Dispose(); }
-        return await StartWhenClearAsync(new ClosedProcess(target), stamp, control, limits, now, delay, cancellationToken);
+        return await StartWhenClearAsync(quit, stamp, control, limits, now, delay, cancellationToken);
+    }
+
+    /// <summary>The proof that <paramref name="target"/> has exited, made once at the exit and handed to <paramref name="exited"/> at once.</summary>
+    private static ClosedProcess Exited(GrokBotProcess target, Action<ClosedProcess>? exited)
+    {
+        var proof = new ClosedProcess(target);
+        exited?.Invoke(proof);
+        return proof;
     }
 
     /// <summary>
@@ -703,7 +729,7 @@ public static class GrokBotRelaunch
     /// back as <see cref="GrokBotRelaunchKind.UpdateRunning"/> with the proof, and the caller waits for it.
     /// </summary>
     public static async Task<GrokBotRelaunchResult> OpenAfterPressAsync(GrokBotProcess target, IGrokBotProcessControl control, GrokBotRelaunchLimits limits,
-        Func<DateTime> now, Func<TimeSpan, CancellationToken, Task> delay, CancellationToken cancellationToken)
+        Func<DateTime> now, Func<TimeSpan, CancellationToken, Task> delay, CancellationToken cancellationToken, Action<ClosedProcess>? exited = null)
     {
         var stamp = control.ExecutableStamp();
         var snapshot = control.Snapshot();
@@ -713,7 +739,7 @@ public static class GrokBotRelaunch
                 && await ExitAsync(handle, control, limits, now, delay, cancellationToken) is { } notClosed) return notClosed;
         }
         finally { foreach (var process in snapshot) process.Dispose(); }
-        return await StartWhenClearAsync(new ClosedProcess(target), stamp, control, limits, now, delay, cancellationToken);
+        return await StartWhenClearAsync(Exited(target, exited), stamp, control, limits, now, delay, cancellationToken);
     }
 
     /// <summary>
@@ -723,7 +749,7 @@ public static class GrokBotRelaunch
     /// still holds it.
     /// </summary>
     public static async Task<GrokBotRelaunchResult> AfterApprovedCloseAsync(GrokBotProcess? closed, IGrokBotProcessControl control, GrokBotRelaunchLimits limits,
-        Func<DateTime> now, Func<TimeSpan, CancellationToken, Task> delay, CancellationToken cancellationToken)
+        Func<DateTime> now, Func<TimeSpan, CancellationToken, Task> delay, CancellationToken cancellationToken, Action<ClosedProcess>? exited = null)
     {
         var target = closed ?? new GrokBotProcess(0, null);
         var snapshot = control.Snapshot();
@@ -733,7 +759,7 @@ public static class GrokBotRelaunch
                 && await ExitAsync(handle, control, limits, now, delay, cancellationToken) is { } notClosed) return notClosed;
         }
         finally { foreach (var process in snapshot) process.Dispose(); }
-        return await AfterUpdateAsync(new ClosedProcess(target), control, limits, now, delay, cancellationToken);
+        return await AfterUpdateAsync(Exited(target, exited), control, limits, now, delay, cancellationToken);
     }
 
     /// <summary>
@@ -744,7 +770,7 @@ public static class GrokBotRelaunch
     /// </summary>
     public static async Task<GrokBotRelaunchResult?> AfterCloseRequestAsync(GrokBotProcess? closed, GrokBotExecutableStamp? since,
         IGrokBotProcessControl control, TimeSpan closeLimit, TimeSpan poll, Action? updating, GrokBotRelaunchLimits limits,
-        Func<DateTime> now, Func<TimeSpan, CancellationToken, Task> delay, CancellationToken cancellationToken)
+        Func<DateTime> now, Func<TimeSpan, CancellationToken, Task> delay, CancellationToken cancellationToken, Action<ClosedProcess>? exited = null)
     {
         var until = now() + closeLimit;
         while (true)
@@ -753,7 +779,7 @@ public static class GrokBotRelaunch
             if (await UpdateUnderWayAsync(control, since))
             {
                 updating?.Invoke();
-                return await AfterApprovedCloseAsync(closed, control, limits, now, delay, cancellationToken);
+                return await AfterApprovedCloseAsync(closed, control, limits, now, delay, cancellationToken, exited);
             }
             if (!running) return null;
             if (cancellationToken.IsCancellationRequested) return new(GrokBotRelaunchKind.Cancelled);

@@ -346,8 +346,23 @@ internal static class GrokBotReconnectTests
                 }
             }
         // An error after the quit: the prompt stays, says so in plain words and offers Open Grok Bot, even with no Grok Bot.
+        // The real path: the relaunch hands the prompt the quit's proof the moment the process exits, and the start then
+        // throws, so the run never returns a proof; the prompt still has it.
         var failed = Waiting();
-        failed.Finished(new(GrokBotReconnectOutcome.Failed, quit));
+        var throws = new FakeControl(new FakeProcess(offer.Target, []) { QuitsAfter = 2 }) { StartThrows = new FileNotFoundException("Grok Bot.exe") };
+        var clock = DateTime.UnixEpoch;
+        Equal(true, Throws(() => GrokBotRelaunch.RunAsync(offer.Target, throws, Limits, () => clock, (wait, _) => { clock += wait; return Task.CompletedTask; },
+            default, failed.Exited).GetAwaiter().GetResult()), "the start throws after the quit");
+        Equal((true, GrokBotPromptState.Working, GrokBotReconnectPolicy.OpeningText), (failed.Quit?.Process == offer.Target, failed.State, failed.Message),
+            "the prompt got the proof at the exit, and stopped asking for the quit");
+        failed.Finished(new(GrokBotReconnectOutcome.Failed, failed.Quit));
+        // Open Grok Bot without the proof: the same, once the snapshot shows the process gone.
+        var openFails = Waiting();
+        openFails.Finished(new(GrokBotReconnectOutcome.ExitTooLong));
+        openFails.Open(busy: false);
+        Equal(true, Throws(() => GrokBotRelaunch.OpenAfterPressAsync(offer.Target, new FakeControl() { StartThrows = new IOException("denied") }, Limits,
+            () => clock, (wait, _) => { clock += wait; return Task.CompletedTask; }, default, openFails.Exited).GetAwaiter().GetResult()), "Open Grok Bot's start throws");
+        Equal(true, openFails.Quit?.Process == offer.Target, "the prompt has the proof from Open Grok Bot too");
         for (var tick = 0; tick < 10; tick++) failed.Observe(Seen(null), busy: false);
         Equal((GrokBotPromptState.CouldNotStart, GrokBotReconnectPolicy.FailedText, true), (failed.State, failed.Problem, failed.Open(busy: false)),
             "an error after the quit: stays with a plain reason and Open Grok Bot");
@@ -430,6 +445,12 @@ internal static class GrokBotReconnectTests
         var tray = File.ReadAllText(Path.Combine(RepositoryRoot(), "src", "CodexWingman", "TrayApplicationContext.cs"));
         Equal(true, tray.Contains("WingmanLog.Write(\"grok-bot-reconnect-outcome\", (\"process\", prompt.Offer.ProcessId), (\"step\", step), (\"outcome\", result.Outcome));", StringComparison.Ordinal),
             "the real outcome is logged");
+    }
+
+    private static bool Throws(Action action)
+    {
+        try { action(); return false; }
+        catch (Exception) { return true; }
     }
 
     private static GrokBotRelaunch.ClosedProcess QuitProof(GrokBotProcess target)
@@ -815,9 +836,9 @@ internal static class GrokBotReconnectTests
         Equal(true, !tray.Contains("bool sessionEnding", StringComparison.Ordinal) && !tray.Contains("tray.sessionEnding", StringComparison.Ordinal)
             && tray.Split("using var session = sessionWatch.Begin();").Length - 1 == 2 && !tray.Contains("() => sessionEnding", StringComparison.Ordinal)
             && tray.Split("() => session.Ending").Length - 1 == 5
-            && tray.Contains("tray.grokLauncher.ReconnectAsync(target, () => !Busy, () => session.Ending, cancellationToken)", StringComparison.Ordinal)
+            && tray.Contains("tray.grokLauncher.ReconnectAsync(target, () => !Busy, () => session.Ending, Exited, cancellationToken)", StringComparison.Ordinal)
             && tray.Contains("tray.grokLauncher.StartAfterQuitAsync(quit, () => !Busy, () => session.Ending, cancellationToken)", StringComparison.Ordinal)
-            && tray.Contains("tray.grokLauncher.OpenAfterPressAsync(target, () => !Busy, () => session.Ending, cancellationToken)", StringComparison.Ordinal)
+            && tray.Contains("tray.grokLauncher.OpenAfterPressAsync(target, () => !Busy, () => session.Ending, Exited, cancellationToken)", StringComparison.Ordinal)
             && tray.Contains("tray.grokLauncher.AfterUpdateAsync(quit, () => !Busy, () => session.Ending, cancellationToken)", StringComparison.Ordinal)
             && tray.Contains("() => SetBusy(true, \"Grok Bot is updating...\"), () => session.Ending))", StringComparison.Ordinal),
             "the tray keeps no shutdown flag of its own: the prompt's run and Open window/Repair each begin their own");
@@ -1073,7 +1094,13 @@ internal static class GrokBotReconnectTests
         private int endingChecks;
         public bool SessionEnding() => EndingAt?.Invoke(endingChecks++) ?? false;
         public GrokBotProcess? MainProcess() => Main?.Invoke(mainChecks++);
-        public void Start(GrokBotRelaunch.ClosedProcess proof) => Log.Add("start after " + proof.Process.Id);
+        /// <summary>Starting Grok Bot throws this (an error after the quit, such as a missing Grok Bot.exe).</summary>
+        public Exception? StartThrows;
+        public void Start(GrokBotRelaunch.ClosedProcess proof)
+        {
+            if (StartThrows is { } error) throw error;
+            Log.Add("start after " + proof.Process.Id);
+        }
     }
 
     private static readonly GrokBotRelaunchLimits Limits = GrokBotRelaunchLimits.Default;

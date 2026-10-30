@@ -1328,7 +1328,13 @@ internal sealed class TrayApplicationContext : ApplicationContext
             if (ReferenceEquals(tray.grokPrompt, prompt)) tray.SyncGrokPromptWindow();
         }
         public Task<GrokBotRelaunchResult> RelaunchAfterQuitAsync(GrokBotProcess target, CancellationToken cancellationToken) =>
-            tray.grokLauncher.ReconnectAsync(target, () => !Busy, () => session.Ending, cancellationToken);
+            tray.grokLauncher.ReconnectAsync(target, () => !Busy, () => session.Ending, Exited, cancellationToken);
+        /// <summary>The offer's process exited: the prompt keeps the proof at once, so an error after it still offers Open Grok Bot.</summary>
+        private void Exited(GrokBotRelaunch.ClosedProcess quit)
+        {
+            prompt.Exited(quit);
+            if (ReferenceEquals(tray.grokPrompt, prompt)) tray.SyncGrokPromptWindow();
+        }
         public Task<GrokBotRelaunchResult> StartAsync(GrokBotRelaunch.ClosedProcess quit, CancellationToken cancellationToken) =>
             tray.grokLauncher.StartAfterQuitAsync(quit, () => !Busy, () => session.Ending, cancellationToken);
         public void Updating(GrokBotRelaunch.ClosedProcess quit)
@@ -1338,7 +1344,7 @@ internal sealed class TrayApplicationContext : ApplicationContext
             if (ReferenceEquals(tray.grokPrompt, prompt)) tray.SyncGrokPromptWindow();
         }
         public Task<GrokBotRelaunchResult> OpenAfterPressAsync(GrokBotProcess target, CancellationToken cancellationToken) =>
-            tray.grokLauncher.OpenAfterPressAsync(target, () => !Busy, () => session.Ending, cancellationToken);
+            tray.grokLauncher.OpenAfterPressAsync(target, () => !Busy, () => session.Ending, Exited, cancellationToken);
         public Task<GrokBotRelaunchResult> AfterUpdateAsync(GrokBotRelaunch.ClosedProcess quit, CancellationToken cancellationToken) =>
             tray.grokLauncher.AfterUpdateAsync(quit, () => !Busy, () => session.Ending, cancellationToken);
     }

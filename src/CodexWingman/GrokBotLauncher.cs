@@ -308,11 +308,12 @@ internal sealed class GrokBotLauncher(string wingmanDataRoot, Func<IEnumerable<i
     /// (up to 60 s), and never while a Grok Bot installer runs or Grok Bot.exe changed (GrokBotRelaunch). Relaunched:
     /// started; the caller waits with <see cref="WaitForWindowAsync"/>.
     /// </summary>
-    public async Task<GrokBotRelaunchResult> ReconnectAsync(GrokBotProcess target, Func<bool> mayStart, Func<bool> sessionEnding, CancellationToken cancellationToken)
+    public async Task<GrokBotRelaunchResult> ReconnectAsync(GrokBotProcess target, Func<bool> mayStart, Func<bool> sessionEnding,
+        Action<GrokBotRelaunch.ClosedProcess> exited, CancellationToken cancellationToken)
     {
         if (!IsInstalled()) throw new FileNotFoundException("Grok Bot is not installed in its usual folder.");
         var result = await GrokBotRelaunch.RunAsync(target, new ProcessControl(this, mayStart, sessionEnding), GrokBotRelaunchLimits.Default,
-            () => DateTime.UtcNow, (wait, token) => Task.Delay(wait, token), cancellationToken);
+            () => DateTime.UtcNow, (wait, token) => Task.Delay(wait, token), cancellationToken, exited);
         WingmanLog.Write("grok-bot-reconnect-relaunch", ("process", target.Id), ("result", result.Kind));
         return result;
     }
@@ -329,12 +330,13 @@ internal sealed class GrokBotLauncher(string wingmanDataRoot, Func<IEnumerable<i
     }
 
     /// <summary>Open Grok Bot after Reconnect without the quit's proof (<see cref="GrokBotRelaunch.OpenAfterPressAsync"/>).</summary>
-    public async Task<GrokBotRelaunchResult> OpenAfterPressAsync(GrokBotProcess target, Func<bool> mayStart, Func<bool> sessionEnding, CancellationToken cancellationToken)
+    public async Task<GrokBotRelaunchResult> OpenAfterPressAsync(GrokBotProcess target, Func<bool> mayStart, Func<bool> sessionEnding,
+        Action<GrokBotRelaunch.ClosedProcess> exited, CancellationToken cancellationToken)
     {
         if (!IsInstalled()) throw new FileNotFoundException("Grok Bot is not installed in its usual folder.");
         var control = new ProcessControl(this, mayStart, sessionEnding);
         var result = await GrokBotRelaunch.OpenAfterPressAsync(target, control, GrokBotRelaunchLimits.Default,
-            () => DateTime.UtcNow, (wait, token) => Task.Delay(wait, token), cancellationToken);
+            () => DateTime.UtcNow, (wait, token) => Task.Delay(wait, token), cancellationToken, exited);
         WingmanLog.Write("grok-bot-reconnect-open-after-press", ("process", target.Id), ("result", result.Kind));
         return result;
     }
