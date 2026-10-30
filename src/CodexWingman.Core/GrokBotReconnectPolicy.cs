@@ -507,6 +507,13 @@ public sealed class GrokBotReconnectPrompt(GrokBotReconnectOffer offer)
         Stay(why, GrokBotHeldState.Open);
     }
 
+    /// <summary>The prompt now holds <paramref name="process"/>, the Grok Bot Wingman started; the quit's proof is spent.</summary>
+    private void Hold(GrokBotProcess process)
+    {
+        Offer = Offer with { ProcessId = process.Id, ProcessStarted = process.Started };
+        Quit = null;
+    }
+
     /// <summary>The run reached the point where the user quits Grok Bot.</summary>
     public void WaitingForQuit()
     {
@@ -544,7 +551,8 @@ public sealed class GrokBotReconnectPrompt(GrokBotReconnectOffer offer)
     public void Finished(GrokBotReconnectResult result, GrokBotObservation? now)
     {
         if (State == GrokBotPromptState.Closed) return;
-        if (result.Quit is not null) Quit ??= result.Quit;
+        // A quit's proof that Wingman used to start a Grok Bot (Started) is spent: that start is the prompt's Grok Bot now.
+        if (result.Quit is not null && result.Started is null) Quit ??= result.Quit;
         switch (result.Outcome)
         {
             case GrokBotReconnectOutcome.Busy:
@@ -555,6 +563,9 @@ public sealed class GrokBotReconnectPrompt(GrokBotReconnectOffer offer)
                 Close("connected");
                 return;
             case GrokBotReconnectOutcome.Relaunched or GrokBotReconnectOutcome.Adopted or GrokBotReconnectOutcome.AlreadyConnected:
+                // The exact Grok Bot Wingman started is the one the prompt holds from now on, so whether or not a later look
+                // works, it is never "another Grok Bot", and never reads as opened without Wingman. The title stays.
+                if (result.Started is { } started) Hold(started);
                 reason = null;
                 connectingText = result.Outcome == GrokBotReconnectOutcome.Relaunched ? GrokBotReconnectPolicy.OpeningText : GrokBotReconnectPolicy.ConnectingText;
                 State = GrokBotPromptState.Connecting;
@@ -567,7 +578,9 @@ public sealed class GrokBotReconnectPrompt(GrokBotReconnectOffer offer)
             // The Grok Bot Wingman was connecting, still open, is the prompt's own from now on, so a Grok Bot Wingman opened
             // itself never reads as opened without Wingman; the words follow it if it closes. "Wingman opened Grok Bot" only
             // for the exact process Wingman started; when Wingman couldn't look, words that guess neither way.
-            var why = GrokBotPromptReason.NotConnected(result.Started is { } started && now?.Process == started, result.WingmanBusy);
+            // Wingman's own Grok Bot is the held one (see Relaunched), so while it is the one open, or Wingman couldn't look,
+            // the open words may say Wingman opened it.
+            var why = GrokBotPromptReason.NotConnected(result.Started is { } started && (now?.Process ?? Offer.Target) == started, result.WingmanBusy);
             if (now?.Process is { } open)
             {
                 Follow(open, why);
@@ -575,7 +588,7 @@ public sealed class GrokBotReconnectPrompt(GrokBotReconnectOffer offer)
             }
             else
             {
-                connectFailedFor = null;
+                connectFailedFor = result.Started;
                 Stay(why, HeldIn(now));
             }
             return;

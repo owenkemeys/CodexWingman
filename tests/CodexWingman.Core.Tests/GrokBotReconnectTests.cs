@@ -831,6 +831,12 @@ internal static class GrokBotReconnectTests
         var blindHost = new FakeHost(new FakeControl(new FakeProcess(target, []) { Exited = true }) { Starts = reopenedWithPort.Process }, none) { Connects = false, ObserveFails = true };
         Ends((unseen, blindHost, Act(unseen, GrokBotPromptStep.ApprovedClose, blindHost)), GrokBotReconnectOutcome.NotConnected, GrokBotReconnectPolicy.NotConnectedUnseenText,
             "the connect failed and Wingman couldn't look at Grok Bot: neutral words, no guess either way");
+        // The prompt holds the exact Grok Bot Wingman started, so the next check, which sees it, never calls it another Grok Bot.
+        Equal((reopenedWithPort.Process, null), (unseen.Offer.Target, unseen.Quit), "the prompt holds the Grok Bot Wingman started; the quit's proof was spent on it");
+        Equal((GrokBotPromptStep.None, GrokBotReconnectPolicy.OpenedNotConnectedText, ("Try again", true, "Not now"), GrokBotReconnectPolicy.ApprovedTitle, reopenedWithPort.Process),
+            (unseen.Observe(reopenedWithPort with { Connected = false }, busy: false), unseen.Problem, unseen.Buttons, unseen.Offer.Title, unseen.Offer.Target),
+            "after a blind last look, the next check sees Wingman's own Grok Bot: no hand-over, never \"opened again without Wingman\"");
+        Equal(GrokBotPromptStep.None, unseen.Observe(reopenedWithPort, busy: false), "its port comes up: the connect that failed for it isn't retried on its own");
         Equal(false, GrokBotReconnectPolicy.NotConnectedUnseenText.Contains("is open", StringComparison.Ordinal) || GrokBotReconnectPolicy.NotConnectedUnseenText.Contains("opened", StringComparison.Ordinal)
             || GrokBotReconnectPolicy.NotConnectedUnseenText.Contains("closed", StringComparison.Ordinal), "the neutral words say nothing about Grok Bot's state");
         var connectThrows = GrokBotReconnectPrompt.AfterYes(target, null, T0);
