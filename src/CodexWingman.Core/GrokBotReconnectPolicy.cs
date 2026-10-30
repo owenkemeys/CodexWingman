@@ -343,10 +343,20 @@ public sealed class GrokBotReconnectPrompt(GrokBotReconnectOffer offer)
         GrokBotPromptState.WaitingForQuit => GrokBotReconnectPolicy.QuitText,
         GrokBotPromptState.Updating => GrokBotReconnectPolicy.UpdatingText,
         GrokBotPromptState.CouldNotStart => Problem ?? GrokBotReconnectPolicy.StillRunningText,
-        GrokBotPromptState.Working => lastStep is GrokBotPromptStep.Open or GrokBotPromptStep.ApprovedClose || Quit is not null ? GrokBotReconnectPolicy.OpeningText : GrokBotReconnectPolicy.PromptText,
+        GrokBotPromptState.Working => WorkingText,
         GrokBotPromptState.Connecting => connectingText,
         _ => Problem ?? (Quit is not null ? GrokBotReconnectPolicy.QuitText : GrokBotReconnectPolicy.PromptText),
     };
+
+    /// <summary>
+    /// "Working..."'s words name the next step: with the quit's proof, or after Open Grok Bot or the Yes while the held Grok
+    /// Bot isn't seen open, Wingman opens Grok Bot; after Reconnect, or Try again while that Grok Bot is still open, the next
+    /// step asks for its close, so the words are the prompt's own.
+    /// </summary>
+    private string WorkingText => Quit is not null
+        || lastStep == GrokBotPromptStep.ApprovedClose
+        || lastStep == GrokBotPromptStep.Open && Held != GrokBotHeldState.Open
+        ? GrokBotReconnectPolicy.OpeningText : GrokBotReconnectPolicy.PromptText;
 
     /// <summary>
     /// The window's buttons for the current state: the primary one (null: hidden) and whether it is enabled, and the other
@@ -452,8 +462,9 @@ public sealed class GrokBotReconnectPrompt(GrokBotReconnectOffer offer)
             Follow(other, GrokBotPromptReason.For(GrokBotReconnectOutcome.Reopened));
             return GrokBotPromptStep.HandOver;
         }
-        // Between runs the words and the button follow the held Grok Bot: once it has closed, they say so (Ending).
-        if (State == GrokBotPromptState.CouldNotStart) Held = HeldIn(current);
+        // Between runs the words and the button follow the held Grok Bot: once it has closed, they say so (Ending), and a
+        // press kept while busy names the step it will take for it (WorkingText).
+        if (State is GrokBotPromptState.CouldNotStart or GrokBotPromptState.Working) Held = HeldIn(current);
         if (State != GrokBotPromptState.Working || pending == GrokBotPromptStep.None)
         {
             keptSince = null;

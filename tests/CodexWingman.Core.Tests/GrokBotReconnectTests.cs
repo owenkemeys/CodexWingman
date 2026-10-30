@@ -369,6 +369,16 @@ internal static class GrokBotReconnectTests
         Equal(GrokBotPromptStep.HandOver, pendingOpen.Observe(Seen(Third), busy: true), "a kept Open Grok Bot press: handed over instead");
         Equal((GrokBotPromptState.CouldNotStart, GrokBotReconnectPolicy.ReopenedText), (pendingOpen.State, pendingOpen.Problem), "and it says what happened");
 
+        // A Try again or Open Grok Bot press kept while busy: "Working..." names the step it will take.
+        var retry = Waiting();
+        retry.Finished(new(GrokBotReconnectOutcome.NotClosed), Seen(Second));
+        Equal((false, GrokBotPromptState.Working, GrokBotReconnectPolicy.PromptText), (retry.Open(busy: true), retry.State, retry.Message),
+            "Try again kept while busy, its Grok Bot open: it will ask for the close, so no opening words");
+        Equal((GrokBotPromptStep.None, GrokBotReconnectPolicy.OpeningText), (retry.Observe(Seen(null), busy: true), retry.Message), "that Grok Bot closes meanwhile: Wingman will open Grok Bot");
+        var reopen = Waiting();
+        reopen.Finished(new(GrokBotReconnectOutcome.StillRunning, quit), Seen(null));
+        Equal((false, GrokBotReconnectPolicy.OpeningText), (reopen.Open(busy: true), reopen.Message), "Open Grok Bot kept while busy after the quit: Wingman will open it");
+
         var timedOut = Waiting();
         timedOut.Finished(new(GrokBotReconnectOutcome.QuitTimedOut), Seen(Second));
         Equal((GrokBotPromptState.CouldNotStart, GrokBotReconnectPolicy.QuitTimedOutText, (string?)null), (timedOut.State, timedOut.Problem, timedOut.ClosedBecause),
