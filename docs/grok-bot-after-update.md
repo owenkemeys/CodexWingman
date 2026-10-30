@@ -56,7 +56,7 @@ Once you have pressed **Reconnect** or **Open Grok Bot**, or said Yes to `Open w
 - Wingman stopped first, for example because you chose Reload Helpers;
 - something went wrong inside Wingman. The prompt says so in plain words, and the error is in Wingman's log.
 
-If Grok Bot did open but the Helpers didn't connect, the prompt says "Grok Bot is open, but Wingman couldn't connect its Helpers." with **Open Grok Bot**, which tries again. If Grok Bot closed while Wingman was connecting them, it says "Grok Bot closed before Wingman could connect its Helpers." instead.
+If Grok Bot did open but the Helpers didn't connect, the prompt says "Grok Bot is open, but Wingman couldn't connect its Helpers." with **Open Grok Bot**, which tries again; when Wingman opened that Grok Bot itself, it says "Wingman opened Grok Bot, but couldn't connect its Helpers." instead. If Grok Bot closed while Wingman was connecting them, it says "Grok Bot closed before Wingman could connect its Helpers." instead.
 
 Grok Bot 0.78.1 starts its installer while it is still shutting down, for up to a few seconds. So when an installer appears while Wingman waits for your quit, Wingman keeps waiting, for up to 30 seconds, for that same Grok Bot to exit, and then waits for the update as above. When Wingman never saw your quit, **Open Grok Bot** checks again: it waits up to 30 seconds for that Grok Bot to exit, waits for an update it finds, and starts nothing while another Grok Bot runs. If that Grok Bot is still running, **Open Grok Bot** asks you to close its window, as **Reconnect** does.
 

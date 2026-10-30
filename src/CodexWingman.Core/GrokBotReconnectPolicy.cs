@@ -114,6 +114,8 @@ public sealed class GrokBotReconnectPolicy
     public const string StoppedText = "Wingman stopped before it could reopen Grok Bot.";
     /// <summary>Grok Bot runs with Wingman's port, but connecting the Helpers to it failed.</summary>
     public const string ConnectFailedText = "Grok Bot is open, but Wingman couldn't connect its Helpers. Details are in Wingman's log.";
+    /// <summary>Wingman itself opened Grok Bot after the press, but couldn't connect the Helpers to it.</summary>
+    public const string OpenedNotConnectedText = "Wingman opened Grok Bot, but couldn't connect its Helpers. Details are in Wingman's log.";
     public const string ConnectingText = "Wingman is connecting Grok Bot's Helpers...";
     /// <summary>Grok Bot exited while Wingman was connecting its Helpers, or after that failed.</summary>
     public const string ClosedBeforeConnectText = "Grok Bot closed before Wingman could connect its Helpers.";
@@ -287,6 +289,8 @@ public sealed class GrokBotReconnectPrompt(GrokBotReconnectOffer offer)
     private GrokBotProcess? connectFailedFor;
     /// <summary>When the press now kept while Wingman is busy was first kept (see <see cref="Observe"/>).</summary>
     private DateTimeOffset? keptSince;
+    /// <summary>The run's Relaunched: the Grok Bot now being connected is one Wingman opened itself.</summary>
+    private bool openedByWingman;
 
     /// <summary>
     /// Open window or Repair after the user's Yes: the prompt for that run, already pressed and working, so every result
@@ -461,7 +465,8 @@ public sealed class GrokBotReconnectPrompt(GrokBotReconnectOffer offer)
                 return;
             case GrokBotReconnectOutcome.Relaunched or GrokBotReconnectOutcome.Adopted or GrokBotReconnectOutcome.AlreadyConnected:
                 Problem = null;
-                connectingText = result.Outcome == GrokBotReconnectOutcome.Relaunched ? GrokBotReconnectPolicy.OpeningText : GrokBotReconnectPolicy.ConnectingText;
+                openedByWingman = result.Outcome == GrokBotReconnectOutcome.Relaunched;
+                connectingText = openedByWingman ? GrokBotReconnectPolicy.OpeningText : GrokBotReconnectPolicy.ConnectingText;
                 State = GrokBotPromptState.Connecting;
                 return;
         }
@@ -469,11 +474,23 @@ public sealed class GrokBotReconnectPrompt(GrokBotReconnectOffer offer)
         var outcome = result.Outcome == GrokBotReconnectOutcome.Cancelled ? GrokBotReconnectOutcome.Stopped : result.Outcome;
         if (outcome == GrokBotReconnectOutcome.NotConnected)
         {
-            // The reason comes from what Grok Bot is doing now: still open, or closed while Wingman was connecting.
-            connectFailedFor = now?.Process;
-            Problem = now is { Process: null } ? GrokBotReconnectPolicy.ClosedBeforeConnectText : GrokBotReconnectPolicy.ConnectFailedText;
-            goneText = now is { Process: null } ? null : GrokBotReconnectPolicy.ClosedBeforeConnectText;
-            State = GrokBotPromptState.CouldNotStart;
+            // The reason comes from what Grok Bot is doing now: still open (the one Wingman was connecting, which the prompt is
+            // now for, so a Grok Bot Wingman opened itself never reads as opened without Wingman), or closed meanwhile.
+            if (now?.Process is { } open)
+            {
+                Follow(open, openedByWingman ? GrokBotReconnectPolicy.OpenedNotConnectedText : GrokBotReconnectPolicy.ConnectFailedText,
+                    GrokBotReconnectPolicy.ClosedBeforeConnectText);
+                connectFailedFor = open;
+            }
+            else
+            {
+                connectFailedFor = null;
+                Problem = now is not null ? GrokBotReconnectPolicy.ClosedBeforeConnectText
+                    : openedByWingman ? GrokBotReconnectPolicy.OpenedNotConnectedText : GrokBotReconnectPolicy.ConnectFailedText;
+                goneText = null;
+                State = GrokBotPromptState.CouldNotStart;
+            }
+            openedByWingman = false;
             return;
         }
         if (outcome is GrokBotReconnectOutcome.Reopened or GrokBotReconnectOutcome.UpdatedAndReopened && now?.Process is { } reopened && reopened != Offer.Target)

@@ -591,7 +591,11 @@ internal static class GrokBotReconnectTests
                         name + ": a stop says Wingman stopped");
                     Equal((true, ("Open Grok Bot", true, "Not now")), (!string.IsNullOrWhiteSpace(prompt.Problem), prompt.Buttons), name + ": a plain reason and Open Grok Bot");
                     if (result.Outcome == GrokBotReconnectOutcome.NotConnected)
+                    {
                         Equal(finalName == "no Grok Bot", prompt.Problem == GrokBotReconnectPolicy.ClosedBeforeConnectText, name + ": the connect's reason says whether Grok Bot closed");
+                        Equal((GrokBotPromptStep.None, false), (prompt.Observe(final with { Connected = false }, busy: false), prompt.Problem == GrokBotReconnectPolicy.ReopenedText),
+                            name + ": the Grok Bot Wingman was connecting is never read as opened without Wingman");
+                    }
                     break;
                 case GrokBotPromptState.Working:
                     var goesOn = result.Outcome == GrokBotReconnectOutcome.UpdatedAndReopened && prompt.Offer.ProcessId == Third;
@@ -686,18 +690,21 @@ internal static class GrokBotReconnectTests
         Ends(throws, GrokBotReconnectOutcome.Failed, GrokBotReconnectPolicy.FailedText, "an error after the close: a plain reason");
         Equal(true, throws.Prompt.Quit?.Process == target, "and the prompt has the quit's proof for Open Grok Bot");
 
-        Ends(Run(new FakeControl(new FakeProcess(target, []) { Exited = true }), connects: false, seen: reopenedWithPort), GrokBotReconnectOutcome.NotConnected,
-            GrokBotReconnectPolicy.ConnectFailedText, "reopened, but the Helpers didn't connect: the prompt says so");
+        var unconnected = Run(new FakeControl(new FakeProcess(target, []) { Exited = true }), connects: false, seen: reopenedWithPort);
+        Ends(unconnected, GrokBotReconnectOutcome.NotConnected, GrokBotReconnectPolicy.OpenedNotConnectedText, "Wingman reopened it, but the Helpers didn't connect: the prompt says so");
+        Equal((GrokBotPromptStep.None, GrokBotReconnectPolicy.OpenedNotConnectedText, reopenedWithPort.Process),
+            (unconnected.Prompt.Observe(reopenedWithPort with { Connected = false }, busy: false), unconnected.Prompt.Problem, unconnected.Prompt.Offer.Target),
+            "the Grok Bot Wingman opened is the prompt's own: never read as opened without Wingman");
         Ends(Run(new FakeControl(new FakeProcess(target, []) { Exited = true }), connects: false), GrokBotReconnectOutcome.NotConnected,
             GrokBotReconnectPolicy.ClosedBeforeConnectText, "reopened, but Grok Bot closed while Wingman connected: the prompt says it closed");
 
         var unseen = GrokBotReconnectPrompt.AfterYes(target, null, T0);
         var blindHost = new FakeHost(new FakeControl(new FakeProcess(target, []) { Exited = true }), none) { Connects = false, ObserveFails = true };
-        Ends((unseen, blindHost, Act(unseen, GrokBotPromptStep.ApprovedClose, blindHost)), GrokBotReconnectOutcome.NotConnected, GrokBotReconnectPolicy.ConnectFailedText,
-            "the connect failed and Wingman couldn't look at Grok Bot: no guess that it closed");
+        Ends((unseen, blindHost, Act(unseen, GrokBotPromptStep.ApprovedClose, blindHost)), GrokBotReconnectOutcome.NotConnected, GrokBotReconnectPolicy.OpenedNotConnectedText,
+            "the connect failed and Wingman couldn't look at Grok Bot: no guess either way, only what Wingman did");
         var connectThrows = GrokBotReconnectPrompt.AfterYes(target, null, T0);
         var throwingHost = new FakeHost(new FakeControl(new FakeProcess(target, []) { Exited = true }), reopenedWithPort) { ConnectThrows = new InvalidOperationException("The operation was canceled.") };
-        Ends((connectThrows, throwingHost, Act(connectThrows, GrokBotPromptStep.ApprovedClose, throwingHost)), GrokBotReconnectOutcome.NotConnected, GrokBotReconnectPolicy.ConnectFailedText,
+        Ends((connectThrows, throwingHost, Act(connectThrows, GrokBotPromptStep.ApprovedClose, throwingHost)), GrokBotReconnectOutcome.NotConnected, GrokBotReconnectPolicy.OpenedNotConnectedText,
             "reopened, but connecting the Helpers threw: the prompt says so, never the raw text");
 
         var works = Run(new FakeControl(new FakeProcess(target, []) { Exited = true }));
@@ -739,6 +746,7 @@ internal static class GrokBotReconnectTests
             && every.Contains("\"" + GrokBotReconnectPolicy.ConnectFailedText[..GrokBotReconnectPolicy.ConnectFailedText.IndexOf(". ", StringComparison.Ordinal)] + ".\"", StringComparison.Ordinal)
             && guide.Contains("\"" + GrokBotReconnectPolicy.ConnectingText + "\"", StringComparison.Ordinal)
             && every.Contains("\"" + GrokBotReconnectPolicy.ClosedBeforeConnectText + "\"", StringComparison.Ordinal)
+            && every.Contains("\"" + GrokBotReconnectPolicy.OpenedNotConnectedText[..GrokBotReconnectPolicy.OpenedNotConnectedText.IndexOf(". ", StringComparison.Ordinal)] + ".\"", StringComparison.Ordinal)
             && guide.Contains("\"" + GrokBotReconnectPolicy.ReopenedText + "\"", StringComparison.Ordinal)
             && guide.Contains("\"Grok Bot is updating...\"", StringComparison.Ordinal) && GrokBotReconnectPolicy.UpdatingText.StartsWith("Grok Bot is updating...", StringComparison.Ordinal)
             && guide.Contains("the same prompt window now follows that Grok Bot", StringComparison.Ordinal) && !guide.Contains("takes its place", StringComparison.Ordinal)
