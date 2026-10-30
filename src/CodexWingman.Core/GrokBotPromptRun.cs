@@ -168,10 +168,10 @@ public static class GrokBotPromptRun
         return result;
     }
 
-    /// <summary>The observation for the prompt's last word; if even that throws, no Grok Bot (so never [Reconnect] on a guess).</summary>
-    private static GrokBotObservation ObserveSafely(IGrokBotReconnectSteps steps)
+    /// <summary>The observation for the prompt's last word; null if even that throws, so the prompt picks no reason on a guess.</summary>
+    private static GrokBotObservation? ObserveSafely(IGrokBotReconnectSteps steps)
     {
         try { return steps.Observe(); }
-        catch (Exception) { return new(null, false, TimeSpan.Zero); }
+        catch (Exception) { return null; }
     }
 }

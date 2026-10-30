@@ -102,6 +102,8 @@ public sealed class GrokBotReconnectPolicy
     /// <summary>Grok Bot runs with Wingman's port, but connecting the Helpers to it failed.</summary>
     public const string ConnectFailedText = "Grok Bot is open, but Wingman couldn't connect its Helpers. Details are in Wingman's log.";
     public const string ConnectingText = "Wingman is connecting Grok Bot's Helpers...";
+    /// <summary>Grok Bot exited while Wingman was connecting its Helpers, or after that failed.</summary>
+    public const string ClosedBeforeConnectText = "Grok Bot closed before Wingman could connect its Helpers.";
 
     private bool wasConnected;
     private GrokBotProcess? connectedProcess;
@@ -405,7 +407,8 @@ public sealed class GrokBotReconnectPrompt(GrokBotReconnectOffer offer)
     /// (the Helpers are connected) closes the prompt here, and the user's Cancel or Not now has closed it already. Busy keeps
     /// the press pending. Grok Bot running with the port (Relaunched, Adopted, AlreadyConnected) goes on to Connecting.
     /// Every other outcome, including a Cancelled that didn't come from the user, keeps the prompt with a plain reason and
-    /// [Open Grok Bot] [Not now]; never [Reconnect] again. <paramref name="now"/> is Grok Bot as the run ended.
+    /// [Open Grok Bot] [Not now]; never [Reconnect] again. <paramref name="now"/> is Grok Bot as the run ended (null when
+    /// Wingman couldn't look); a failed connect says whether Grok Bot is still open or closed meanwhile.
     /// </summary>
     public void Finished(GrokBotReconnectResult result, GrokBotObservation? now = null)
     {
@@ -428,7 +431,15 @@ public sealed class GrokBotReconnectPrompt(GrokBotReconnectOffer offer)
         }
         // The user's Cancel closed the prompt before the run ended, so a Cancelled reaching it here is Wingman's own stop.
         var outcome = result.Outcome == GrokBotReconnectOutcome.Cancelled ? GrokBotReconnectOutcome.Stopped : result.Outcome;
-        if (outcome == GrokBotReconnectOutcome.NotConnected) connectFailedFor = now?.Process;
+        if (outcome == GrokBotReconnectOutcome.NotConnected)
+        {
+            // The reason comes from what Grok Bot is doing now: still open, or closed while Wingman was connecting.
+            connectFailedFor = now?.Process;
+            Problem = now is { Process: null } ? GrokBotReconnectPolicy.ClosedBeforeConnectText : GrokBotReconnectPolicy.ConnectFailedText;
+            goneText = now is { Process: null } ? null : GrokBotReconnectPolicy.ClosedBeforeConnectText;
+            State = GrokBotPromptState.CouldNotStart;
+            return;
+        }
         if (outcome is GrokBotReconnectOutcome.Reopened or GrokBotReconnectOutcome.UpdatedAndReopened && now?.Process is { } reopened && reopened != Offer.Target)
         {
             // Opened again without Wingman: the same prompt follows that Grok Bot. After an update the user's quit started,

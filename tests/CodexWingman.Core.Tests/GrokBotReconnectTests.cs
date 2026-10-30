@@ -574,6 +574,8 @@ internal static class GrokBotReconnectTests
                     Equal(true, ending is not ("Wingman stops" or "shutdown") || prompt.Problem is GrokBotReconnectPolicy.StoppedText or GrokBotReconnectPolicy.SessionEndingText,
                         name + ": a stop says Wingman stopped");
                     Equal((true, ("Open Grok Bot", true, "Not now")), (!string.IsNullOrWhiteSpace(prompt.Problem), prompt.Buttons), name + ": a plain reason and Open Grok Bot");
+                    if (result.Outcome == GrokBotReconnectOutcome.NotConnected)
+                        Equal(finalName == "no Grok Bot", prompt.Problem == GrokBotReconnectPolicy.ClosedBeforeConnectText, name + ": the connect's reason says whether Grok Bot closed");
                     break;
                 case GrokBotPromptState.Working:
                     var goesOn = result.Outcome == GrokBotReconnectOutcome.UpdatedAndReopened && prompt.Offer.ProcessId == Third;
@@ -624,10 +626,12 @@ internal static class GrokBotReconnectTests
         var started = new DateTime(2026, 1, 1, 8, 59, 0, DateTimeKind.Utc);
         var target = new GrokBotProcess(Second, started);
         var none = new GrokBotObservation(null, false, Present);
-        (GrokBotReconnectPrompt Prompt, FakeHost Host, GrokBotReconnectResult Result) Run(FakeControl control, CancellationToken token = default, bool connects = true)
+        var reopenedWithPort = new GrokBotObservation(Third, true, Present, started.AddMinutes(1));
+        (GrokBotReconnectPrompt Prompt, FakeHost Host, GrokBotReconnectResult Result) Run(FakeControl control, CancellationToken token = default, bool connects = true,
+            GrokBotObservation? seen = null)
         {
             var prompt = GrokBotReconnectPrompt.AfterYes(target, control.Stamp, T0);
-            var host = new FakeHost(control, none) { Connects = connects };
+            var host = new FakeHost(control, seen ?? none) { Connects = connects };
             return (prompt, host, Act(prompt, GrokBotPromptStep.ApprovedClose, host, token));
         }
         void Ends((GrokBotReconnectPrompt Prompt, FakeHost Host, GrokBotReconnectResult Result) run, GrokBotReconnectOutcome outcome, string text, string name) =>
@@ -655,11 +659,17 @@ internal static class GrokBotReconnectTests
         Ends(throws, GrokBotReconnectOutcome.Failed, GrokBotReconnectPolicy.FailedText, "an error after the close: a plain reason");
         Equal(true, throws.Prompt.Quit?.Process == target, "and the prompt has the quit's proof for Open Grok Bot");
 
-        Ends(Run(new FakeControl(new FakeProcess(target, []) { Exited = true }), connects: false), GrokBotReconnectOutcome.NotConnected, GrokBotReconnectPolicy.ConnectFailedText,
-            "reopened, but the Helpers didn't connect: the prompt says so");
+        Ends(Run(new FakeControl(new FakeProcess(target, []) { Exited = true }), connects: false, seen: reopenedWithPort), GrokBotReconnectOutcome.NotConnected,
+            GrokBotReconnectPolicy.ConnectFailedText, "reopened, but the Helpers didn't connect: the prompt says so");
+        Ends(Run(new FakeControl(new FakeProcess(target, []) { Exited = true }), connects: false), GrokBotReconnectOutcome.NotConnected,
+            GrokBotReconnectPolicy.ClosedBeforeConnectText, "reopened, but Grok Bot closed while Wingman connected: the prompt says it closed");
 
+        var unseen = GrokBotReconnectPrompt.AfterYes(target, null, T0);
+        var blindHost = new FakeHost(new FakeControl(new FakeProcess(target, []) { Exited = true }), none) { Connects = false, ObserveFails = true };
+        Ends((unseen, blindHost, Act(unseen, GrokBotPromptStep.ApprovedClose, blindHost)), GrokBotReconnectOutcome.NotConnected, GrokBotReconnectPolicy.ConnectFailedText,
+            "the connect failed and Wingman couldn't look at Grok Bot: no guess that it closed");
         var connectThrows = GrokBotReconnectPrompt.AfterYes(target, null, T0);
-        var throwingHost = new FakeHost(new FakeControl(new FakeProcess(target, []) { Exited = true }), none) { ConnectThrows = new InvalidOperationException("The operation was canceled.") };
+        var throwingHost = new FakeHost(new FakeControl(new FakeProcess(target, []) { Exited = true }), reopenedWithPort) { ConnectThrows = new InvalidOperationException("The operation was canceled.") };
         Ends((connectThrows, throwingHost, Act(connectThrows, GrokBotPromptStep.ApprovedClose, throwingHost)), GrokBotReconnectOutcome.NotConnected, GrokBotReconnectPolicy.ConnectFailedText,
             "reopened, but connecting the Helpers threw: the prompt says so, never the raw text");
 
@@ -691,6 +701,7 @@ internal static class GrokBotReconnectTests
             && every.Contains("wasn't closed within 10 minutes", StringComparison.Ordinal) && GrokBotReconnectPolicy.QuitTimedOutText.Contains("within 10 minutes", StringComparison.Ordinal)
             && every.Contains("\"" + GrokBotReconnectPolicy.ConnectFailedText[..GrokBotReconnectPolicy.ConnectFailedText.IndexOf(". ", StringComparison.Ordinal)] + ".\"", StringComparison.Ordinal)
             && guide.Contains("\"" + GrokBotReconnectPolicy.ConnectingText + "\"", StringComparison.Ordinal)
+            && every.Contains("\"" + GrokBotReconnectPolicy.ClosedBeforeConnectText + "\"", StringComparison.Ordinal)
             && guide.Contains("\"" + GrokBotReconnectPolicy.ReopenedText + "\"", StringComparison.Ordinal)
             && guide.Contains("\"Grok Bot is updating...\"", StringComparison.Ordinal) && GrokBotReconnectPolicy.UpdatingText.StartsWith("Grok Bot is updating...", StringComparison.Ordinal)
             && guide.Contains("the same prompt window now follows that Grok Bot", StringComparison.Ordinal) && !guide.Contains("takes its place", StringComparison.Ordinal)
@@ -705,7 +716,8 @@ internal static class GrokBotReconnectTests
         public readonly List<string> Log = [];
         private int seen;
         public GrokBotReconnectPrompt? Prompt;
-        public GrokBotObservation Observe() => observations[Math.Min(seen++, observations.Length - 1)];
+        public bool ObserveFails;
+        public GrokBotObservation Observe() => ObserveFails ? throw new InvalidOperationException("no snapshot") : observations[Math.Min(seen++, observations.Length - 1)];
         public bool AdoptListeningPort(int process) => false;
         public bool Busy { get; set; }
         public bool Installed { get; set; } = true;
