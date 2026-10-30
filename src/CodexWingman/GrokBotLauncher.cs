@@ -264,6 +264,8 @@ internal sealed class GrokBotLauncher(string wingmanDataRoot, Func<IEnumerable<i
                 return new(GrokBotOpenStep.Started);
             }
             if (!confirmRelaunch()) return new(GrokBotOpenStep.Declined);
+            // Cancelled while the question was open (Reload Helpers): Grok Bot is left running, and the caller's prompt says so.
+            if (cancellationToken.IsCancellationRequested) return new(GrokBotOpenStep.StoppedAfterYes, closed, stamp);
             WingmanLog.Write("grok-bot-close", ("processes", running.Length), ("forced", false));
             foreach (var process in running)
             {
@@ -567,7 +569,10 @@ internal sealed class GrokBotLauncher(string wingmanDataRoot, Func<IEnumerable<i
     }
 }
 
-internal enum GrokBotOpenStep { Brought, Started, Declined, CloseRequested }
+internal enum GrokBotOpenStep { Brought, Started, Declined, CloseRequested, StoppedAfterYes }
 
-/// <summary>What Open window did before any wait: for <see cref="GrokBotOpenStep.CloseRequested"/>, the process asked to close and Grok Bot.exe before.</summary>
+/// <summary>
+/// What Open window did before any wait: for <see cref="GrokBotOpenStep.CloseRequested"/> (and a stop right after the Yes,
+/// <see cref="GrokBotOpenStep.StoppedAfterYes"/>, which closed nothing), the main process and Grok Bot.exe before.
+/// </summary>
 internal sealed record GrokBotOpen(GrokBotOpenStep Step, GrokBotProcess? Closed = null, GrokBotExecutableStamp? Since = null);

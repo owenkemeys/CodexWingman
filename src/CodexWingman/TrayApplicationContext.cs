@@ -1076,6 +1076,14 @@ internal sealed class TrayApplicationContext : ApplicationContext
                 await ActOnGrokPromptAsync(prompt, GrokBotPromptStep.ApprovedClose, session, deadline.Token);
                 return;
             }
+            if (open.Step == GrokBotOpenStep.StoppedAfterYes)
+            {
+                // Stopped as the Yes came in: nothing was closed, and the prompt says Wingman stopped, with its button.
+                var prompt = grokPrompts.AfterYes(open.Closed, open.Since, DateTimeOffset.UtcNow);
+                prompt.Finished(new(GrokBotReconnectOutcome.Cancelled));
+                ShowGrokPrompt(prompt);
+                return;
+            }
             grok.Menu.Visible = true;
             await grok.ReconcileAsync(() => grok.Host.ResumeAndReconcileAsync(deadline.Token), deadline.Token);
             if (grok.CheckFailed)

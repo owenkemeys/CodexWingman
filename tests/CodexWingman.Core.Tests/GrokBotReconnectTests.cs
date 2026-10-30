@@ -684,6 +684,17 @@ internal static class GrokBotReconnectTests
         Equal(true, afterYes.Contains("var prompt = grokPrompts.AfterYes(open.Closed, open.Since, DateTimeOffset.UtcNow);", StringComparison.Ordinal)
             && afterYes.IndexOf("ShowGrokPrompt(prompt);", StringComparison.Ordinal) < afterYes.IndexOf("await ActOnGrokPromptAsync(prompt, GrokBotPromptStep.ApprovedClose, session, deadline.Token);", StringComparison.Ordinal)
             && !afterYes.Contains("MessageBox", StringComparison.Ordinal), "after the Yes the tray shows the prompt, then runs it; no message box");
+        // A cancel that came in while the question was open is checked right after the Yes: nothing is closed, and the
+        // prompt says Wingman stopped, with its button.
+        var launcher = File.ReadAllText(Path.Combine(RepositoryRoot(), "src", "CodexWingman", "GrokBotLauncher.cs"));
+        var yes = launcher.IndexOf("if (!confirmRelaunch()) return new(GrokBotOpenStep.Declined);", StringComparison.Ordinal);
+        var check = launcher.IndexOf("if (cancellationToken.IsCancellationRequested) return new(GrokBotOpenStep.StoppedAfterYes, closed, stamp);", StringComparison.Ordinal);
+        Equal(true, yes > 0 && check > yes && check < launcher.IndexOf("process.CloseMainWindow();", yes, StringComparison.Ordinal), "the cancel is checked between the Yes and the close");
+        Equal(true, ensure.Contains("if (open.Step == GrokBotOpenStep.StoppedAfterYes)", StringComparison.Ordinal)
+            && ensure.Contains("prompt.Finished(new(GrokBotReconnectOutcome.Cancelled));", StringComparison.Ordinal), "and the tray shows the stop in the prompt");
+        var stoppedAtYes = GrokBotReconnectPrompt.AfterYes(target, null, T0);
+        stoppedAtYes.Finished(new(GrokBotReconnectOutcome.Cancelled));
+        Equal((GrokBotPromptState.CouldNotStart, GrokBotReconnectPolicy.StoppedText, true), (stoppedAtYes.State, stoppedAtYes.Problem, stoppedAtYes.Pressed), "stopped at the Yes: says so");
         // Before any Yes nothing changed: Open window and Repair handle a cancel as they always did, with no extra box.
         var repair = tray[tray.IndexOf("private async Task RepairGrokBotAsync", StringComparison.Ordinal)..tray.IndexOf("private async Task EnsureGrokBotReadyAsync", StringComparison.Ordinal)];
         Equal((false, false, false), (ensure.Contains("catch (OperationCanceledException)", StringComparison.Ordinal), repair.Contains("catch (OperationCanceledException)", StringComparison.Ordinal),
