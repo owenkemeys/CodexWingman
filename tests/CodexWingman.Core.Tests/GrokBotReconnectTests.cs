@@ -33,6 +33,7 @@ internal static class GrokBotReconnectTests
         OpenWithoutTheQuitsProofIsStillGuarded();
         OpenWindowsCloseWaitIsUpdateAware();
         TheAnswerTimeDoesntCount();
+        DocCommentsStayOnTheirMember();
         AHandOverIsTheOnlyPromptForItsProcess();
         PromptWindowStaysOutOfTheWay();
         BringingForwardKeepsTheWindowAsItIs();
@@ -1116,6 +1117,42 @@ internal static class GrokBotReconnectTests
         var notYet = new FakeControl(new FakeProcess(target, [])) { InstallerAt = _ => true };
         var early = GrokBotRelaunch.RunAsync(target, notYet, Limits, () => clock, (wait, _) => { clock += wait; return Task.CompletedTask; }, default).GetAwaiter().GetResult();
         Equal((GrokBotRelaunchKind.ExitTooLong, false), (early.Kind, early.Quit is not null), "an installer while Grok Bot never closes: no proof, the prompt says so");
+    }
+
+    /// <summary>
+    /// Every /// block in the Grok Bot sources has one summary and no loose text after it, so the comment reads on its own
+    /// member (a summary moved off its method, or text left outside the tags, fails here).
+    /// </summary>
+    private static void DocCommentsStayOnTheirMember()
+    {
+        var root = RepositoryRoot();
+        var files = new[] { Path.Combine("src", "CodexWingman", "GrokBotLauncher.cs"), Path.Combine("src", "CodexWingman.Core", "GrokBotReconnectPolicy.cs"),
+            Path.Combine("src", "CodexWingman", "TrayApplicationContext.cs"), Path.Combine("src", "CodexWingman", "GrokBotPromptWindow.cs") };
+        foreach (var file in files)
+        {
+            var block = new List<(int Line, string Text)>();
+            var lines = File.ReadAllLines(Path.Combine(root, file));
+            for (var index = 0; index <= lines.Length; index++)
+            {
+                var text = index < lines.Length ? lines[index].Trim() : "";
+                if (text.StartsWith("///", StringComparison.Ordinal)) { block.Add((index + 1, text[3..].Trim())); continue; }
+                if (block.Count == 0) continue;
+                Equal(true, block.Count(entry => entry.Text.StartsWith("<summary>", StringComparison.Ordinal)) <= 1, $"{file}:{block[0].Line}: one summary per member");
+                var afterSummary = false;
+                var open = false;
+                foreach (var (line, entry) in block)
+                {
+                    if (afterSummary && !open && entry.Length > 0)
+                    {
+                        Equal(true, entry.StartsWith('<'), $"{file}:{line}: no loose text after </summary>");
+                        open = !entry.EndsWith("/>", StringComparison.Ordinal) && !System.Text.RegularExpressions.Regex.IsMatch(entry, "</(param|typeparam|returns|remarks|exception|example|value)>$");
+                    }
+                    else if (afterSummary && open && System.Text.RegularExpressions.Regex.IsMatch(entry, "</(param|typeparam|returns|remarks|exception|example|value)>$")) open = false;
+                    if (entry.Contains("</summary>", StringComparison.Ordinal)) afterSummary = true;
+                }
+                block.Clear();
+            }
+        }
     }
 
     /// <summary>

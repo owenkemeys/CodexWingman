@@ -238,10 +238,10 @@ internal sealed class GrokBotLauncher(string wingmanDataRoot, Func<IEnumerable<i
 
     /// <summary>
     /// Already hooked: bring Grok Bot forward. Not running: start it with the debugging port.
-    /// Running without the port: ask, close it gracefully, and start it again with the same user data.
+    /// Running without the port: ask, close it gracefully, and start it again with the same user data. If that close
+    /// starts Grok Bot's update, Wingman waits for the update and then opens Grok Bot, as after Reconnect
+    /// (<see cref="GrokBotRelaunch.AfterCloseRequestAsync"/>); <paramref name="updating"/> is called as the wait starts.
     /// </summary>
-    /// If that close starts Grok Bot's update, Wingman waits for the update and then opens Grok Bot, as after Reconnect
-    /// (<see cref="GrokBotRelaunch.AfterApprovedCloseAsync"/>); <paramref name="updating"/> is called as the wait starts.
     public async Task<bool> OpenAsync(Func<bool> confirmRelaunch, CancellationToken cancellationToken, Action? updating = null, Func<bool>? sessionEnding = null)
     {
         if (!IsInstalled()) throw new FileNotFoundException("Grok Bot is not installed in its usual folder.");
@@ -328,11 +328,6 @@ internal sealed class GrokBotLauncher(string wingmanDataRoot, Func<IEnumerable<i
         return result;
     }
 
-    /// <summary>
-    /// The user's quit started a Grok Bot update: waits for it to finish, then opens Grok Bot with the port (see
-    /// <see cref="GrokBotRelaunch.AfterUpdateAsync"/>). Grok Bot.exe may be missing while the installer replaces it, so
-    /// this doesn't require it to be installed up front; the start's own guards do.
-    /// </summary>
     /// <summary>Open Grok Bot after Reconnect without the quit's proof (<see cref="GrokBotRelaunch.OpenAfterPressAsync"/>).</summary>
     public async Task<GrokBotRelaunchResult> OpenAfterPressAsync(GrokBotProcess target, Func<bool> mayStart, Func<bool> sessionEnding, CancellationToken cancellationToken)
     {
@@ -344,6 +339,11 @@ internal sealed class GrokBotLauncher(string wingmanDataRoot, Func<IEnumerable<i
         return result;
     }
 
+    /// <summary>
+    /// The user's quit started a Grok Bot update: waits for it to finish, then opens Grok Bot with the port (see
+    /// <see cref="GrokBotRelaunch.AfterUpdateAsync"/>). Grok Bot.exe may be missing while the installer replaces it, so
+    /// this doesn't require it to be installed up front; the start's own guards do.
+    /// </summary>
     public async Task<GrokBotRelaunchResult> AfterUpdateAsync(GrokBotRelaunch.ClosedProcess quit, Func<bool> mayStart, Func<bool> sessionEnding, CancellationToken cancellationToken)
     {
         var control = new ProcessControl(this, mayStart, sessionEnding);
