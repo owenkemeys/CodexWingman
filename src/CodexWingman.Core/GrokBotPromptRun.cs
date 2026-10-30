@@ -53,25 +53,26 @@ public sealed class GrokBotPromptSteps(GrokBotReconnectPrompt prompt, IGrokBotPr
     public async Task<GrokBotRelaunchResult> RelaunchAfterQuitAsync(GrokBotProcess target, CancellationToken cancellationToken)
     {
         RequireInstalled();
-        var result = await GrokBotRelaunch.RunAsync(target, Control(), limits, now, delay, cancellationToken, Exited);
+        var result = await GrokBotRelaunch.RunAsync(target, Control(), limits, now, delay, cancellationToken, Exited, Opening);
         WingmanLog.Write("grok-bot-reconnect-relaunch", ("process", target.Id), ("result", result.Kind));
         return result;
     }
 
     /// <summary>The Open Grok Bot button after Wingman couldn't reopen it: the same bounded, installer-safe start.</summary>
-    public async Task<GrokBotRelaunchResult> StartAsync(GrokBotRelaunch.ClosedProcess quit, CancellationToken cancellationToken)
+    public async Task<GrokBotRelaunchResult> StartAsync(GrokBotStartPermit permit, CancellationToken cancellationToken)
     {
         RequireInstalled();
         var control = Control();
-        var result = await GrokBotRelaunch.StartWhenClearAsync(quit, control.ExecutableStamp(), control, limits, now, delay, cancellationToken);
-        WingmanLog.Write("grok-bot-reconnect-open", ("process", quit.Process.Id), ("result", result.Kind));
+        Opening();
+        var result = await GrokBotRelaunch.StartWhenClearAsync(permit, control.ExecutableStamp(), control, limits, now, delay, cancellationToken);
+        WingmanLog.Write("grok-bot-reconnect-open", ("process", permit.After?.Process.Id), ("result", result.Kind));
         return result;
     }
 
-    public async Task<GrokBotRelaunchResult> OpenAfterPressAsync(GrokBotProcess target, CancellationToken cancellationToken)
+    public async Task<GrokBotRelaunchResult> OpenAfterPressAsync(GrokBotProcess target, GrokBotOpenPress? press, CancellationToken cancellationToken)
     {
         RequireInstalled();
-        var result = await GrokBotRelaunch.OpenAfterPressAsync(target, Control(), limits, now, delay, cancellationToken, Exited);
+        var result = await GrokBotRelaunch.OpenAfterPressAsync(target, press, Control(), limits, now, delay, cancellationToken, Exited, Opening);
         WingmanLog.Write("grok-bot-reconnect-open-after-press", ("process", target.Id), ("result", result.Kind));
         return result;
     }
@@ -87,10 +88,10 @@ public sealed class GrokBotPromptSteps(GrokBotReconnectPrompt prompt, IGrokBotPr
     /// Grok Bot.exe may be missing while the installer replaces it, so this doesn't require it to be installed up front;
     /// the start's own guards do.
     /// </summary>
-    public async Task<GrokBotRelaunchResult> AfterUpdateAsync(GrokBotRelaunch.ClosedProcess quit, CancellationToken cancellationToken)
+    public async Task<GrokBotRelaunchResult> AfterUpdateAsync(GrokBotStartPermit permit, CancellationToken cancellationToken)
     {
-        var result = await GrokBotRelaunch.AfterUpdateAsync(quit, Control(), limits, now, delay, cancellationToken);
-        WingmanLog.Write("grok-bot-reconnect-after-update", ("process", quit.Process.Id), ("result", result.Kind));
+        var result = await GrokBotRelaunch.AfterUpdateAsync(permit, Control(), limits, now, delay, cancellationToken);
+        WingmanLog.Write("grok-bot-reconnect-after-update", ("process", permit.After?.Process.Id), ("result", result.Kind));
         return result;
     }
 
@@ -118,6 +119,13 @@ public sealed class GrokBotPromptSteps(GrokBotReconnectPrompt prompt, IGrokBotPr
         host.Changed();
     }
 
+    /// <summary>The run has decided to start Grok Bot: only now does the prompt say Wingman is opening it.</summary>
+    private void Opening()
+    {
+        prompt.Opening();
+        host.Changed();
+    }
+
     private void RequireInstalled()
     {
         if (!host.Installed) throw new FileNotFoundException("Grok Bot is not installed in its usual folder.");
@@ -141,7 +149,7 @@ public static class GrokBotPromptRun
         {
             result = step switch
             {
-                GrokBotPromptStep.Open => await GrokBotReconnectRun.OpenAsync(prompt.Offer.Target, prompt.Quit, steps, cancellationToken, prompt.Offer),
+                GrokBotPromptStep.Open => await GrokBotReconnectRun.OpenAsync(prompt.Offer.Target, prompt.Quit, prompt.OpenPress, steps, cancellationToken, prompt.Offer),
                 GrokBotPromptStep.Connect => new(GrokBotReconnectOutcome.AlreadyConnected, prompt.Quit),
                 GrokBotPromptStep.ApprovedClose => await GrokBotReconnectRun.ApprovedCloseAsync(prompt.Offer.ProcessId == 0 ? null : prompt.Offer.Target,
                     prompt.ApprovedSince, steps, cancellationToken),

@@ -262,7 +262,7 @@ internal sealed class GrokBotLauncher(string wingmanDataRoot, Func<IEnumerable<i
                 // update Wingman reconnects after. With Grok Bot running the question comes as before; the run after the
                 // Yes waits for an update itself.
                 await ThrowIfUpdateUnderWayAsync(stamp);
-                StartWithPort(null);
+                StartWithPort(GrokBotStartPermit.OpenWindow(running.Length), null);
                 await WaitForWindowAsync(cancellationToken);
                 return new(GrokBotOpenStep.Started);
             }
@@ -315,7 +315,7 @@ internal sealed class GrokBotLauncher(string wingmanDataRoot, Func<IEnumerable<i
         // Lists every process once a second during the wait: on the thread pool, never on the UI thread.
         public Task<bool> InstallerRunningAsync() => Task.Run(launcher.InstallerRunning);
         public bool SessionEnding() => sessionEnding();
-        public GrokBotProcess Start(GrokBotRelaunch.ClosedProcess proof) => launcher.StartWithPort(started);
+        public GrokBotProcess Start(GrokBotStartPermit permit) => launcher.StartWithPort(permit, started);
     }
 
     /// <summary>Grok Bot.exe's write time and size; null when missing or unreadable (an installer may be replacing it).</summary>
@@ -486,15 +486,15 @@ internal sealed class GrokBotLauncher(string wingmanDataRoot, Func<IEnumerable<i
     }
 
     /// <summary>
-    /// Starts Grok Bot with Wingman's port; the exact process started. <paramref name="started"/> hears of it the moment
+    /// Starts Grok Bot with Wingman's port, allowed by <paramref name="permit"/>; the exact process started. <paramref name="started"/> hears of it the moment
     /// Windows has started it, before anything that can throw, so a later error never loses that Wingman opened it.
     /// </summary>
-    private GrokBotProcess StartWithPort(Action<GrokBotProcess>? started)
+    private GrokBotProcess StartWithPort(GrokBotStartPermit permit, Action<GrokBotProcess>? started)
     {
-        lock (runtimeFile) return StartWithPortLocked(started);
+        lock (runtimeFile) return StartWithPortLocked(permit, started);
     }
 
-    private GrokBotProcess StartWithPortLocked(Action<GrokBotProcess>? started)
+    private GrokBotProcess StartWithPortLocked(GrokBotStartPermit permit, Action<GrokBotProcess>? started)
     {
         var port = SelectPort(Port());
         var start = new ProcessStartInfo(Executable)
@@ -503,7 +503,7 @@ internal sealed class GrokBotLauncher(string wingmanDataRoot, Func<IEnumerable<i
             WorkingDirectory = Path.GetDirectoryName(Executable)!,
         };
         foreach (var argument in GrokBotLaunchPolicy.Arguments(port)) start.ArgumentList.Add(argument);
-        var identity = Starts.Start(() =>
+        var identity = Starts.Start(permit, () =>
         {
             using var process = Process.Start(start) ?? throw new InvalidOperationException("Grok Bot did not start.");
             return new GrokBotProcess(process.Id, StartedUtc(process));
