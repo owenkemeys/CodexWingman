@@ -1,4 +1,5 @@
 using System.Runtime.InteropServices;
+using System.Text;
 
 namespace CodexWingman;
 
@@ -11,7 +12,6 @@ namespace CodexWingman;
 internal static class WindowProcessInfo
 {
     private const uint ProcessQueryLimitedInformation = 0x1000;
-    private const int ErrorInsufficientBuffer = 122;
 
     /// <summary>The Windows session of a process id, or null when the process is gone or inaccessible.</summary>
     public static int? SessionOf(uint processId) =>
@@ -19,20 +19,16 @@ internal static class WindowProcessInfo
 
     public static int CurrentSession() => SessionOf((uint)Environment.ProcessId) ?? -1;
 
-    /// <summary>The full Win32 path of the process image (any length), or null when the process is gone or inaccessible.</summary>
+    /// <summary>The full Win32 path of the process image, or null when the process is gone or inaccessible.</summary>
     public static string? ImagePathOf(uint processId)
     {
         var handle = OpenProcess(ProcessQueryLimitedInformation, false, processId);
         if (handle == IntPtr.Zero) return null;
         try
         {
-            return Core.Win32TextBuffer.Read(260, capacity =>
-            {
-                var buffer = new char[capacity];
-                var length = capacity;
-                if (QueryFullProcessImageName(handle, 0, buffer, ref length)) return (new string(buffer, 0, length), false);
-                return (null, Marshal.GetLastWin32Error() == ErrorInsufficientBuffer);
-            });
+            var capacity = 1024;
+            var buffer = new StringBuilder(capacity);
+            return QueryFullProcessImageName(handle, 0, buffer, ref capacity) ? buffer.ToString() : null;
         }
         finally { CloseHandle(handle); }
     }
@@ -46,7 +42,7 @@ internal static class WindowProcessInfo
 
     [DllImport("kernel32.dll", SetLastError = true, CharSet = CharSet.Unicode, EntryPoint = "QueryFullProcessImageNameW")]
     [return: MarshalAs(UnmanagedType.Bool)]
-    private static extern bool QueryFullProcessImageName(IntPtr process, int flags, [Out] char[] exeName, ref int size);
+    private static extern bool QueryFullProcessImageName(IntPtr process, int flags, StringBuilder exeName, ref int size);
 
     [DllImport("kernel32.dll")]
     [return: MarshalAs(UnmanagedType.Bool)]

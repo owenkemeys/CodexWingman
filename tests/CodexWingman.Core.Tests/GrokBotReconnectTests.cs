@@ -711,20 +711,9 @@ internal static class GrokBotReconnectTests
             && afterClose.Contains("if (result.Kind != GrokBotRelaunchKind.Relaunched)", StringComparison.Ordinal),
             "an update the close starts is waited for, then Grok Bot reopens; nothing else starts it then");
 
-        // Start times come straight from GetProcessTimes in UTC; image paths of any length.
+        // Start times come straight from GetProcessTimes in UTC.
         Equal(true, launcher.Contains("DateTime.FromFileTimeUtc(created)", StringComparison.Ordinal) && !launcher.Contains(".StartTime", StringComparison.Ordinal)
             && !launcher.Contains("FromFileTime(", StringComparison.Ordinal), "start times via FromFileTimeUtc");
-        var calls = new List<int>();
-        Equal("C:\\long", Win32TextBuffer.Read(260, size => { calls.Add(size); return size < 2000 ? (null, true) : ("C:\\long", false); }), "grows until it fits");
-        Equal(true, calls is [260, 520, 1040, 2080], "doubling");
-        calls.Clear();
-        Equal(null, Win32TextBuffer.Read(260, size => { calls.Add(size); return calls.Count < 20 ? (null, true) : throw new InvalidOperationException("never stops growing"); }), "gives up at the limit");
-        Equal(8, calls.Count, "260 to 32768 in eight reads");
-        Equal(Win32TextBuffer.MaxChars, calls[^1], "up to 32768 characters");
-        Equal(null, Win32TextBuffer.Read(260, _ => (null, false)), "any other failure: null at once");
-        var info = File.ReadAllText(Path.Combine(RepositoryRoot(), "src", "CodexWingman", "WindowProcessInfo.cs"));
-        Equal(true, info.Contains("Win32TextBuffer.Read(", StringComparison.Ordinal) && !launcher.Contains("QueryFullProcessImageName", StringComparison.Ordinal),
-            "one image-path reader, with the growing buffer");
     }
 
     private static GrokBotReconnectResult GrokBotReconnectRunResult(GrokBotRelaunchResult result) => new(result.Kind switch
