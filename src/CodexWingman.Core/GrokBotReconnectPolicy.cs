@@ -705,6 +705,32 @@ public static class GrokBotRelaunch
     }
 
     /// <summary>
+    /// Open window or Repair after the user's Yes and the close request: waits up to <paramref name="closeLimit"/> for
+    /// every Grok Bot process to exit. If that close starts Grok Bot's update, at any point in the wait, it calls
+    /// <paramref name="updating"/> and goes on to <see cref="AfterApprovedCloseAsync"/> instead of timing out. Null: Grok
+    /// Bot closed with no update under way, and the caller starts it as before. StillRunning: it didn't close in time.
+    /// </summary>
+    public static async Task<GrokBotRelaunchResult?> AfterCloseRequestAsync(GrokBotProcess? closed, GrokBotExecutableStamp? since,
+        IGrokBotProcessControl control, TimeSpan closeLimit, TimeSpan poll, Action? updating, GrokBotRelaunchLimits limits,
+        Func<DateTime> now, Func<TimeSpan, CancellationToken, Task> delay, CancellationToken cancellationToken)
+    {
+        var until = now() + closeLimit;
+        while (true)
+        {
+            var running = control.AnyRunning();
+            if (await UpdateUnderWayAsync(control, since))
+            {
+                updating?.Invoke();
+                return await AfterApprovedCloseAsync(closed, control, limits, now, delay, cancellationToken);
+            }
+            if (!running) return null;
+            if (cancellationToken.IsCancellationRequested) return new(GrokBotRelaunchKind.Cancelled);
+            if (now() > until) return new(GrokBotRelaunchKind.StillRunning);
+            if (!await Wait(delay, poll, cancellationToken)) return new(GrokBotRelaunchKind.Cancelled);
+        }
+    }
+
+    /// <summary>
     /// The user's quit started a Grok Bot update. Waits up to <c>Update</c> for it to finish: no Grok Bot installer runs and
     /// Grok Bot.exe is present and unchanged for <c>Stable</c>. Then opens Grok Bot with the port through
     /// <see cref="StartWhenClearAsync"/>, with the same guards; an installer that starts again meanwhile goes back to waiting.

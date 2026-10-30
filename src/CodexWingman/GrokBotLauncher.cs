@@ -270,30 +270,24 @@ internal sealed class GrokBotLauncher(string wingmanDataRoot, Func<IEnumerable<i
         }
         finally { foreach (var process in running) process.Dispose(); }
 
-        var closeDeadline = DateTime.UtcNow + CloseTimeout;
-        while (StillRunning())
+        // Closing Grok Bot may start its staged update, also before every Grok Bot process has gone. The user said Yes to
+        // closing and reopening it, so Wingman waits for the update and opens it after, with the reconnect's checks.
+        var updated = false;
+        var result = await GrokBotRelaunch.AfterCloseRequestAsync(closed, stamp, new ProcessControl(this, () => true, sessionEnding ?? (() => false)),
+            CloseTimeout, TimeSpan.FromMilliseconds(250), () => { updated = true; WingmanLog.Write("grok-bot-open-update-after-close"); updating?.Invoke(); },
+            GrokBotRelaunchLimits.Default, () => DateTime.UtcNow, (wait, token) => Task.Delay(wait, token), cancellationToken);
+        cancellationToken.ThrowIfCancellationRequested();
+        if (result is null)
         {
-            cancellationToken.ThrowIfCancellationRequested();
-            if (DateTime.UtcNow > closeDeadline)
-                throw new TimeoutException("Grok Bot did not close, so Wingman left it running. Close it yourself, then choose Open window in the Grok Bot menu again.");
-            await Task.Delay(250, cancellationToken);
-        }
-        // Closing Grok Bot may start its staged update. The user said Yes to closing and reopening it, so Wingman waits
-        // for the update and opens it after, with the reconnect's checks.
-        if (GrokBotRelaunch.UpdateUnderWay(await Task.Run(InstallerRunning), ExecutableStamp(), stamp))
-        {
-            WingmanLog.Write("grok-bot-open-update-after-close");
-            updating?.Invoke();
-            var result = await GrokBotRelaunch.AfterApprovedCloseAsync(closed, new ProcessControl(this, () => true, sessionEnding ?? (() => false)),
-                GrokBotRelaunchLimits.Default, () => DateTime.UtcNow, (wait, token) => Task.Delay(wait, token), cancellationToken);
-            WingmanLog.Write("grok-bot-open-after-update", ("result", result.Kind));
-            cancellationToken.ThrowIfCancellationRequested();
-            if (result.Kind != GrokBotRelaunchKind.Relaunched)
-                throw new InvalidOperationException(GrokBotReconnectPrompt.ProblemAfterQuit(GrokBotReconnectRun.OutcomeOf(result.Kind)));
+            StartWithPort();
             await WaitForWindowAsync(cancellationToken);
             return true;
         }
-        StartWithPort();
+        WingmanLog.Write(updated ? "grok-bot-open-after-update" : "grok-bot-open-close-wait", ("result", result.Kind));
+        if (!updated && result.Kind == GrokBotRelaunchKind.StillRunning)
+            throw new TimeoutException("Grok Bot did not close, so Wingman left it running. Close it yourself, then choose Open window in the Grok Bot menu again.");
+        if (result.Kind != GrokBotRelaunchKind.Relaunched)
+            throw new InvalidOperationException(GrokBotReconnectPrompt.ProblemAfterQuit(GrokBotReconnectRun.OutcomeOf(result.Kind)));
         await WaitForWindowAsync(cancellationToken);
         return true;
     }

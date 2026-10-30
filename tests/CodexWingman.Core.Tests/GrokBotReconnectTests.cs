@@ -31,6 +31,7 @@ internal static class GrokBotReconnectTests
         AnUpdateTheQuitStartedIsWaitedFor();
         AReconnectAfterAnUpdateFinishesTheJob();
         OpenWithoutTheQuitsProofIsStillGuarded();
+        OpenWindowsCloseWaitIsUpdateAware();
         AHandOverIsTheOnlyPromptForItsProcess();
         PromptWindowStaysOutOfTheWay();
         BringingForwardKeepsTheWindowAsItIs();
@@ -712,7 +713,7 @@ internal static class GrokBotReconnectTests
         Equal(true, GrokBotLaunchPolicy.KeepsGrokBotRunning(null, false), "unreadable: counts, so nothing starts on a guess");
         var launcher = File.ReadAllText(Path.Combine(RepositoryRoot(), "src", "CodexWingman", "GrokBotLauncher.cs"));
         Equal(true, launcher.Contains("public bool AnyRunning() => launcher.StillRunning();", StringComparison.Ordinal)
-            && launcher.Contains("while (StillRunning())", StringComparison.Ordinal) && !launcher.Contains("IsRunning()", StringComparison.Ordinal),
+            && !launcher.Contains("IsRunning()", StringComparison.Ordinal),
             "the reconnect and Open window both use StillRunning");
 
         // Open window and Repair use the reconnect's installer guard before any start.
@@ -725,15 +726,11 @@ internal static class GrokBotReconnectTests
         Equal(true, open.Split("ThrowIfUpdateUnderWayAsync(stamp)").Length == 2
             && open.IndexOf("ThrowIfUpdateUnderWayAsync(stamp)", StringComparison.Ordinal) < open.IndexOf("confirmRelaunch()", StringComparison.Ordinal)
             && open.Split("StartWithPort()").Length == 2, "Open window checks before asking, and starts in one place");
-        // Its approved close may start the update: then it waits for the update and reopens Grok Bot, as after Reconnect.
-        var afterClose = open[open.IndexOf("while (StillRunning())", StringComparison.Ordinal)..];
-        Equal(true, afterClose.Contains("if (GrokBotRelaunch.UpdateUnderWay(await Task.Run(InstallerRunning), ExecutableStamp(), stamp))", StringComparison.Ordinal)
-            && afterClose.Contains("GrokBotRelaunch.AfterApprovedCloseAsync(closed,", StringComparison.Ordinal)
-            && !afterClose[afterClose.IndexOf("if (GrokBotRelaunch.UpdateUnderWay(", StringComparison.Ordinal)..afterClose.IndexOf("AfterApprovedCloseAsync", StringComparison.Ordinal)]
-                .Contains("throw ", StringComparison.Ordinal)
-            && afterClose.IndexOf("AfterApprovedCloseAsync", StringComparison.Ordinal) < afterClose.IndexOf("StartWithPort()", StringComparison.Ordinal)
-            && afterClose.Contains("if (result.Kind != GrokBotRelaunchKind.Relaunched)", StringComparison.Ordinal),
-            "an update the close starts is waited for, then Grok Bot reopens; nothing else starts it then");
+        // Its close wait is the Core one (behaviour in OpenWindowsCloseWaitIsUpdateAware); Grok Bot starts only when it says so.
+        Equal(true, open.Split("GrokBotRelaunch.AfterCloseRequestAsync(closed, stamp,").Length == 2
+            && open.IndexOf("if (result is null)", StringComparison.Ordinal) < open.IndexOf("StartWithPort()", StringComparison.Ordinal)
+            && open.IndexOf("AfterCloseRequestAsync", StringComparison.Ordinal) < open.IndexOf("if (result is null)", StringComparison.Ordinal),
+            "Open window starts Grok Bot only after the close wait found no update");
 
         // Start times come straight from GetProcessTimes in UTC.
         Equal(true, launcher.Contains("DateTime.FromFileTimeUtc(created)", StringComparison.Ordinal) && !launcher.Contains(".StartTime", StringComparison.Ordinal)
@@ -1118,6 +1115,60 @@ internal static class GrokBotReconnectTests
         var notYet = new FakeControl(new FakeProcess(target, [])) { InstallerAt = _ => true };
         var early = GrokBotRelaunch.RunAsync(target, notYet, Limits, () => clock, (wait, _) => { clock += wait; return Task.CompletedTask; }, default).GetAwaiter().GetResult();
         Equal((GrokBotRelaunchKind.ExitTooLong, false), (early.Kind, early.Quit is not null), "an installer while Grok Bot never closes: no proof, the prompt says so");
+    }
+
+    /// <summary>
+    /// Open window or Repair after the user's Yes: up to 20 s for Grok Bot to close. An update that close starts, during the
+    /// wait or right after it, is waited for and Grok Bot reopens after it, instead of "left it running". Otherwise the
+    /// caller starts Grok Bot (null), or nothing starts because it didn't close or the user cancelled.
+    /// </summary>
+    private static void OpenWindowsCloseWaitIsUpdateAware()
+    {
+        var target = new GrokBotProcess(Second, new DateTime(2026, 1, 1, 8, 59, 0, DateTimeKind.Utc));
+        var clock = DateTime.UnixEpoch;
+        GrokBotRelaunchResult? Wait(FakeControl control, FakeProcess? closes = null, int closesAtPoll = 0, CancellationToken token = default)
+        {
+            var polls = 0;
+            var updating = 0;
+            var result = GrokBotRelaunch.AfterCloseRequestAsync(target, control.Stamp, control, TimeSpan.FromSeconds(20), TimeSpan.FromMilliseconds(250),
+                () => { updating++; control.Log.Add("updating"); }, Limits, () => clock,
+                (wait, _) =>
+                {
+                    if (++polls > 100_000) throw new InvalidOperationException("the close wait never ends");
+                    if (closes is not null && polls >= closesAtPoll) closes.Exited = true;
+                    clock += wait;
+                    return Task.CompletedTask;
+                }, token).GetAwaiter().GetResult();
+            Equal(true, updating <= 1, "updating is said at most once");
+            return result;
+        }
+
+        var closingProcess = new FakeProcess(target, []);
+        var closing = new FakeControl(closingProcess);
+        var before = clock;
+        Equal(((GrokBotRelaunchResult?)null, 0), (Wait(closing, closingProcess, 8), closing.Log.Count), "closed, no update: the caller starts Grok Bot");
+        Equal(true, clock - before < TimeSpan.FromSeconds(3), "as soon as it has closed");
+
+        var stuck = new FakeControl(new FakeProcess(target, []));
+        before = clock;
+        Equal((GrokBotRelaunchKind.StillRunning, 0), (Wait(stuck)?.Kind, stuck.Log.Count), "never closes: nothing started");
+        Equal(true, clock - before >= TimeSpan.FromSeconds(20) && clock - before < TimeSpan.FromSeconds(21), "after 20 seconds");
+
+        // The installer appears while Grok Bot is still closing (0.78.1 starts it then): no "left it running".
+        var slowProcess = new FakeProcess(target, []);
+        var slow = new FakeControl(slowProcess) { InstallerAt = check => check is >= 3 and < 40 };
+        var during = Wait(slow, slowProcess, 10);
+        Equal((GrokBotRelaunchKind.Relaunched, true), (during?.Kind, slow.Log is ["updating", "start after 200"]),
+            "an update during the close wait: waited for, then Grok Bot reopens once");
+
+        var stampChanges = new FakeControl { StampAt = _ => new(new DateTime(2026, 1, 2, 0, 0, 0, DateTimeKind.Utc), 120) };
+        Equal((GrokBotRelaunchKind.Relaunched, true), (Wait(stampChanges)?.Kind, stampChanges.Log is ["updating", "start after 200"]),
+            "Grok Bot.exe changed right after the close: the update path, then it reopens");
+
+        using var cancel = new CancellationTokenSource();
+        cancel.Cancel();
+        var cancelled = new FakeControl(new FakeProcess(target, []));
+        Equal((GrokBotRelaunchKind.Cancelled, 0), (Wait(cancelled, token: cancel.Token)?.Kind, cancelled.Log.Count), "cancelled: nothing started");
     }
 
     /// <summary>
