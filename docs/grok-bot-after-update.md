@@ -43,7 +43,7 @@ If Grok Bot opens again by itself during the update, or you open it yourself, Wi
 
 ## Every result after you act
 
-Once you have pressed **Reconnect** or **Open Grok Bot**, or said Yes to `Open window` or `Repair` closing Grok Bot, the prompt closes only when Wingman has connected the Helpers, or when you press **Cancel** or **Not now**. Every other result stays in the same prompt window, with a plain reason and **Open Grok Bot** and **Not now**. It is never a message box, never a raw error text, and never **Reconnect** again. Wingman starts nothing in these cases:
+Once you have pressed **Reconnect** or **Open Grok Bot**, or said Yes to `Open window` or `Repair` closing Grok Bot, the prompt closes only when Wingman has connected the Helpers, or when you press **Cancel** or **Not now**. Every other result stays in the same prompt window, with a plain reason, **Open Grok Bot** and **Not now**. When Grok Bot didn't close in time and is still open, the button says **Try again** instead, which asks you to close it again; once that Grok Bot has closed, the prompt says so and the button is **Open Grok Bot**. It is never a message box, never a raw error text, and never **Reconnect** again. Wingman starts nothing in these cases:
 
 - Grok Bot wasn't closed within 10 minutes of **Reconnect**; Wingman left it running;
 - Grok Bot didn't close within 20 seconds of your Yes to `Open window` or `Repair`; Wingman left it running;

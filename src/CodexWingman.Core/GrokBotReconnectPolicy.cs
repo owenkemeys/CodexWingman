@@ -273,7 +273,8 @@ public sealed class GrokBotReconnectPrompt(GrokBotReconnectOffer offer)
     public (string? Primary, bool PrimaryEnabled, string Secondary) Buttons => State switch
     {
         GrokBotPromptState.WaitingForQuit or GrokBotPromptState.Updating => (null, false, "Cancel"),
-        GrokBotPromptState.CouldNotStart => ("Open Grok Bot", true, "Not now"),
+        // Grok Bot didn't close and is still open: the button asks again for its close, so it doesn't say Open.
+        GrokBotPromptState.CouldNotStart => (retryWhileOpen ? "Try again" : "Open Grok Bot", true, "Not now"),
         GrokBotPromptState.Offered => ("Reconnect", true, "Not now"),
         _ => ("Working...", false, "Not now"),
     };
@@ -291,6 +292,8 @@ public sealed class GrokBotReconnectPrompt(GrokBotReconnectOffer offer)
     private DateTimeOffset? keptSince;
     /// <summary>The run's Relaunched: the Grok Bot now being connected is one Wingman opened itself.</summary>
     private bool openedByWingman;
+    /// <summary>Grok Bot didn't close within the limit and is still open: the button says Try again (see <see cref="Buttons"/>).</summary>
+    private bool retryWhileOpen;
 
     /// <summary>
     /// Open window or Repair after the user's Yes: the prompt for that run, already pressed and working, so every result
@@ -375,6 +378,7 @@ public sealed class GrokBotReconnectPrompt(GrokBotReconnectOffer offer)
             // The Grok Bot the reason was about has closed: say so; Open Grok Bot now starts one.
             Problem = goneText;
             goneText = null;
+            retryWhileOpen = false;
             return GrokBotPromptStep.None;
         }
         if (State != GrokBotPromptState.Working || pending == GrokBotPromptStep.None)
@@ -413,6 +417,7 @@ public sealed class GrokBotReconnectPrompt(GrokBotReconnectOffer offer)
         pending = GrokBotPromptStep.None;
         Problem = problem;
         goneText = whenGone;
+        retryWhileOpen = false;
         State = GrokBotPromptState.CouldNotStart;
     }
 
@@ -453,6 +458,7 @@ public sealed class GrokBotReconnectPrompt(GrokBotReconnectOffer offer)
     public void Finished(GrokBotReconnectResult result, GrokBotObservation? now = null)
     {
         if (State == GrokBotPromptState.Closed) return;
+        retryWhileOpen = false;
         if (result.Quit is not null) Quit ??= result.Quit;
         switch (result.Outcome)
         {
@@ -508,7 +514,10 @@ public sealed class GrokBotReconnectPrompt(GrokBotReconnectOffer offer)
         }
         Problem = outcome is GrokBotReconnectOutcome.Reopened or GrokBotReconnectOutcome.UpdatedAndReopened && now is { Process: null }
             ? GrokBotReconnectPolicy.GoneText : ProblemAfterQuit(outcome);
-        goneText = null;
+        // Left running because it didn't close: Try again while it is open; once it closes, the prompt says so and Open
+        // Grok Bot starts one.
+        retryWhileOpen = outcome is GrokBotReconnectOutcome.NotClosed or GrokBotReconnectOutcome.QuitTimedOut && now is not { Process: null };
+        goneText = retryWhileOpen ? GrokBotReconnectPolicy.GoneText : null;
         State = GrokBotPromptState.CouldNotStart;
     }
 
