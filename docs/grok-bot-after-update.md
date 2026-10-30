@@ -11,7 +11,9 @@ When Grok Bot comes back without Wingman's port, Wingman shows a small prompt wi
 - **Grok Bot updated** when an update is proven: the new Grok Bot was started with `--updated` (its installer adds this), or the Grok Bot.exe version changed since Wingman last had it connected.
 - **Grok Bot reopened without Wingman** in every other case, for example when you closed Grok Bot and opened it again yourself.
 
-When the prompt follows another Grok Bot that opened without Wingman, its title changes with it, by the same proof as above: **Grok Bot updated** when that Grok Bot was started with `--updated` or Grok Bot.exe's version changed since Wingman last had it connected, otherwise **Grok Bot reopened without Wingman**. This holds whether the prompt follows it at the end of a run or at a later check. When it follows the Grok Bot Wingman was connecting, the title stays as it was.
+The title always describes the Grok Bot the prompt holds. Once Wingman has opened Grok Bot for the prompt, the title is the neutral **Grok Bot** (as after Open window's Yes), or stays **Grok Bot updated** when the prompt was for a proven update.
+
+When the prompt follows another Grok Bot that opened without Wingman, its title changes with it, by the same proof as above: **Grok Bot updated** when that Grok Bot was started with `--updated` or Grok Bot.exe's version changed since Wingman last had it connected, otherwise **Grok Bot reopened without Wingman**. This holds whether the prompt follows it at the end of a run or at a later check. When it follows the Grok Bot Wingman opened, it says what it said before for that Grok Bot, with the neutral title (or **Grok Bot updated**).
 
 It says "Helpers need Grok Bot reopened by Wingman." and has two buttons, **Reconnect** and **Not now**.
 

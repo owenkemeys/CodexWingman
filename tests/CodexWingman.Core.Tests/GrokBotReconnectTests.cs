@@ -51,6 +51,7 @@ internal static class GrokBotReconnectTests
         TryAgainAsksForTheCloseAgain();
         AnErrorAfterWingmansStartKeepsThatWingmanOpenedIt();
         AGrokBotWingmanStartedIsNeverOfferedAsReopened();
+        TheTitleNeverSaysWithoutWingmanWhileTheBodySaysWingmanOpenedIt();
         AGrokBotThatAppearsWhileWingmanIsBusyStartsNothing();
         EveryResultEndsInTheSamePrompt();
         EveryResultTimesEveryStatePicksItsEnding();
@@ -194,7 +195,7 @@ internal static class GrokBotReconnectTests
             var fresh = policy2.UpdateProven(new(Third, null), seen) ? GrokBotReconnectPolicy.UpdatedTitle : GrokBotReconnectPolicy.ReopenedTitle;
             foreach (var viaCheck in new[] { true, false })
             {
-                var followed = Slot().Offer(new GrokBotReconnectOffer(Second, false, T0))!;
+                var followed = Slot().Offer(new GrokBotReconnectOffer(Second, GrokBotOpenedBy.WithoutWingman, T0))!;
                 followed.Reconnect(busy: false);
                 followed.Finished(new(GrokBotReconnectOutcome.UpdateTooLong), viaCheck ? new(null, false, Present) : new(Third, false, Present));
                 if (viaCheck) Equal(GrokBotPromptStep.HandOver, followed.Observe(new(Third, false, Present), busy: false), name + ": the check follows the Grok Bot its installer opened");
@@ -239,7 +240,7 @@ internal static class GrokBotReconnectTests
     private static void PromptIsBoundToItsProcess()
     {
         var started = new DateTime(2026, 1, 1, 8, 59, 0, DateTimeKind.Utc);
-        var offer = new GrokBotReconnectOffer(Second, true, T0, started);
+        var offer = new GrokBotReconnectOffer(Second, GrokBotOpenedBy.AfterUpdate, T0, started);
         GrokBotObservation Seen(int? pid, DateTime? start = null, bool connected = false) => new(pid, connected, Present, start ?? started);
         const GrokBotPromptStep None = GrokBotPromptStep.None;
 
@@ -334,8 +335,8 @@ internal static class GrokBotReconnectTests
             Equal((None, atEnd), (follows.Observe(Seen(Third), busy: false), (follows.Offer.ProcessId, follows.Problem, follows.Buttons)), ending + ": the next check changes nothing");
         }
         // The title follows the Grok Bot the prompt holds: one opened without Wingman says Grok Bot updated with the update's
-        // proof and reopened without Wingman without it, whatever the run's result; the Grok Bot Wingman was connecting keeps
-        // the prompt's own title.
+        // proof and reopened without Wingman without it, whatever the run's result; the Grok Bot Wingman opened gets the
+        // neutral title.
         foreach (var outcome in new[] { GrokBotReconnectOutcome.Reopened, GrokBotReconnectOutcome.Replaced, GrokBotReconnectOutcome.UpdatedAndReopened })
         foreach (var proven in new[] { false, true })
         {
@@ -350,7 +351,27 @@ internal static class GrokBotReconnectTests
         Equal((Third, GrokBotReconnectPolicy.ReopenedTitle), (proofFails.Offer.ProcessId, proofFails.Offer.Title), "a proof that can't be read proves nothing; the prompt still follows");
         var keepsTitle = GrokBotReconnectPrompt.AfterYes(new(Second, started), null, T0);
         keepsTitle.Finished(new(GrokBotReconnectOutcome.NotConnected, Started: new(Third, started)), Seen(Third));
-        Equal((Third, GrokBotReconnectPolicy.ApprovedTitle), (keepsTitle.Offer.ProcessId, keepsTitle.Offer.Title), "the Grok Bot Wingman opened keeps the prompt's title");
+        Equal((Third, GrokBotReconnectPolicy.ApprovedTitle), (keepsTitle.Offer.ProcessId, keepsTitle.Offer.Title), "the Grok Bot Wingman opened gets the neutral title");
+        // Wingman's Grok Bot, its connect failed while another was in front: back in front, it says what was true of it.
+        foreach (var wasBusy in new[] { false, true })
+        {
+            var own = new GrokBotReconnectPrompt(new GrokBotReconnectOffer(Second, GrokBotOpenedBy.WithoutWingman, T0, started));
+            own.Reconnect(busy: false);
+            own.Finished(new(GrokBotReconnectOutcome.Relaunched, Started: new(Third, started)), Seen(Third));
+            own.Finished(new(GrokBotReconnectOutcome.NotConnected) { WingmanBusy = wasBusy }, new GrokBotObservation(Third + 1, false, Present, started));
+            own.Observe(Seen(Third), busy: false);
+            Equal((Third, GrokBotReconnectPolicy.ApprovedTitle, GrokBotPromptReason.NotConnected(openedByWingman: true, wasBusy).WhileOpen), (own.Offer.ProcessId, own.Offer.Title, own.Problem),
+                (wasBusy ? "busy" : "not busy") + ": Wingman's Grok Bot back in front after its connect failed says so");
+        }
+        // A failed connect to another Grok Bot open with Wingman's port: never called reopened without Wingman.
+        foreach (var proven in new[] { false, true })
+        {
+            var portOwner = new GrokBotReconnectPrompt(new GrokBotReconnectOffer(Second, GrokBotOpenedBy.WithoutWingman, T0, started)) { UpdateProven = process => proven && process.Id == Third };
+            portOwner.Reconnect(busy: false);
+            portOwner.Finished(new(GrokBotReconnectOutcome.NotConnected), Seen(Third));
+            Equal((Third, proven ? GrokBotReconnectPolicy.UpdatedTitle : GrokBotReconnectPolicy.ApprovedTitle), (portOwner.Offer.ProcessId, portOwner.Offer.Title),
+                (proven ? "update proven" : "no proof") + ": a failed connect to another Grok Bot titles it by the proof, else neutrally");
+        }
         Equal((GrokBotReconnectOutcome.Gone, GrokBotReconnectOutcome.Replaced),
             (GrokBotReconnectRun.RunAsync(gone.Offer, new Steps(new GrokBotObservation(null, false, Present)), CancellationToken.None).GetAwaiter().GetResult().Outcome,
              GrokBotReconnectRun.RunAsync(gone.Offer, new Steps(Seen(Third)), CancellationToken.None).GetAwaiter().GetResult().Outcome),
@@ -389,7 +410,7 @@ internal static class GrokBotReconnectTests
     private static void AfterTheQuitThePromptNeverGivesUpSilently()
     {
         var started = new DateTime(2026, 1, 1, 8, 59, 0, DateTimeKind.Utc);
-        var offer = new GrokBotReconnectOffer(Second, true, T0, started);
+        var offer = new GrokBotReconnectOffer(Second, GrokBotOpenedBy.AfterUpdate, T0, started);
         var quit = QuitProof(offer.Target);
         GrokBotObservation Seen(int? pid, DateTime? start = null, bool connected = false) => new(pid, connected, Present, start ?? started);
 
@@ -619,7 +640,7 @@ internal static class GrokBotReconnectTests
     private static void EveryResultTimesEveryStatePicksItsEnding()
     {
         var started = new DateTime(2026, 1, 1, 8, 59, 0, DateTimeKind.Utc);
-        var offer = new GrokBotReconnectOffer(Second, false, T0, started);
+        var offer = new GrokBotReconnectOffer(Second, GrokBotOpenedBy.WithoutWingman, T0, started);
         var looks = new (GrokBotHeldState Held, GrokBotObservation? Seen)[]
         {
             (GrokBotHeldState.Open, new(Second, false, Present, started)), (GrokBotHeldState.Gone, new(null, false, Present)), (GrokBotHeldState.Unknown, null),
@@ -656,7 +677,7 @@ internal static class GrokBotReconnectTests
     private static void EveryResultEndsInTheSamePrompt()
     {
         var started = new DateTime(2026, 1, 1, 8, 59, 0, DateTimeKind.Utc);
-        var offer = new GrokBotReconnectOffer(Second, false, T0, started);
+        var offer = new GrokBotReconnectOffer(Second, GrokBotOpenedBy.WithoutWingman, T0, started);
         var owned = new GrokBotObservation(Second, false, Present, started);
         var finals = new (string Name, GrokBotObservation Seen)[]
         {
@@ -1131,7 +1152,7 @@ internal static class GrokBotReconnectTests
     private static void ReconnectRechecksBeforeActing()
     {
         var started = new DateTime(2026, 1, 1, 8, 59, 0, DateTimeKind.Utc);
-        var offer = new GrokBotReconnectOffer(Second, false, T0, started);
+        var offer = new GrokBotReconnectOffer(Second, GrokBotOpenedBy.WithoutWingman, T0, started);
         GrokBotReconnectOutcome Run(Steps steps) => GrokBotReconnectRun.RunAsync(offer, steps, CancellationToken.None).GetAwaiter().GetResult().Outcome;
         var unconnected = new GrokBotObservation(Second, false, Present, started);
 
@@ -1254,7 +1275,7 @@ internal static class GrokBotReconnectTests
         var quit = new FakeControl(new FakeProcess(target, log) { QuitsAfter = 3, Code = 0 });
         Equal(GrokBotRelaunchKind.Relaunched, Run(quit).Kind, "exit code 0, the user's quit: started");
 
-        var prompt = new GrokBotReconnectPrompt(new GrokBotReconnectOffer(Second, true, T0, started));
+        var prompt = new GrokBotReconnectPrompt(new GrokBotReconnectOffer(Second, GrokBotOpenedBy.AfterUpdate, T0, started));
         prompt.Reconnect(busy: false);
         prompt.WaitingForQuit();
         var crash = Run(new FakeControl(new FakeProcess(target, log) { QuitsAfter = 2, Code = 3 }));
@@ -1314,14 +1335,14 @@ internal static class GrokBotReconnectTests
         Equal(GrokBotRelaunchKind.Cancelled, GrokBotRelaunch.RunAsync(target, plainCancel, Limits, () => clock, (wait, _) => Task.CompletedTask, cancelled.Token).GetAwaiter().GetResult().Kind,
             "Cancel pressed: Cancelled");
 
-        var before = new GrokBotReconnectPrompt(new GrokBotReconnectOffer(Second, true, T0, started));
+        var before = new GrokBotReconnectPrompt(new GrokBotReconnectOffer(Second, GrokBotOpenedBy.AfterUpdate, T0, started));
         before.Reconnect(busy: false);
         before.WaitingForQuit();
         before.Finished(GrokBotReconnectRunResult(result), null);
         Equal((GrokBotPromptState.CouldNotStart, GrokBotReconnectPolicy.SessionEndingText), (before.State, before.Problem), "before the quit: the prompt says why");
         Equal(true, before.Open(busy: false), "and Open Grok Bot works (it asks for the quit again while Grok Bot still runs)");
 
-        var after = new GrokBotReconnectPrompt(new GrokBotReconnectOffer(Second, true, T0, started));
+        var after = new GrokBotReconnectPrompt(new GrokBotReconnectOffer(Second, GrokBotOpenedBy.AfterUpdate, T0, started));
         after.Reconnect(busy: false);
         after.WaitingForQuit();
         var quitThenEnding = new FakeControl(new FakeProcess(target, log) { QuitsAfter = 2 }) { EndingAt = check => check >= 1 };
@@ -1601,7 +1622,7 @@ internal static class GrokBotReconnectTests
             "nothing new is offered or adopted while it isn't installed, after the prompt's check");
         // And the prompt then closes when its process exits.
         var started = new DateTime(2026, 1, 1, 8, 59, 0, DateTimeKind.Utc);
-        var prompt = new GrokBotReconnectPrompt(new GrokBotReconnectOffer(Second, true, T0, started));
+        var prompt = new GrokBotReconnectPrompt(new GrokBotReconnectOffer(Second, GrokBotOpenedBy.AfterUpdate, T0, started));
         prompt.Observe(new GrokBotObservation(null, false, Present), busy: false);
         Equal((GrokBotPromptState.Closed, "gone"), (prompt.State, prompt.ClosedBecause), "its process exited: closed");
     }
@@ -1637,7 +1658,7 @@ internal static class GrokBotReconnectTests
         var ownQuitOnly = new FakeControl(new FakeProcess(target, log) { QuitsAfter = 2 }) { Main = _ => null };
         Equal(GrokBotRelaunchKind.Relaunched, Run(ownQuitOnly).Kind, "nobody reopened it: started as before");
 
-        var prompt = new GrokBotReconnectPrompt(new GrokBotReconnectOffer(Second, true, T0, started));
+        var prompt = new GrokBotReconnectPrompt(new GrokBotReconnectOffer(Second, GrokBotOpenedBy.AfterUpdate, T0, started));
         prompt.Reconnect(busy: false);
         prompt.WaitingForQuit();
         prompt.Finished(new(GrokBotReconnectOutcome.Reopened), null);
@@ -1754,7 +1775,7 @@ internal static class GrokBotReconnectTests
     private static void TryAgainAsksForTheCloseAgain()
     {
         var started = new DateTime(2026, 1, 1, 8, 59, 0, DateTimeKind.Utc);
-        var offer = new GrokBotReconnectOffer(Second, true, T0, started);
+        var offer = new GrokBotReconnectOffer(Second, GrokBotOpenedBy.AfterUpdate, T0, started);
         var open = new GrokBotObservation(Second, false, Present, started);
         var prompt = new GrokBotReconnectPrompt(offer);
         prompt.Reconnect(busy: false);
@@ -1794,7 +1815,7 @@ internal static class GrokBotReconnectTests
     private static void AnErrorAfterWingmansStartKeepsThatWingmanOpenedIt()
     {
         var started = new DateTime(2026, 1, 1, 8, 59, 0, DateTimeKind.Utc);
-        var offer = new GrokBotReconnectOffer(Second, false, T0, started);
+        var offer = new GrokBotReconnectOffer(Second, GrokBotOpenedBy.WithoutWingman, T0, started);
         var mine = new GrokBotProcess(Third, started.AddMinutes(2));
         var other = new GrokBotProcess(Third + 1, started.AddMinutes(3));
         GrokBotObservation Seen(GrokBotProcess? process, bool connected = false) => new(process?.Id, connected, Present, process?.Started);
@@ -1821,10 +1842,11 @@ internal static class GrokBotReconnectTests
         {
             var name = ending.Name + ", " + look;
             var prompt = Run(ending, atTheEnd, blind, out var result);
-            var title = new GrokBotReconnectPrompt(offer).Offer.Title;
+            // Wingman opened the Grok Bot it now holds, so the title is the neutral one, never "reopened without Wingman".
+            var title = GrokBotReconnectPolicy.ApprovedTitle;
             Equal((ending.Outcome, mine), (result.Outcome, result.Started), name + ": the run kept the start it made");
             Equal((GrokBotPromptState.CouldNotStart, mine, true, title), (prompt.State, prompt.Offer.Target, prompt.Quit is null, prompt.Offer.Title),
-                name + ": the prompt holds Wingman's Grok Bot, the close's proof is spent, the title stays");
+                name + ": the prompt holds Wingman's Grok Bot, the close's proof is spent, the title is the neutral one");
             Equal(look switch { "gone" => (GrokBotReconnectPolicy.ClosedBeforeConnectText, "Open Grok Bot"), "open" => (ending.Words, "Try again"), _ => (ending.Words, "Open Grok Bot") },
                 (prompt.Problem, prompt.Buttons.Primary), name + ": the words say Wingman opened Grok Bot");
             if (look == "gone") continue;
@@ -1847,6 +1869,11 @@ internal static class GrokBotReconnectTests
                 ending.Name + ", another Grok Bot open: handed over as opened again without Wingman");
             Equal(GrokBotPromptStep.None, prompt.Observe(Seen(other), busy: false), ending.Name + ", another Grok Bot: the next check changes nothing");
             Equal(GrokBotPromptStep.Connect, prompt.Observe(Seen(other, connected: true), busy: false), ending.Name + ", another Grok Bot comes up connected: it is connected");
+            // Wingman's own Grok Bot in front again: the words and the title it had, never opened without Wingman.
+            var back = Run(ending, other, false, out _);
+            Equal(GrokBotPromptStep.HandOver, back.Observe(Seen(mine), busy: false), ending.Name + ", Wingman's Grok Bot in front again: the prompt follows it");
+            Equal((mine, ending.Words, "Try again", GrokBotReconnectPolicy.ApprovedTitle), (back.Offer.Target, back.Problem, back.Buttons.Primary, back.Offer.Title),
+                ending.Name + ", Wingman's Grok Bot in front again: what was true of it");
         }
         var launcher = File.ReadAllText(Path.Combine(RepositoryRoot(), "src", "CodexWingman", "GrokBotLauncher.cs"));
         var start = launcher.IndexOf("Process.Start(start)", StringComparison.Ordinal);
@@ -1894,6 +1921,50 @@ internal static class GrokBotReconnectTests
         Equal(true, start > 0 && recorded > start && recorded < launcher.IndexOf("AppRuntimePortFile.Write(RuntimePath, port);", start, StringComparison.Ordinal)
             && launcher.Split("Process.Start(").Length - 1 == 1 && launcher.Contains("public GrokBotStarts Starts { get; } = new();", StringComparison.Ordinal),
             "the one start Wingman makes is recorded the moment it started, before writing the port file, in the Starts the policy reads");
+    }
+
+    /// <summary>
+    /// The title and the body describe the one Grok Bot the prompt holds: for every result, from every kind of offer, at the
+    /// run's end and at the checks after, the title never says reopened without Wingman while the body says Wingman opened
+    /// or is opening it; an update proven for the prompt keeps its title.
+    /// </summary>
+    private static void TheTitleNeverSaysWithoutWingmanWhileTheBodySaysWingmanOpenedIt()
+    {
+        var started = new DateTime(2026, 1, 1, 8, 59, 0, DateTimeKind.Utc);
+        var mine = new GrokBotProcess(Third, started.AddMinutes(2));
+        var other = new GrokBotProcess(Third + 1, started.AddMinutes(3));
+        GrokBotObservation Seen(GrokBotProcess? process, bool connected = false) => new(process?.Id, connected, Present, process?.Started);
+        var checkedWords = 0;
+        foreach (var how in new[] { GrokBotOpenedBy.WithoutWingman, GrokBotOpenedBy.AfterUpdate, GrokBotOpenedBy.Wingman })
+        foreach (var outcome in Enum.GetValues<GrokBotReconnectOutcome>())
+        foreach (var (look, end) in new (string, GrokBotObservation?)[] { ("open", Seen(mine)), ("gone", Seen(null)), ("not seen", null), ("another", Seen(other)) })
+        {
+            var name = $"{how} offer, {outcome}, {look}";
+            var prompt = how == GrokBotOpenedBy.Wingman
+                ? GrokBotReconnectPrompt.AfterYes(new(Second, started), null, T0)
+                : new GrokBotReconnectPrompt(new GrokBotReconnectOffer(Second, how, T0, started));
+            if (how != GrokBotOpenedBy.Wingman) prompt.Reconnect(busy: false);
+            prompt.Finished(new(outcome, Started: mine), end);
+            void Check(string when)
+            {
+                if (prompt.State == GrokBotPromptState.Closed) return;
+                var wingmanWords = prompt.Message.StartsWith("Wingman opened", StringComparison.Ordinal) || prompt.Message.StartsWith("Wingman is opening", StringComparison.Ordinal);
+                if (wingmanWords) checkedWords++;
+                Equal(false, wingmanWords && prompt.Offer.Title == GrokBotReconnectPolicy.ReopenedTitle, name + when + ": the title agrees with the body");
+                if (prompt.Offer.Target == mine)
+                    Equal(false, prompt.Message == GrokBotReconnectPolicy.ReopenedText || prompt.Message == GrokBotReconnectPolicy.ReplacedText, name + when + ": Wingman's Grok Bot is never called opened without Wingman");
+                if (prompt.Offer.Target == mine)
+                    Equal(how == GrokBotOpenedBy.AfterUpdate ? GrokBotReconnectPolicy.UpdatedTitle : GrokBotReconnectPolicy.ApprovedTitle, prompt.Offer.Title,
+                        name + when + ": Wingman's Grok Bot gets the neutral title, or the update's");
+            }
+            Check(" at the run's end");
+            foreach (var later in new[] { Seen(mine), Seen(other), Seen(other, connected: true) })
+            {
+                prompt.Observe(later, busy: false);
+                Check(" at a later check");
+            }
+        }
+        Equal(true, checkedWords > 50, "the body said Wingman opened or is opening Grok Bot in many of them");
     }
 
     /// <summary>The run's steps, but the look after the run can't see Grok Bot.</summary>
@@ -2193,7 +2264,7 @@ internal static class GrokBotReconnectTests
     private static void AReconnectAfterAnUpdateFinishesTheJob()
     {
         var started = new DateTime(2026, 1, 1, 8, 59, 0, DateTimeKind.Utc);
-        var offer = new GrokBotReconnectOffer(Second, true, T0, started);
+        var offer = new GrokBotReconnectOffer(Second, GrokBotOpenedBy.AfterUpdate, T0, started);
         var quit = QuitProof(offer.Target);
         var unconnected = new GrokBotObservation(Second, false, Present, started);
         var reopened = new GrokBotObservation(Third, false, Present, started.AddMinutes(2));

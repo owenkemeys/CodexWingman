@@ -51,20 +51,26 @@ public sealed class GrokBotStarts
 }
 
 /// <summary>
-/// The one prompt Wingman showed for one unconnected Grok Bot process. <see cref="Updated"/> is true only when an update is
-/// proven (the process was started with <c>--updated</c>, or Grok Bot.exe's version changed since Wingman last had it connected).
+/// The one prompt Wingman showed for one unconnected Grok Bot process. <see cref="OpenedBy"/> says how the Grok Bot it holds
+/// opened, and the title follows it: AfterUpdate only when an update is proven (the process was started with <c>--updated</c>,
+/// or Grok Bot.exe's version changed since Wingman last had it connected).
 /// </summary>
-public sealed record GrokBotReconnectOffer(int ProcessId, bool Updated, DateTimeOffset ShownAt, DateTime? ProcessStarted = null)
+public sealed record GrokBotReconnectOffer(int ProcessId, GrokBotOpenedBy OpenedBy, DateTimeOffset ShownAt, DateTime? ProcessStarted = null)
 {
     public GrokBotProcess Target => new(ProcessId, ProcessStarted);
 
     /// <summary>Whether <paramref name="current"/> still shows this offer's exact process (id and start time).</summary>
     public bool Owns(GrokBotObservation current) => current.ProcessId == ProcessId && current.ProcessStarted == ProcessStarted;
 
-    /// <summary>Open window or Repair, after the user's Yes to closing and reopening Grok Bot: no offer was shown.</summary>
-    public bool Approved { get; init; }
+    public bool Updated => OpenedBy == GrokBotOpenedBy.AfterUpdate;
 
-    public string Title => Approved ? GrokBotReconnectPolicy.ApprovedTitle : Updated ? GrokBotReconnectPolicy.UpdatedTitle : GrokBotReconnectPolicy.ReopenedTitle;
+    /// <summary>The window's title, from how the held Grok Bot opened; never "reopened without Wingman" for one Wingman opened.</summary>
+    public string Title => OpenedBy switch
+    {
+        GrokBotOpenedBy.AfterUpdate => GrokBotReconnectPolicy.UpdatedTitle,
+        GrokBotOpenedBy.Wingman => GrokBotReconnectPolicy.ApprovedTitle,
+        _ => GrokBotReconnectPolicy.ReopenedTitle,
+    };
     public string Text => GrokBotReconnectPolicy.PromptText;
 }
 
@@ -193,7 +199,7 @@ public sealed class GrokBotReconnectPolicy
         if (!wasConnected || promptedProcess == process || facts.Starts.Contains(process)) return null;
         if (now - unconnectedSince < Settle || observation.UserIdle > PresentWithin || observation.FullScreen) return null;
         promptedProcess = process;
-        return new GrokBotReconnectOffer(process.Id, UpdateProven(process, facts), now, process.Started);
+        return new GrokBotReconnectOffer(process.Id, UpdateProven(process, facts) ? GrokBotOpenedBy.AfterUpdate : GrokBotOpenedBy.WithoutWingman, now, process.Started);
     }
 
     /// <summary>
@@ -244,8 +250,11 @@ public sealed class GrokBotReconnectPolicy
     }
 }
 
-/// <summary>How a Grok Bot the prompt follows opened without Wingman: its title says so.</summary>
-public enum GrokBotFollowed { WithoutWingman, AfterUpdate }
+/// <summary>
+/// How the Grok Bot a prompt holds opened, so its title says so: without Wingman, after a proven update, or by Wingman (Wingman
+/// started it, or is about to after Open window or Repair's Yes): the neutral title.
+/// </summary>
+public enum GrokBotOpenedBy { WithoutWingman, AfterUpdate, Wingman }
 
 /// <summary>What Wingman last saw of the Grok Bot a prompt holds.</summary>
 public enum GrokBotHeldState { Unknown, Open, Gone }
@@ -453,7 +462,7 @@ public sealed class GrokBotReconnectPrompt(GrokBotReconnectOffer offer)
     /// </summary>
     public static GrokBotReconnectPrompt AfterYes(GrokBotProcess? closed, GrokBotExecutableStamp? since, DateTimeOffset now, Func<GrokBotProcess, bool>? updateProven = null)
     {
-        var prompt = new GrokBotReconnectPrompt(new GrokBotReconnectOffer(closed?.Id ?? 0, false, now, closed?.Started) { Approved = true })
+        var prompt = new GrokBotReconnectPrompt(new GrokBotReconnectOffer(closed?.Id ?? 0, GrokBotOpenedBy.Wingman, now, closed?.Started))
         {
             State = GrokBotPromptState.Working, Pressed = true, ApprovedSince = since, UpdateProven = updateProven ?? NoUpdateProof,
         };
@@ -576,7 +585,9 @@ public sealed class GrokBotReconnectPrompt(GrokBotReconnectOffer offer)
         // Replaced, but Wingman couldn't look: a later check follows the replacement with the replaced words.
         handOverAs = current is null ? reason : GrokBotReconnectOutcome.Reopened;
         if (current?.Process is not { } other || other == Offer.Target) return false;
-        Follow(other, GrokBotPromptReason.For(reason), Updated(other) ? GrokBotFollowed.AfterUpdate : GrokBotFollowed.WithoutWingman);
+        // Back to the Grok Bot Wingman started for this prompt: the words and title it had, never "opened without Wingman".
+        if (other == own && ownWhy is { } said) Follow(other, said, ownHow);
+        else Follow(other, GrokBotPromptReason.For(reason), Updated(other) ? GrokBotOpenedBy.AfterUpdate : GrokBotOpenedBy.WithoutWingman);
         handOverAs = GrokBotReconnectOutcome.Reopened;
         return true;
     }
@@ -591,24 +602,35 @@ public sealed class GrokBotReconnectPrompt(GrokBotReconnectOffer offer)
     /// The one way the prompt moves to another Grok Bot: the same prompt, still pressed, now for <paramref name="process"/>,
     /// with <paramref name="why"/>; it is open, so [Try again] asks the user to close this one (or connects a port it has),
     /// and once it closes the words and button say so (<see cref="Ending"/>). The quit's proof was for the old process, so it goes.
-    /// <paramref name="openedBy"/> is set for a Grok Bot opened without Wingman: the title then says how it opened (after an
-    /// update, or reopened without Wingman); null keeps the title, for the Grok Bot Wingman was connecting.
+    /// <paramref name="openedBy"/> says how that Grok Bot opened, so the title follows it.
     /// </summary>
-    private void Follow(GrokBotProcess process, GrokBotPromptReason why, GrokBotFollowed? openedBy = null)
+    private void Follow(GrokBotProcess process, GrokBotPromptReason why, GrokBotOpenedBy openedBy)
     {
-        Offer = openedBy is { } how
-            ? Offer with { ProcessId = process.Id, ProcessStarted = process.Started, Approved = false, Updated = how == GrokBotFollowed.AfterUpdate }
-            : Offer with { ProcessId = process.Id, ProcessStarted = process.Started };
+        Offer = Offer with { ProcessId = process.Id, ProcessStarted = process.Started, OpenedBy = openedBy };
         Quit = null;
         Stay(why, GrokBotHeldState.Open);
     }
 
-    /// <summary>The prompt now holds <paramref name="process"/>, the Grok Bot Wingman started; the quit's proof is spent.</summary>
+    /// <summary>
+    /// The prompt now holds <paramref name="process"/>, the Grok Bot Wingman started; the quit's proof is spent. Wingman opened
+    /// it, so the title is the neutral one, or still Grok Bot updated while the update the prompt was for is proven.
+    /// </summary>
     private void Hold(GrokBotProcess process)
     {
-        Offer = Offer with { ProcessId = process.Id, ProcessStarted = process.Started };
+        own = process;
+        ownHow = Offer.OpenedBy == GrokBotOpenedBy.AfterUpdate ? GrokBotOpenedBy.AfterUpdate : GrokBotOpenedBy.Wingman;
+        ownWhy = null;
+        Offer = Offer with { ProcessId = process.Id, ProcessStarted = process.Started, OpenedBy = ownHow };
         Quit = null;
     }
+
+    /// <summary>
+    /// The Grok Bot Wingman started for this prompt, how it opened and the words last shown for it, so a hand-over back to it
+    /// (another Grok Bot was in front meanwhile) says what was true of it.
+    /// </summary>
+    private GrokBotProcess? own;
+    private GrokBotOpenedBy ownHow;
+    private GrokBotPromptReason? ownWhy;
 
     /// <summary>The run reached the point where the user quits Grok Bot.</summary>
     public void WaitingForQuit()
@@ -650,7 +672,7 @@ public sealed class GrokBotReconnectPrompt(GrokBotReconnectOffer offer)
         // A quit's proof that Wingman used to start a Grok Bot (Started) is spent: that start is the prompt's Grok Bot now.
         if (result.Quit is not null && result.Started is null) Quit ??= result.Quit;
         // The exact Grok Bot this run started is the one the prompt holds from now on, whatever the result, so whether or
-        // not a later look works, it is never "another Grok Bot" and never reads as opened without Wingman. The title stays.
+        // not a later look works, it is never "another Grok Bot" and never reads as opened without Wingman, title included.
         if (result.Started is { } started) Hold(started);
         switch (result.Outcome)
         {
@@ -677,9 +699,12 @@ public sealed class GrokBotReconnectPrompt(GrokBotReconnectOffer offer)
             // Wingman's own Grok Bot is the held one (see Relaunched), so while it is the one open, or Wingman couldn't look,
             // the open words may say Wingman opened it.
             var why = GrokBotPromptReason.NotConnected(result.Started is { } mine && (now?.Process ?? Offer.Target) == mine, result.WingmanBusy);
+            if (own is not null && Offer.Target == own) ownWhy = GrokBotPromptReason.NotConnected(openedByWingman: true, result.WingmanBusy);
             if (now?.Process is { } open)
             {
-                Follow(open, why);
+                // The Grok Bot Wingman was connecting: the held one keeps how it opened; any other one runs with Wingman's
+                // port (Wingman opened it), so it says Grok Bot updated only with the proof.
+                Follow(open, why, open == Offer.Target ? Offer.OpenedBy : Updated(open) ? GrokBotOpenedBy.AfterUpdate : GrokBotOpenedBy.Wingman);
                 connectFailedFor = open;
             }
             else
@@ -692,6 +717,8 @@ public sealed class GrokBotReconnectPrompt(GrokBotReconnectOffer offer)
         // Every other staying result: when another Grok Bot already runs, the same hand-over rule as the next check follows
         // it now, so the words and the button don't change a moment later. After an update the user's quit started, it goes
         // straight on to asking for the quit, since the user already chose to reconnect.
+        var staying = result.Started is null ? GrokBotPromptReason.For(outcome) : GrokBotPromptReason.AfterStart(outcome);
+        if (own is not null && Offer.Target == own) ownWhy = staying;
         if (HandOver(now, outcome))
         {
             if (outcome == GrokBotReconnectOutcome.UpdatedAndReopened)
@@ -704,7 +731,7 @@ public sealed class GrokBotReconnectPrompt(GrokBotReconnectOffer offer)
         }
         // A run that started Grok Bot and then ended before the connect (an error, a stop): that Grok Bot is the prompt's own,
         // so the words say Wingman opened it, and no connect was tried, so the next check connects it once it listens.
-        Stay(result.Started is null ? GrokBotPromptReason.For(outcome) : GrokBotPromptReason.AfterStart(outcome), HeldIn(now));
+        Stay(staying, HeldIn(now));
     }
 
     private void Close(string reason)
