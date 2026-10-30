@@ -315,7 +315,7 @@ internal sealed class GrokBotLauncher(string wingmanDataRoot, Func<IEnumerable<i
         // Lists every process once a second during the wait: on the thread pool, never on the UI thread.
         public Task<bool> InstallerRunningAsync() => Task.Run(launcher.InstallerRunning);
         public bool SessionEnding() => sessionEnding();
-        public GrokBotProcess? Start(GrokBotRelaunch.ClosedProcess proof) => launcher.StartWithPort(started);
+        public GrokBotProcess Start(GrokBotRelaunch.ClosedProcess proof) => launcher.StartWithPort(started);
     }
 
     /// <summary>Grok Bot.exe's write time and size; null when missing or unreadable (an installer may be replacing it).</summary>

@@ -9,7 +9,7 @@ internal static class GrokBotReconnectTests
     private static readonly DateTimeOffset T0 = new(2026, 1, 1, 9, 0, 0, TimeSpan.Zero);
     private static readonly TimeSpan Present = TimeSpan.FromSeconds(3);
     private static readonly TimeSpan Away = TimeSpan.FromMinutes(20);
-    private const int First = 100, Second = 200, Third = 300;
+    private const int First = 100, Second = 200, Third = 300, FakeStarted = 900;
 
     public static void Run()
     {
@@ -51,6 +51,7 @@ internal static class GrokBotReconnectTests
         TryAgainAsksForTheCloseAgain();
         AnErrorAfterWingmansStartKeepsThatWingmanOpenedIt();
         AGrokBotWingmanStartedIsNeverOfferedAsReopened();
+        AStartReturnsTheGrokBotItStartedOrThrows();
         TheTitleNeverSaysWithoutWingmanWhileTheBodySaysWingmanOpenedIt();
         AGrokBotThatAppearsWhileWingmanIsBusyStartsNothing();
         EveryResultEndsInTheSamePrompt();
@@ -851,6 +852,7 @@ internal static class GrokBotReconnectTests
         var target = new GrokBotProcess(Second, started);
         var none = new GrokBotObservation(null, false, Present);
         var reopenedWithPort = new GrokBotObservation(Third, true, Present, started.AddMinutes(1));
+        var reopenedProcess = new GrokBotProcess(Third, started.AddMinutes(1));
         (GrokBotReconnectPrompt Prompt, FakeHost Host, GrokBotReconnectResult Result) Run(FakeControl control, CancellationToken token = default, bool connects = true,
             GrokBotObservation? seen = null)
         {
@@ -902,7 +904,7 @@ internal static class GrokBotReconnectTests
         Ends(throws, GrokBotReconnectOutcome.Failed, GrokBotReconnectPolicy.FailedText, "an error after the close: a plain reason");
         Equal(true, throws.Prompt.Quit?.Process == target, "and the prompt has the quit's proof for Open Grok Bot");
 
-        var unconnected = Run(new FakeControl(new FakeProcess(target, []) { Exited = true }) { Starts = reopenedWithPort.Process }, connects: false, seen: reopenedWithPort);
+        var unconnected = Run(new FakeControl(new FakeProcess(target, []) { Exited = true }) { Starts = reopenedProcess }, connects: false, seen: reopenedWithPort);
         Ends(unconnected, GrokBotReconnectOutcome.NotConnected, GrokBotReconnectPolicy.OpenedNotConnectedText, "Wingman reopened it, but the Helpers didn't connect: the prompt says so",
             "Try again");
         Equal((GrokBotPromptStep.None, GrokBotReconnectPolicy.OpenedNotConnectedText, reopenedWithPort.Process),
@@ -914,10 +916,8 @@ internal static class GrokBotReconnectTests
         // "Wingman opened Grok Bot" only for the exact process Wingman started: another one open now is just open.
         Ends(Run(new FakeControl(new FakeProcess(target, []) { Exited = true }) { Starts = new GrokBotProcess(Third, started) }, connects: false, seen: reopenedWithPort),
             GrokBotReconnectOutcome.NotConnected, GrokBotReconnectPolicy.ConnectFailedText, "Wingman started a different process than the one open now: Grok Bot is open", "Try again");
-        Ends(Run(new FakeControl(new FakeProcess(target, []) { Exited = true }), connects: false, seen: reopenedWithPort),
-            GrokBotReconnectOutcome.NotConnected, GrokBotReconnectPolicy.ConnectFailedText, "Windows didn't say which process started: Grok Bot is open", "Try again");
         var unseen = GrokBotReconnectPrompt.AfterYes(target, null, T0);
-        var blindHost = new FakeHost(new FakeControl(new FakeProcess(target, []) { Exited = true }) { Starts = reopenedWithPort.Process }, none) { Connects = false, ObserveFails = true };
+        var blindHost = new FakeHost(new FakeControl(new FakeProcess(target, []) { Exited = true }) { Starts = reopenedProcess }, none) { Connects = false, ObserveFails = true };
         Ends((unseen, blindHost, Act(unseen, GrokBotPromptStep.ApprovedClose, blindHost)), GrokBotReconnectOutcome.NotConnected, GrokBotReconnectPolicy.NotConnectedUnseenText,
             "the connect failed and Wingman couldn't look at Grok Bot: neutral words, no guess either way");
         // The prompt holds the exact Grok Bot Wingman started, so the next check, which sees it, never calls it another Grok Bot.
@@ -929,7 +929,7 @@ internal static class GrokBotReconnectTests
         Equal(false, GrokBotReconnectPolicy.NotConnectedUnseenText.Contains("is open", StringComparison.Ordinal) || GrokBotReconnectPolicy.NotConnectedUnseenText.Contains("opened", StringComparison.Ordinal)
             || GrokBotReconnectPolicy.NotConnectedUnseenText.Contains("closed", StringComparison.Ordinal), "the neutral words say nothing about Grok Bot's state");
         var connectThrows = GrokBotReconnectPrompt.AfterYes(target, null, T0);
-        var throwingHost = new FakeHost(new FakeControl(new FakeProcess(target, []) { Exited = true }) { Starts = reopenedWithPort.Process }, reopenedWithPort) { ConnectThrows = new InvalidOperationException("The operation was canceled.") };
+        var throwingHost = new FakeHost(new FakeControl(new FakeProcess(target, []) { Exited = true }) { Starts = reopenedProcess }, reopenedWithPort) { ConnectThrows = new InvalidOperationException("The operation was canceled.") };
         Ends((connectThrows, throwingHost, Act(connectThrows, GrokBotPromptStep.ApprovedClose, throwingHost)), GrokBotReconnectOutcome.NotConnected, GrokBotReconnectPolicy.OpenedNotConnectedText,
             "reopened, but connecting the Helpers threw: the prompt says so, never the raw text", "Try again");
 
@@ -1065,6 +1065,22 @@ internal static class GrokBotReconnectTests
     {
         try { action(); return false; }
         catch (Exception) { return true; }
+    }
+
+    /// <summary>
+    /// Starting Grok Bot gives back the exact process it started, or throws; there is no "started, but which one is unknown",
+    /// so a relaunch always carries the Grok Bot it started and the prompt can say Wingman opened it.
+    /// </summary>
+    private static void AStartReturnsTheGrokBotItStartedOrThrows()
+    {
+        var start = typeof(IGrokBotProcessControl).GetMethod(nameof(IGrokBotProcessControl.Start))!;
+        Equal(System.Reflection.NullabilityState.NotNull, new System.Reflection.NullabilityInfoContext().Create(start.ReturnParameter).ReadState,
+            "IGrokBotProcessControl.Start never returns null");
+        var target = new GrokBotProcess(Second, DateTime.UnixEpoch);
+        var control = new FakeControl(new FakeProcess(target, []) { QuitsAfter = 2 });
+        var clock = DateTime.UnixEpoch;
+        var result = GrokBotRelaunch.RunAsync(target, control, Limits, () => clock, (wait, _) => { clock += wait; return Task.CompletedTask; }, default).GetAwaiter().GetResult();
+        Equal((GrokBotRelaunchKind.Relaunched, control.Starts), (result.Kind, result.Started), "a relaunch carries the exact Grok Bot it started");
     }
 
     private static GrokBotRelaunch.ClosedProcess QuitProof(GrokBotProcess target)
@@ -1206,7 +1222,7 @@ internal static class GrokBotReconnectTests
                 launcher.Split("StartWithPort(null)").Length - 1, launcher.Split("StartWithPort(started)").Length - 1),
             "StartWithPort: defined once, called by the ordinary open and by the relaunch's proof-gated Start only");
         Equal(3, launcher.Split("StartWithPort(").Length - 1, "and nowhere else");
-        Equal(true, launcher.Contains("public GrokBotProcess? Start(GrokBotRelaunch.ClosedProcess proof) => launcher.StartWithPort(started);", StringComparison.Ordinal),
+        Equal(true, launcher.Contains("public GrokBotProcess Start(GrokBotRelaunch.ClosedProcess proof) => launcher.StartWithPort(started);", StringComparison.Ordinal),
             "the reconnect starts Grok Bot only with the relaunch's proof");
         var reconnect = launcher[launcher.IndexOf("public IGrokBotProcessControl Control(", StringComparison.Ordinal)..];
         reconnect = reconnect[..reconnect.IndexOf("    private static DateTime? StartedUtc", StringComparison.Ordinal)];
@@ -1750,17 +1766,17 @@ internal static class GrokBotReconnectTests
         public GrokBotProcess? MainProcess() => Main?.Invoke(mainChecks++);
         /// <summary>Starting Grok Bot throws this (an error after the quit, such as a missing Grok Bot.exe).</summary>
         public Exception? StartThrows;
-        /// <summary>The process the fake "starts".</summary>
-        public GrokBotProcess? Starts;
+        /// <summary>The process the fake "starts" (a start returns the process or throws, as the real one does).</summary>
+        public GrokBotProcess Starts = new(FakeStarted, DateTime.UnixEpoch.AddHours(5));
         /// <summary>Hears of the start the moment it happens, as the real control does.</summary>
         public Action<GrokBotProcess>? OnStart;
         /// <summary>Thrown once Grok Bot has started (writing the port file failed, say).</summary>
         public Exception? ThrowsAfterStart;
-        public GrokBotProcess? Start(GrokBotRelaunch.ClosedProcess proof)
+        public GrokBotProcess Start(GrokBotRelaunch.ClosedProcess proof)
         {
             if (StartThrows is { } error) throw error;
             Log.Add("start after " + proof.Process.Id);
-            if (Starts is { } started) OnStart?.Invoke(started);
+            OnStart?.Invoke(Starts);
             if (ThrowsAfterStart is { } after) throw after;
             return Starts;
         }
@@ -1879,7 +1895,7 @@ internal static class GrokBotReconnectTests
         var start = launcher.IndexOf("Process.Start(start)", StringComparison.Ordinal);
         var heard = launcher.IndexOf("}, started);", start, StringComparison.Ordinal);
         Equal(true, start > 0 && heard > start && heard < launcher.IndexOf("AppRuntimePortFile.Write(RuntimePath, port);", start, StringComparison.Ordinal)
-            && launcher.Contains("public GrokBotProcess? Start(GrokBotRelaunch.ClosedProcess proof) => launcher.StartWithPort(started);", StringComparison.Ordinal),
+            && launcher.Contains("public GrokBotProcess Start(GrokBotRelaunch.ClosedProcess proof) => launcher.StartWithPort(started);", StringComparison.Ordinal),
             "the real start records Grok Bot the moment it started, before writing the port file");
     }
 

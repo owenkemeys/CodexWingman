@@ -708,8 +708,8 @@ public sealed class GrokBotReconnectPrompt(GrokBotReconnectOffer offer)
             if (own is not null && Offer.Target == own) ownWhy = GrokBotPromptReason.NotConnected(openedByWingman: true, result.WingmanBusy);
             if (now?.Process is { } open)
             {
-                // The Grok Bot Wingman was connecting: the held one keeps how it opened; any other one runs with Wingman's
-                // port (Wingman opened it), so it says Grok Bot updated only with the proof.
+                // The held one keeps how it opened. For any other one Wingman can't tell how it opened, so it gets the
+                // neutral title, which claims neither way (Grok Bot updated only with the proof), also once the words change.
                 Follow(open, why, open == Offer.Target ? Offer.OpenedBy : Updated(open) ? GrokBotOpenedBy.AfterUpdate : GrokBotOpenedBy.Wingman);
                 connectFailedFor = open;
             }
@@ -1001,9 +1001,9 @@ public interface IGrokBotProcessControl
     bool SessionEnding();
     /// <summary>
     /// Starts Grok Bot with Wingman's port. Only <see cref="GrokBotRelaunch"/> can make the proof it needs. Returns the
-    /// exact process started (null when Windows didn't say), so the prompt says "Wingman opened Grok Bot" only for that one.
+    /// exact process started, or throws, so the prompt says "Wingman opened Grok Bot" only for that one.
     /// </summary>
-    GrokBotProcess? Start(GrokBotRelaunch.ClosedProcess proof);
+    GrokBotProcess Start(GrokBotRelaunch.ClosedProcess proof);
 }
 
 /// <summary>
