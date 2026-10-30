@@ -373,6 +373,11 @@ internal static class GrokBotReconnectTests
             portOwner.Finished(new(GrokBotReconnectOutcome.NotConnected), Seen(Third));
             Equal((Third, proven ? GrokBotReconnectPolicy.UpdatedTitle : GrokBotReconnectPolicy.ApprovedTitle), (portOwner.Offer.ProcessId, portOwner.Title),
                 (proven ? "update proven" : "no proof") + ": a failed connect to another Grok Bot titles it by the proof, else neutrally");
+            // Wingman can't tell how that one opened, so the neutral title stays when the words are no longer Wingman's.
+            portOwner.Open(busy: false);
+            portOwner.WaitingForQuit();
+            Equal((GrokBotReconnectPolicy.QuitText, proven ? GrokBotReconnectPolicy.UpdatedTitle : GrokBotReconnectPolicy.ApprovedTitle), (portOwner.Message, portOwner.Title),
+                (proven ? "update proven" : "no proof") + ": Try again on it asks for its close under the same title");
         }
         Equal((GrokBotReconnectOutcome.Gone, GrokBotReconnectOutcome.Replaced),
             (GrokBotReconnectRun.RunAsync(gone.Offer, new Steps(new GrokBotObservation(null, false, Present)), CancellationToken.None).GetAwaiter().GetResult().Outcome,
@@ -2038,6 +2043,7 @@ internal static class GrokBotReconnectTests
             var clock = T0;
             var steps = new List<string>();
             var last = (Title: prompt.Title, Message: prompt.Message, Target: prompt.Offer.Target);
+            var leftTheOffer = false;
             for (var step = 0; step < 14 && prompt.State != GrokBotPromptState.Closed; step++)
             {
                 GrokBotObservation? Look()
@@ -2089,6 +2095,8 @@ internal static class GrokBotReconnectTests
                         var end = Look();
                         prompt.Finished(new(outcome, quit, start) { WingmanBusy = random.Next(4) == 0 }, end);
                         Count(start is null ? "result" : "result after Wingman's start");
+                        // The prompt holds Wingman's start from now on, whatever it shows next.
+                        leftTheOffer |= start is not null;
                         steps.Add($"Finished({outcome}, start {start?.Id}, end {end?.ProcessId})");
                         break;
                     default:
@@ -2119,6 +2127,14 @@ internal static class GrokBotReconnectTests
                             GrokBotOpenedBy.Wingman => GrokBotReconnectPolicy.ApprovedTitle,
                             _ => GrokBotReconnectPolicy.ReopenedTitle,
                         }, shown.Title, name + $": over \"{shown.Message}\" the title says how the held Grok Bot opened");
+                leftTheOffer |= shown.Target != offered;
+                if (!leftTheOffer && !wingmanVoice.Contains(shown.Message))
+                    Equal(how switch
+                        {
+                            GrokBotOpenedBy.AfterUpdate => GrokBotReconnectPolicy.UpdatedTitle,
+                            GrokBotOpenedBy.Wingman => GrokBotReconnectPolicy.ApprovedTitle,
+                            _ => GrokBotReconnectPolicy.ReopenedTitle,
+                        }, shown.Title, name + $": over \"{shown.Message}\" until the prompt first leaves the offered Grok Bot, the title says how that one opened");
                 if (!prompt.Pressed)
                     Equal(how == GrokBotOpenedBy.AfterUpdate ? GrokBotReconnectPolicy.UpdatedTitle : GrokBotReconnectPolicy.ReopenedTitle, shown.Title, name + ": before any press, the offer's title");
                 if (shown.Target == last.Target && shown.Message == last.Message)
