@@ -48,6 +48,7 @@ internal static class GrokBotReconnectTests
         TheMainProcessIsGrokBotItself();
         NothingStartsWhileWindowsShutsDown();
         ThePromptClosesAfterItsOwnClick();
+        TryAgainAsksForTheCloseAgain();
         EveryResultEndsInTheSamePrompt();
         EveryResultTimesEveryStatePicksItsEnding();
         OpenWindowAfterTheYesEndsInThePrompt();
@@ -998,9 +999,12 @@ internal static class GrokBotReconnectTests
         public IGrokBotProcessControl Control() => control;
         /// <summary>Showing the prompt throws once it is in this state.</summary>
         public GrokBotPromptState? ShowThrowsIn;
+        /// <summary>What the prompt showed at each change: its state, words and buttons.</summary>
+        public readonly List<(GrokBotPromptState? State, string? Message, (string? Primary, bool PrimaryEnabled, string Secondary)? Buttons)> Shown = [];
         public void Changed()
         {
             Log.Add("changed " + Prompt?.State);
+            Shown.Add((Prompt?.State, Prompt?.Message, Prompt?.Buttons));
             if (Prompt?.State is { } state && state == ShowThrowsIn) throw new InvalidOperationException("window gone");
         }
         public bool Connects = true;
@@ -1724,6 +1728,47 @@ internal static class GrokBotReconnectTests
     }
 
     private static readonly GrokBotRelaunchLimits Limits = GrokBotRelaunchLimits.Default;
+
+    /// <summary>
+    /// Grok Bot didn't close in time and is still open: Try again asks the user to close it again, through the same run as
+    /// Reconnect, and only the user's close leads to a start. It never opens a second Grok Bot beside the open one.
+    /// </summary>
+    private static void TryAgainAsksForTheCloseAgain()
+    {
+        var started = new DateTime(2026, 1, 1, 8, 59, 0, DateTimeKind.Utc);
+        var offer = new GrokBotReconnectOffer(Second, true, T0, started);
+        var open = new GrokBotObservation(Second, false, Present, started);
+        var prompt = new GrokBotReconnectPrompt(offer);
+        prompt.Reconnect(busy: false);
+        prompt.Finished(new(GrokBotReconnectOutcome.ExitTooLong), open);
+        Equal((GrokBotPromptState.CouldNotStart, true, "Try again"), (prompt.State, prompt.Quit is null, prompt.Buttons.Primary),
+            "Grok Bot didn't close and is still open: Try again, with no quit's proof");
+        Equal(true, prompt.Open(busy: false), "Try again is pressed");
+
+        var processLog = new List<string>();
+        var control = new FakeControl(new FakeProcess(offer.Target, processLog) { QuitsAfter = 3 }) { Starts = new(Third, started.AddMinutes(2)) };
+        var host = new FakeHost(control, open, new GrokBotObservation(Third, true, Present, started.AddMinutes(2)));
+        var result = Act(prompt, GrokBotPromptStep.Open, host);
+        Equal(true, host.Shown.Contains((GrokBotPromptState.WaitingForQuit, GrokBotReconnectPolicy.QuitText, (null, false, "Cancel"))),
+            "Try again asks again for Grok Bot's close, with Cancel");
+        var asked = host.Shown.FindIndex(shown => shown.State == GrokBotPromptState.WaitingForQuit);
+        Equal(true, asked >= 0 && host.Shown.Take(asked).All(shown => shown.State != GrokBotPromptState.Working),
+            "it asks for the close before anything opens");
+        Equal((GrokBotReconnectOutcome.Connected, 1, true), (result.Outcome, control.Log.Count(line => line.StartsWith("start", StringComparison.Ordinal)), control.Log.Contains("start after 200")),
+            "after the user's close Wingman opens Grok Bot once, with the close's proof");
+        Equal(true, processLog.Contains("dispose 200"), "the run held the open Grok Bot itself while it waited for its close");
+
+        // Still open when the close wait ends: nothing opens beside it.
+        var again = new GrokBotReconnectPrompt(offer);
+        again.Reconnect(busy: false);
+        again.Finished(new(GrokBotReconnectOutcome.QuitTimedOut), open);
+        again.Open(busy: false);
+        var stays = new FakeControl(new FakeProcess(offer.Target, [])) { Starts = new(Third, started.AddMinutes(2)) };
+        var stayed = Act(again, GrokBotPromptStep.Open, new FakeHost(stays, open));
+        Equal((GrokBotReconnectOutcome.QuitTimedOut, true), (stayed.Outcome, stays.Log.All(line => !line.StartsWith("start", StringComparison.Ordinal))),
+            "Grok Bot stays open through the wait: it says so and starts nothing");
+    }
+
 
     /// <summary>
     /// The user's quit started Grok Bot's update. Wingman waits up to 5 minutes until no installer runs and Grok Bot.exe
