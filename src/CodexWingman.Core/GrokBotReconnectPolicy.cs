@@ -20,6 +20,8 @@ public interface IGrokBotFacts
 {
     string? CommandLine(int processId);
     string? ExecutableVersion();
+    /// <summary>Whether Wingman started <paramref name="process"/> itself, recorded the moment Windows started it.</summary>
+    bool StartedByWingman(GrokBotProcess process);
 }
 
 /// <summary>
@@ -156,7 +158,9 @@ public sealed class GrokBotReconnectPolicy
             unconnectedProcess = process;
             unconnectedSince = now;
         }
-        if (!wasConnected || promptedProcess == process) return null;
+        // A Grok Bot Wingman started itself is never offered as reopened without Wingman, even when an error right after
+        // its start (writing its port down, say) left it unconnected.
+        if (!wasConnected || promptedProcess == process || facts.StartedByWingman(process)) return null;
         if (now - unconnectedSince < Settle || observation.UserIdle > PresentWithin || observation.FullScreen) return null;
         promptedProcess = process;
         return new GrokBotReconnectOffer(process.Id, UpdateProven(process, facts), now, process.Started);

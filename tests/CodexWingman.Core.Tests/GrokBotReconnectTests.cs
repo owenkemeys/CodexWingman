@@ -50,6 +50,7 @@ internal static class GrokBotReconnectTests
         ThePromptClosesAfterItsOwnClick();
         TryAgainAsksForTheCloseAgain();
         AnErrorAfterWingmansStartKeepsThatWingmanOpenedIt();
+        AGrokBotWingmanStartedIsNeverOfferedAsReopened();
         AGrokBotThatAppearsWhileWingmanIsBusyStartsNothing();
         EveryResultEndsInTheSamePrompt();
         EveryResultTimesEveryStatePicksItsEnding();
@@ -66,6 +67,9 @@ internal static class GrokBotReconnectTests
         public int VersionReads;
         public string? CommandLine(int processId) => commandLine?.Invoke(processId);
         public string? ExecutableVersion() { VersionReads++; return Version; }
+        /// <summary>The Grok Bot processes Wingman started itself.</summary>
+        public readonly HashSet<GrokBotProcess> Started = [];
+        public bool StartedByWingman(GrokBotProcess process) => Started.Contains(process);
     }
 
     private static GrokBotReconnectOffer?[] Play(GrokBotReconnectPolicy policy, IGrokBotFacts facts,
@@ -1822,6 +1826,31 @@ internal static class GrokBotReconnectTests
         Equal(true, start > 0 && heard > start && heard < launcher.IndexOf("AppRuntimePortFile.Write(RuntimePath, port);", start, StringComparison.Ordinal)
             && launcher.Contains("public GrokBotProcess? Start(GrokBotRelaunch.ClosedProcess proof) => launcher.StartWithPort(started);", StringComparison.Ordinal),
             "the real start records Grok Bot the moment it started, before writing the port file");
+    }
+
+    /// <summary>
+    /// Open window started Grok Bot, but an error right after (writing its port down, say) left it unconnected: no prompt
+    /// calls it reopened without Wingman. Another Grok Bot is prompted as before.
+    /// </summary>
+    private static void AGrokBotWingmanStartedIsNeverOfferedAsReopened()
+    {
+        var started = new DateTime(2026, 1, 1, 9, 0, 0, DateTimeKind.Utc);
+        var facts = new Facts();
+        facts.Started.Add(new GrokBotProcess(Second, started));
+        var policy = new GrokBotReconnectPolicy();
+        policy.Observe(new GrokBotObservation(First, true, Present, started.AddHours(-1)), T0, facts);
+        GrokBotReconnectOffer? offer = null;
+        for (var second = 2; second <= 60; second += 2)
+            offer ??= policy.Observe(new GrokBotObservation(Second, false, Present, started), T0.AddSeconds(second), facts);
+        Equal(true, offer is null, "Wingman's own Grok Bot, unconnected after an error: no reopened-without-Wingman prompt");
+        for (var second = 62; second <= 120; second += 2)
+            offer ??= policy.Observe(new GrokBotObservation(Third, false, Present, started.AddMinutes(1)), T0.AddSeconds(second), facts);
+        Equal(Third, offer?.ProcessId, "a Grok Bot Wingman didn't start is prompted as before");
+        var launcher = File.ReadAllText(Path.Combine(RepositoryRoot(), "src", "CodexWingman", "GrokBotLauncher.cs"));
+        var start = launcher.IndexOf("Process.Start(start)", StringComparison.Ordinal);
+        var recorded = launcher.IndexOf("RecordStart(identity);", StringComparison.Ordinal);
+        Equal(true, start > 0 && recorded > start && recorded < launcher.IndexOf("AppRuntimePortFile.Write(RuntimePath, port);", start, StringComparison.Ordinal)
+            && launcher.Split("RecordStart(").Length - 1 == 2, "every start Wingman makes is recorded the moment it started, before writing the port file");
     }
 
     /// <summary>The run's steps, but the look after the run can't see Grok Bot.</summary>
