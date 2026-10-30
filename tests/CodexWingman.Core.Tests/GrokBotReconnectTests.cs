@@ -32,6 +32,7 @@ internal static class GrokBotReconnectTests
         AReconnectAfterAnUpdateFinishesTheJob();
         OpenWithoutTheQuitsProofIsStillGuarded();
         OpenWindowsCloseWaitIsUpdateAware();
+        TheAnswerTimeDoesntCount();
         AHandOverIsTheOnlyPromptForItsProcess();
         PromptWindowStaysOutOfTheWay();
         BringingForwardKeepsTheWindowAsItIs();
@@ -1115,6 +1116,28 @@ internal static class GrokBotReconnectTests
         var notYet = new FakeControl(new FakeProcess(target, [])) { InstallerAt = _ => true };
         var early = GrokBotRelaunch.RunAsync(target, notYet, Limits, () => clock, (wait, _) => { clock += wait; return Task.CompletedTask; }, default).GetAwaiter().GetResult();
         Equal((GrokBotRelaunchKind.ExitTooLong, false), (early.Kind, early.Quit is not null), "an installer while Grok Bot never closes: no proof, the prompt says so");
+    }
+
+    /// <summary>
+    /// Open window and Repair: a slow Yes/No answer can't use up the deadline and cut off the update wait after it.
+    /// </summary>
+    private static void TheAnswerTimeDoesntCount()
+    {
+        using var deadline = new CancellationTokenSource(TimeSpan.FromMilliseconds(50));
+        var answer = GrokBotAnswerTime.AskOffTheClock(deadline, TimeSpan.FromSeconds(30), () => { Thread.Sleep(400); return true; });
+        Thread.Sleep(100);
+        Equal((true, false), (answer, deadline.IsCancellationRequested), "a slow answer: the deadline didn't run meanwhile");
+        using var after = new CancellationTokenSource(TimeSpan.FromSeconds(30));
+        GrokBotAnswerTime.AskOffTheClock(after, TimeSpan.FromMilliseconds(50), () => false);
+        Thread.Sleep(500);
+        Equal(true, after.IsCancellationRequested, "after the answer the limit runs again, from the answer");
+        Equal(TimeSpan.FromMinutes(2) + TimeSpan.FromSeconds(30) + TimeSpan.FromMinutes(5), GrokBotAnswerTime.AfterYes(Limits),
+            "after the Yes: 2 minutes plus Grok Bot's exit and its update");
+        var tray = File.ReadAllText(Path.Combine(RepositoryRoot(), "src", "CodexWingman", "TrayApplicationContext.cs"));
+        Equal(true, tray.Contains("Func<bool> confirm = () => GrokBotAnswerTime.AskOffTheClock(deadline, GrokBotAnswerTime.AfterYes(GrokBotRelaunchLimits.Default), ask);", StringComparison.Ordinal),
+            "Open window asks with the clock paused");
+        Equal(true, tray.Contains("using var deadline = new CancellationTokenSource(TimeSpan.FromMinutes(2));\n        activeInteractiveOperation = deadline;\n        SetBusy(true, \"Opening Grok Bot...\");", StringComparison.Ordinal),
+            "and starts with its usual 2 minutes");
     }
 
     /// <summary>

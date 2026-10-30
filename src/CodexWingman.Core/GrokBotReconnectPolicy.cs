@@ -543,6 +543,24 @@ public interface IGrokBotProcessControl
     void Start(GrokBotRelaunch.ClosedProcess proof);
 }
 
+/// <summary>
+/// Open window and Repair have one deadline for Wingman's own work. The time the user spends on the Yes/No question isn't
+/// part of it: the clock stops while they answer, and restarts with <c>afterAnswer</c> once they have.
+/// </summary>
+public static class GrokBotAnswerTime
+{
+    /// <summary>Asks with <paramref name="deadline"/> paused; afterwards it fires <paramref name="afterAnswer"/> from now.</summary>
+    public static bool AskOffTheClock(CancellationTokenSource deadline, TimeSpan afterAnswer, Func<bool> ask)
+    {
+        deadline.CancelAfter(Timeout.InfiniteTimeSpan);
+        try { return ask(); }
+        finally { deadline.CancelAfter(afterAnswer); }
+    }
+
+    /// <summary>After the Yes: 2 minutes for the close and start, plus room for Grok Bot to finish closing and for its update.</summary>
+    public static TimeSpan AfterYes(GrokBotRelaunchLimits limits) => TimeSpan.FromMinutes(2) + limits.Exit + limits.Update;
+}
+
 /// <summary>The relaunch's limits.</summary>
 public sealed record GrokBotRelaunchLimits(TimeSpan Quit, TimeSpan Settle, TimeSpan Busy, TimeSpan Poll)
 {

@@ -1042,8 +1042,8 @@ internal sealed class TrayApplicationContext : ApplicationContext
     private async Task EnsureGrokBotReadyAsync(bool atStartup = false, bool plainEntry = false)
     {
         if (busy || exiting) return;
-        // Room for an update that the approved close starts (its wait is bounded by GrokBotRelaunchLimits.Update).
-        using var deadline = new CancellationTokenSource(TimeSpan.FromMinutes(2) + GrokBotRelaunchLimits.Default.Update);
+        // 2 minutes, paused while the user answers Yes/No; after the answer, room for an update the close starts too.
+        using var deadline = new CancellationTokenSource(TimeSpan.FromMinutes(2));
         activeInteractiveOperation = deadline;
         SetBusy(true, "Opening Grok Bot...");
         try
@@ -1051,7 +1051,8 @@ internal sealed class TrayApplicationContext : ApplicationContext
             // At startup and for the plain entry Wingman never asks to relaunch: a Grok Bot running without Wingman's
             // port stays as it is. Connected: its window is brought forward. Not running: it is started.
             WingmanLog.Write("grok-bot-open", ("reason", atStartup ? "startup" : plainEntry ? "plain-entry" : "launcher-or-menu"));
-            Func<bool> confirm = atStartup || plainEntry ? () => false : ConfirmGrokBotRelaunch;
+            Func<bool> ask = atStartup || plainEntry ? () => false : ConfirmGrokBotRelaunch;
+            Func<bool> confirm = () => GrokBotAnswerTime.AskOffTheClock(deadline, GrokBotAnswerTime.AfterYes(GrokBotRelaunchLimits.Default), ask);
             // A Grok Bot already running with a usable port Wingman didn't launch is adopted first, so nothing restarts.
             if (grokLauncher.MainProcess() is { } running) AdoptGrokBotPort(running.Id, "open");
             if (!await grokLauncher.OpenAsync(confirm, deadline.Token, () => SetBusy(true, "Grok Bot is updating..."), () => sessionEnding))
