@@ -512,11 +512,13 @@ public sealed class GrokBotReconnectPrompt(GrokBotReconnectOffer offer)
             }
             return;
         }
-        Problem = outcome is GrokBotReconnectOutcome.Reopened or GrokBotReconnectOutcome.UpdatedAndReopened && now is { Process: null }
+        // The text and the button both come from what Grok Bot is doing now. Left running because it didn't close: its
+        // reason and Try again while it is open; seen gone already, it says it closed, with Open Grok Bot.
+        var seenGone = now is { Process: null };
+        var leftRunning = outcome is GrokBotReconnectOutcome.NotClosed or GrokBotReconnectOutcome.QuitTimedOut;
+        Problem = (leftRunning || outcome is GrokBotReconnectOutcome.Reopened or GrokBotReconnectOutcome.UpdatedAndReopened) && seenGone
             ? GrokBotReconnectPolicy.GoneText : ProblemAfterQuit(outcome);
-        // Left running because it didn't close: Try again while it is open; once it closes, the prompt says so and Open
-        // Grok Bot starts one.
-        retryWhileOpen = outcome is GrokBotReconnectOutcome.NotClosed or GrokBotReconnectOutcome.QuitTimedOut && now is not { Process: null };
+        retryWhileOpen = leftRunning && !seenGone;
         goneText = retryWhileOpen ? GrokBotReconnectPolicy.GoneText : null;
         State = GrokBotPromptState.CouldNotStart;
     }
