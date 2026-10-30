@@ -79,8 +79,8 @@ internal sealed class GrokBotPromptWindow : Form
     /// <summary>
     /// Shows <paramref name="prompt"/>'s state with its own text and buttons (GrokBotReconnectPrompt.Buttons): [Reconnect]
     /// [Not now]; a disabled "Working..."; [Cancel] while waiting for the quit or while Grok Bot updates; or why Wingman
-    /// couldn't reopen or connect Grok Bot with [Open Grok Bot] (or [Try again] while a Grok Bot that didn't close is still
-    /// open; both press Open) [Not now].
+    /// couldn't reopen or connect Grok Bot with [Try again] while the Grok Bot it holds is open, or [Open Grok Bot] (both
+    /// press Open) [Not now]. The title follows the prompt's Grok Bot, also after it follows another one.
     /// </summary>
     public void Render(GrokBotReconnectPrompt prompt)
     {

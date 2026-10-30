@@ -279,6 +279,19 @@ internal static class GrokBotReconnectTests
             "replaced, the replacement open: the prompt follows it and keeps one steady text");
         replacedNow.Observe(Seen(null), busy: false);
         Equal((GrokBotReconnectPolicy.ReplacedText, ("Open Grok Bot", true, "Not now")), (replacedNow.Problem, replacedNow.Buttons), "and once it closes: didn't reopen it, Open Grok Bot");
+        // The title follows the Grok Bot the prompt holds: one opened without Wingman says so, one opened by its update says
+        // that, and the Grok Bot Wingman was connecting keeps the prompt's own title.
+        foreach (var (outcome, title) in new[] { (GrokBotReconnectOutcome.Reopened, GrokBotReconnectPolicy.ReopenedTitle),
+                     (GrokBotReconnectOutcome.Replaced, GrokBotReconnectPolicy.ReopenedTitle), (GrokBotReconnectOutcome.UpdatedAndReopened, GrokBotReconnectPolicy.UpdatedTitle) })
+        {
+            var titled = GrokBotReconnectPrompt.AfterYes(new(Second, started), null, T0);
+            Equal(GrokBotReconnectPolicy.ApprovedTitle, titled.Offer.Title, outcome + ": the Yes prompt starts with its own title");
+            titled.Finished(new(outcome), Seen(Third));
+            Equal((Third, title), (titled.Offer.ProcessId, titled.Offer.Title), outcome + ": following a Grok Bot opened without Wingman, the title says how it opened");
+        }
+        var keepsTitle = GrokBotReconnectPrompt.AfterYes(new(Second, started), null, T0);
+        keepsTitle.Finished(new(GrokBotReconnectOutcome.NotConnected, Started: new(Third, started)), Seen(Third));
+        Equal((Third, GrokBotReconnectPolicy.ApprovedTitle), (keepsTitle.Offer.ProcessId, keepsTitle.Offer.Title), "the Grok Bot Wingman opened keeps the prompt's title");
         Equal((GrokBotReconnectOutcome.Gone, GrokBotReconnectOutcome.Replaced),
             (GrokBotReconnectRun.RunAsync(gone.Offer, new Steps(new GrokBotObservation(null, false, Present)), CancellationToken.None).GetAwaiter().GetResult().Outcome,
              GrokBotReconnectRun.RunAsync(gone.Offer, new Steps(Seen(Third)), CancellationToken.None).GetAwaiter().GetResult().Outcome),
@@ -712,8 +725,8 @@ internal static class GrokBotReconnectTests
             // port. The same prompt follows each, stays pressed, never says Reconnect, and closes only once connected.
             var shownBefore = prompt.Message;
             Equal(GrokBotPromptStep.HandOver, prompt.Observe(new(401, false, Present, started.AddMinutes(5)), busy: false), name + ": follows a Grok Bot opened now");
-            Equal((401, true, GrokBotPromptState.CouldNotStart, GrokBotReconnectPolicy.ReopenedText, ("Try again", true, "Not now")),
-                (prompt.Offer.ProcessId, prompt.Pressed, prompt.State, prompt.Message, prompt.Buttons), name + ": the same prompt, pressed, for that Grok Bot");
+            Equal((401, true, GrokBotPromptState.CouldNotStart, GrokBotReconnectPolicy.ReopenedText, ("Try again", true, "Not now"), GrokBotReconnectPolicy.ReopenedTitle),
+                (prompt.Offer.ProcessId, prompt.Pressed, prompt.State, prompt.Message, prompt.Buttons, prompt.Offer.Title), name + ": the same prompt, pressed, for that Grok Bot, titled for it");
             table.Add($"{path} | then another Grok Bot opens | {prompt.State}: \"{prompt.Message}\" {prompt.Buttons}");
             Equal(GrokBotPromptStep.None, prompt.Observe(new(null, false, Present), busy: false), name + ": that Grok Bot closes");
             Equal((true, GrokBotPromptState.CouldNotStart, GrokBotReconnectPolicy.GoneText, ("Open Grok Bot", true, "Not now")),
