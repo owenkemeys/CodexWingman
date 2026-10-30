@@ -88,6 +88,7 @@ public sealed class GrokBotReconnectPolicy
     public const string CouldNotOpenText = "Wingman couldn't reopen Grok Bot.";
     public const string ExitTooLongText = "A Grok Bot update started, but Grok Bot didn't finish closing within 30 seconds, so Wingman didn't reopen it.";
     public const string GoneText = "Grok Bot closed before Wingman could reopen it.";
+    public const string OpeningText = "Wingman is opening Grok Bot…";
     public const string FailedText = "Something went wrong, so Wingman didn't reopen Grok Bot. Details are in Wingman's log.";
 
     private bool wasConnected;
@@ -221,6 +222,19 @@ public sealed class GrokBotReconnectPrompt(GrokBotReconnectOffer offer)
     public GrokBotRelaunch.ClosedProcess? Quit { get; private set; }
     /// <summary>Why Wingman couldn't open Grok Bot again (shown while <see cref="GrokBotPromptState.CouldNotStart"/>).</summary>
     public string? Problem { get; private set; }
+
+    /// <summary>
+    /// The window's text for the current state. "Working…" never shows the reason from before the press: it says Wingman is
+    /// opening Grok Bot after Open Grok Bot, and the prompt's own text after Reconnect.
+    /// </summary>
+    public string Message => State switch
+    {
+        GrokBotPromptState.WaitingForQuit => GrokBotReconnectPolicy.QuitText,
+        GrokBotPromptState.Updating => GrokBotReconnectPolicy.UpdatingText,
+        GrokBotPromptState.CouldNotStart => Problem ?? GrokBotReconnectPolicy.StillRunningText,
+        GrokBotPromptState.Working => lastStep == GrokBotPromptStep.Open ? GrokBotReconnectPolicy.OpeningText : GrokBotReconnectPolicy.PromptText,
+        _ => Problem ?? (Quit is not null ? GrokBotReconnectPolicy.QuitText : GrokBotReconnectPolicy.PromptText),
+    };
 
     /// <summary>The Reconnect button. True: act now. Only from the offered state, so a second press does nothing.</summary>
     public bool Reconnect(bool busy) => Press(GrokBotPromptState.Offered, GrokBotPromptStep.Reconnect, busy);

@@ -398,6 +398,22 @@ internal static class GrokBotReconnectTests
         Equal("Helpers need Grok Bot reopened by Wingman.", GrokBotReconnectPolicy.PromptText, "prompt wording");
         Equal("Close Grok Bot's window. Wingman reopens it.", GrokBotReconnectPolicy.QuitText, "quit wording: on Windows closing the window quits Grok Bot");
         var window = File.ReadAllText(Path.Combine(RepositoryRoot(), "src", "CodexWingman", "GrokBotPromptWindow.cs"));
+        Equal(true, window.Contains("message.Text = prompt.Message;", StringComparison.Ordinal) && window.Split("message.Text").Length == 2,
+            "the window shows the prompt's own text, set in one place");
+        // "Working…" never shows the reason from before the press.
+        var reopening = Waiting();
+        reopening.Finished(new(GrokBotReconnectOutcome.StillRunning, quit));
+        Equal(GrokBotReconnectPolicy.StillRunningText, reopening.Message, "the reason, next to Open Grok Bot");
+        reopening.Open(busy: true);
+        Equal((GrokBotPromptState.Working, GrokBotReconnectPolicy.OpeningText), (reopening.State, reopening.Message), "Working…: Wingman is opening Grok Bot");
+        var again = new GrokBotReconnectPrompt(offer);
+        again.Reconnect(busy: false);
+        again.Finished(new(GrokBotReconnectOutcome.Failed));
+        Equal(GrokBotReconnectPolicy.FailedText, again.Message, "the reason, next to Reconnect");
+        again.Reconnect(busy: true);
+        Equal(GrokBotReconnectPolicy.PromptText, again.Message, "Working… after Reconnect: the prompt's text, not the old reason");
+        var waitingText = Waiting();
+        Equal(GrokBotReconnectPolicy.QuitText, waitingText.Message, "waiting for the quit");
         Equal(true, window.Contains("\"Open Grok Bot\"", StringComparison.Ordinal) && window.Contains("OpenClicked", StringComparison.Ordinal),
             "the window has the Open Grok Bot button");
         Equal(true, window.Contains("openMode = prompt.State == GrokBotPromptState.CouldNotStart;", StringComparison.Ordinal),
