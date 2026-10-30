@@ -1028,13 +1028,6 @@ internal sealed class TrayApplicationContext : ApplicationContext
                 throw new InvalidOperationException("Grok Bot is open, but its Helpers could not be checked.");
             SynchronizeHelpersMenu();
         }
-        catch (OperationCanceledException)
-        {
-            // Reload Helpers (or the deadline) stopped it: never the raw cancel text; a queued reload says nothing more.
-            WingmanLog.Write("grok-bot-repair-stopped", ("reload", reloadPending));
-            grok.SetMenuStatus();
-            if (!reloadPending) MessageBox.Show(RepairStoppedText, "Grok Bot needs attention", MessageBoxButtons.OK, MessageBoxIcon.Warning);
-        }
         catch (Exception error)
         {
             Debug.WriteLine($"[Grok Bot repair] {error}");
@@ -1088,13 +1081,6 @@ internal sealed class TrayApplicationContext : ApplicationContext
             if (grok.CheckFailed)
                 throw new InvalidOperationException("Grok Bot started, but its Helpers could not be checked.");
             SynchronizeHelpersMenu();
-        }
-        catch (OperationCanceledException)
-        {
-            // Before any Yes (or with none to ask): Reload Helpers or the deadline stopped it. Never the raw cancel text.
-            WingmanLog.Write("grok-bot-open-stopped", ("reload", reloadPending));
-            grok.SetMenuStatus();
-            if (!atStartup && !reloadPending) MessageBox.Show(OpenStoppedText, "Grok Bot needs attention", MessageBoxButtons.OK, MessageBoxIcon.Warning);
         }
         catch (Exception error)
         {
@@ -1220,9 +1206,6 @@ internal sealed class TrayApplicationContext : ApplicationContext
         return new(main?.Id, GrokBotLauncher.ConnectedTo(grokLauncher.Port(), main?.Id), GrokBotLauncher.UserIdle(), main?.Started,
             GrokBotLauncher.FullScreenInFront());
     }
-
-    private const string OpenStoppedText = "Wingman stopped opening Grok Bot before it finished. Choose Open window again.";
-    private const string RepairStoppedText = "Wingman stopped repairing Grok Bot before it finished. Choose Repair again.";
 
     /// <summary>Shows the window for the slot's prompt without taking focus, replacing any earlier window.</summary>
     private void ShowGrokPrompt(GrokBotReconnectPrompt prompt)

@@ -251,6 +251,7 @@ internal sealed class GrokBotLauncher(string wingmanDataRoot, Func<IEnumerable<i
             finally { foreach (var process in hooked) process.Dispose(); }
             return new(GrokBotOpenStep.Brought);
         }
+        // Kept for this feature: starting Grok Bot.exe while its installer replaces it could break the very update Wingman reconnects after.
         await ThrowIfUpdateUnderWayAsync(stamp);
         var closed = MainProcess();
         var running = Running();

@@ -684,11 +684,10 @@ internal static class GrokBotReconnectTests
         Equal(true, afterYes.Contains("var prompt = grokPrompts.AfterYes(open.Closed, open.Since, DateTimeOffset.UtcNow);", StringComparison.Ordinal)
             && afterYes.IndexOf("ShowGrokPrompt(prompt);", StringComparison.Ordinal) < afterYes.IndexOf("await ActOnGrokPromptAsync(prompt, GrokBotPromptStep.ApprovedClose, session, deadline.Token);", StringComparison.Ordinal)
             && !afterYes.Contains("MessageBox", StringComparison.Ordinal), "after the Yes the tray shows the prompt, then runs it; no message box");
-        Equal(true, ensure.Contains("catch (OperationCanceledException)", StringComparison.Ordinal) && ensure.Contains("MessageBox.Show(OpenStoppedText,", StringComparison.Ordinal)
-            && !ensure.Contains("\"The operation was canceled", StringComparison.Ordinal), "a stop before any Yes is plain words, never the raw cancel");
+        // Before any Yes nothing changed: Open window and Repair handle a cancel as they always did, with no extra box.
         var repair = tray[tray.IndexOf("private async Task RepairGrokBotAsync", StringComparison.Ordinal)..tray.IndexOf("private async Task EnsureGrokBotReadyAsync", StringComparison.Ordinal)];
-        Equal(true, repair.Contains("catch (OperationCanceledException)", StringComparison.Ordinal) && repair.Contains("MessageBox.Show(RepairStoppedText,", StringComparison.Ordinal),
-            "Repair's stop is plain words too");
+        Equal((false, false, false), (ensure.Contains("catch (OperationCanceledException)", StringComparison.Ordinal), repair.Contains("catch (OperationCanceledException)", StringComparison.Ordinal),
+            tray.Contains("StoppedText =", StringComparison.Ordinal)), "no new stop boxes for Open window or Repair");
 
         // The guide says the same: the prompt keeps saying it is opening or connecting until the Helpers are connected, and
         // every other result after the user acted stays in that prompt with a reason and Open Grok Bot.
