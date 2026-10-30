@@ -1872,7 +1872,7 @@ internal sealed class TrayApplicationContext : ApplicationContext
         }
         if (!value && !exiting && pendingLaunches.Pending > 0)
             uiContext.Post(async _ => await DrainLauncherActivationsAsync(), null);
-        // A Reconnect pressed while busy ("Working…") acts as soon as Wingman is free.
+        // A Reconnect pressed while busy ("Working...") acts as soon as Wingman is free.
         if (!value && !exiting && grokPrompt is not null)
             uiContext.Post(_ => GrokBotReconnectTick(), null);
     }
