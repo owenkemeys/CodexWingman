@@ -1344,38 +1344,40 @@ internal sealed class TrayApplicationContext : ApplicationContext
                 tray.SetBusy(true, status = text);
             if (ReferenceEquals(tray.grokPrompt, prompt)) tray.SyncGrokPromptWindow();
         }
-        public Task<bool> ConnectAsync(bool started, CancellationToken cancellationToken) => tray.ConnectGrokBotAsync(started, owned);
+        public Task<GrokBotConnectResult> ConnectAsync(bool started, CancellationToken cancellationToken) => tray.ConnectGrokBotAsync(started, owned);
     }
 
     /// <summary>
     /// Grok Bot runs with Wingman's port after the prompt's run: waits (up to 60 s) for Wingman to be free, then for Grok
-    /// Bot's window if Wingman just started it, and connects the Helpers. True once they are connected; the prompt shows
-    /// "opening" until then, and says so if it fails. No message box.
+    /// Bot's window if Wingman just started it, and connects the Helpers. Connected once they are; Busy when Wingman stayed
+    /// busy for those 60 s; the prompt shows "opening" until then, and says why if it didn't connect. No message box.
     /// </summary>
-    private async Task<bool> ConnectGrokBotAsync(bool started, CancellationToken? owned)
+    private async Task<GrokBotConnectResult> ConnectGrokBotAsync(bool started, CancellationToken? owned)
     {
-        if (owned is { } token) return await ConnectHelpersAsync(started, token);
+        if (owned is { } token) return Connected(await ConnectHelpersAsync(started, token));
         var free = DateTime.UtcNow + TimeSpan.FromSeconds(60);
         while (busy || initializing)
         {
             if (exiting || DateTime.UtcNow >= free)
             {
                 WingmanLog.Write("grok-bot-reconnect-connect-failed", ("error", "busy"));
-                return false;
+                return exiting ? GrokBotConnectResult.Failed : GrokBotConnectResult.Busy;
             }
             await Task.Delay(500);
         }
-        if (exiting) return false;
+        if (exiting) return GrokBotConnectResult.Failed;
         using var deadline = new CancellationTokenSource(TimeSpan.FromMinutes(2));
         activeInteractiveOperation = deadline;
         SetBusy(true, "Reconnecting Grok Bot...");
-        try { return await ConnectHelpersAsync(started, deadline.Token); }
+        try { return Connected(await ConnectHelpersAsync(started, deadline.Token)); }
         finally
         {
             if (ReferenceEquals(activeInteractiveOperation, deadline)) activeInteractiveOperation = null;
             SetBusy(false);
         }
     }
+
+    private static GrokBotConnectResult Connected(bool connected) => connected ? GrokBotConnectResult.Connected : GrokBotConnectResult.Failed;
 
     private async Task<bool> ConnectHelpersAsync(bool started, CancellationToken cancellationToken)
     {

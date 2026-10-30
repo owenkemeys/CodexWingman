@@ -119,6 +119,7 @@ public sealed class GrokBotReconnectPolicy
     public const string OpenedNotConnectedText = "Wingman opened Grok Bot, but couldn't connect its Helpers. Details are in Wingman's log.";
     public const string ConnectingText = "Wingman is connecting Grok Bot's Helpers...";
     /// <summary>Grok Bot exited while Wingman was connecting its Helpers, or after that failed.</summary>
+    public const string ConnectBusyText = "Wingman was busy, so it didn't connect Grok Bot's Helpers.";
     public const string ClosedBeforeConnectText = "Grok Bot closed before Wingman could connect its Helpers.";
 
     private bool wasConnected;
@@ -246,11 +247,13 @@ public sealed record GrokBotPromptReason(string WhileOpen, string WhenGone, stri
 
     /// <summary>
     /// The Helpers didn't connect: open, to the exact Grok Bot Wingman started (<paramref name="openedByWingman"/>) or to
-    /// another; gone, it closed meanwhile; not seen, neutral words.
+    /// another; gone, it closed meanwhile; not seen, neutral words. When Wingman stayed busy (<paramref name="busy"/>), that
+    /// is the reason, whether or not Grok Bot is still open.
     /// </summary>
-    public static GrokBotPromptReason NotConnected(bool openedByWingman) => new(
-        openedByWingman ? GrokBotReconnectPolicy.OpenedNotConnectedText : GrokBotReconnectPolicy.ConnectFailedText,
-        GrokBotReconnectPolicy.ClosedBeforeConnectText, GrokBotReconnectPolicy.NotConnectedUnseenText);
+    public static GrokBotPromptReason NotConnected(bool openedByWingman, bool busy = false) => busy
+        ? new(GrokBotReconnectPolicy.ConnectBusyText, GrokBotReconnectPolicy.ClosedBeforeConnectText, GrokBotReconnectPolicy.ConnectBusyText)
+        : new(openedByWingman ? GrokBotReconnectPolicy.OpenedNotConnectedText : GrokBotReconnectPolicy.ConnectFailedText,
+            GrokBotReconnectPolicy.ClosedBeforeConnectText, GrokBotReconnectPolicy.NotConnectedUnseenText);
 }
 
 /// <summary>What the prompt window shows.</summary>
@@ -564,7 +567,7 @@ public sealed class GrokBotReconnectPrompt(GrokBotReconnectOffer offer)
             // The Grok Bot Wingman was connecting, still open, is the prompt's own from now on, so a Grok Bot Wingman opened
             // itself never reads as opened without Wingman; the words follow it if it closes. "Wingman opened Grok Bot" only
             // for the exact process Wingman started; when Wingman couldn't look, words that guess neither way.
-            var why = GrokBotPromptReason.NotConnected(result.Started is { } started && now?.Process == started);
+            var why = GrokBotPromptReason.NotConnected(result.Started is { } started && now?.Process == started, result.WingmanBusy);
             if (now?.Process is { } open)
             {
                 Follow(open, why);
@@ -684,8 +687,17 @@ public enum GrokBotReconnectOutcome
     NotClosed,
 }
 
-/// <summary>An outcome, the proof that the offer's process quit once it has, and the exact process Wingman started, if it started one.</summary>
-public sealed record GrokBotReconnectResult(GrokBotReconnectOutcome Outcome, GrokBotRelaunch.ClosedProcess? Quit = null, GrokBotProcess? Started = null);
+/// <summary>
+/// An outcome, the proof that the offer's process quit once it has, and the exact process Wingman started, if it started one.
+/// <see cref="WingmanBusy"/>: the Helpers didn't connect only because Wingman stayed busy.
+/// </summary>
+public sealed record GrokBotReconnectResult(GrokBotReconnectOutcome Outcome, GrokBotRelaunch.ClosedProcess? Quit = null, GrokBotProcess? Started = null)
+{
+    public bool WingmanBusy { get; init; }
+}
+
+/// <summary>How connecting the Helpers ended: connected; failed; or not tried, because Wingman stayed busy.</summary>
+public enum GrokBotConnectResult { Connected, Failed, Busy }
 
 /// <summary>What the reconnect needs from the tray, so its order of checks can be tested.</summary>
 public interface IGrokBotReconnectSteps
@@ -709,8 +721,8 @@ public interface IGrokBotReconnectSteps
     void Updating(GrokBotRelaunch.ClosedProcess quit);
     /// <summary>Waits (bounded) for the update to finish, then opens Grok Bot with the port (<see cref="GrokBotRelaunch.AfterUpdateAsync"/>).</summary>
     Task<GrokBotRelaunchResult> AfterUpdateAsync(GrokBotRelaunch.ClosedProcess quit, CancellationToken cancellationToken);
-    /// <summary>Grok Bot runs with Wingman's port (<paramref name="started"/>: Wingman just started it): connect its Helpers. True once they are.</summary>
-    Task<bool> ConnectAsync(bool started, CancellationToken cancellationToken);
+    /// <summary>Grok Bot runs with Wingman's port (<paramref name="started"/>: Wingman just started it): connect its Helpers (<see cref="GrokBotConnectResult"/>).</summary>
+    Task<GrokBotConnectResult> ConnectAsync(bool started, CancellationToken cancellationToken);
     /// <summary>Open window or Repair after the Yes and the close request: <see cref="GrokBotRelaunch.AfterCloseRequestAsync"/>.</summary>
     Task<GrokBotRelaunchResult> AfterApprovedCloseAsync(GrokBotProcess? closed, GrokBotExecutableStamp? since, CancellationToken cancellationToken);
     /// <summary>True once Windows began to shut down or sign out during this run.</summary>

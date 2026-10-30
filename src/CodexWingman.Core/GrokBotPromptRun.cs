@@ -13,8 +13,11 @@ public interface IGrokBotPromptHost
     IGrokBotProcessControl Control();
     /// <summary>The prompt's state changed: show it.</summary>
     void Changed();
-    /// <summary>Connects the Helpers to Grok Bot running with Wingman's port. True once they are connected; false (or a throw) otherwise.</summary>
-    Task<bool> ConnectAsync(bool started, CancellationToken cancellationToken);
+    /// <summary>
+    /// Connects the Helpers to Grok Bot running with Wingman's port: Connected once they are; Busy when Wingman stayed busy
+    /// and so didn't try; Failed (or a throw) otherwise.
+    /// </summary>
+    Task<GrokBotConnectResult> ConnectAsync(bool started, CancellationToken cancellationToken);
 }
 
 /// <summary>
@@ -83,7 +86,7 @@ public sealed class GrokBotPromptSteps(GrokBotReconnectPrompt prompt, IGrokBotPr
         return result;
     }
 
-    public Task<bool> ConnectAsync(bool started, CancellationToken cancellationToken) => host.ConnectAsync(started, cancellationToken);
+    public Task<GrokBotConnectResult> ConnectAsync(bool started, CancellationToken cancellationToken) => host.ConnectAsync(started, cancellationToken);
 
     /// <summary>
     /// Open window or Repair after the Yes and the close request: up to <c>Close</c> for Grok Bot to close; an update that
@@ -154,14 +157,18 @@ public static class GrokBotPromptRun
         ShowSafely(prompt, steps);
         // Grok Bot runs with the port: connect its Helpers, also when the user closed the prompt meanwhile.
         if (result.Outcome is not (GrokBotReconnectOutcome.Relaunched or GrokBotReconnectOutcome.Adopted or GrokBotReconnectOutcome.AlreadyConnected)) return result;
-        bool connected;
+        GrokBotConnectResult connected;
         try { connected = await steps.ConnectAsync(result.Outcome == GrokBotReconnectOutcome.Relaunched, CancellationToken.None); }
         catch (Exception error)
         {
             WingmanLog.Write("grok-bot-reconnect-connect-failed", ("process", prompt.Offer.ProcessId), ("error", error.GetType().Name));
-            connected = false;
+            connected = GrokBotConnectResult.Failed;
         }
-        result = result with { Outcome = connected ? GrokBotReconnectOutcome.Connected : GrokBotReconnectOutcome.NotConnected };
+        result = result with
+        {
+            Outcome = connected == GrokBotConnectResult.Connected ? GrokBotReconnectOutcome.Connected : GrokBotReconnectOutcome.NotConnected,
+            WingmanBusy = connected == GrokBotConnectResult.Busy,
+        };
         WingmanLog.Write("grok-bot-reconnect-outcome", ("process", prompt.Offer.ProcessId), ("step", step), ("outcome", result.Outcome));
         prompt.Finished(result, ObserveSafely(steps));
         ShowSafely(prompt, steps);

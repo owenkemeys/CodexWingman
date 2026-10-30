@@ -456,6 +456,8 @@ internal static class GrokBotReconnectTests
         Equal((false, true, false), (connectPart.Contains("MessageBox", StringComparison.Ordinal),
             connectPart.Contains("=> tray.ConnectGrokBotAsync(started, owned);", StringComparison.Ordinal), trayText.Contains("ConnectRelaunchedGrokBotAsync", StringComparison.Ordinal)),
             "connecting the Helpers after the prompt's run shows no message box: a failure is the prompt's reason");
+        Equal(true, connectPart.Contains("(\"error\", \"busy\"));\n                return exiting ? GrokBotConnectResult.Failed : GrokBotConnectResult.Busy;", StringComparison.Ordinal),
+            "the tray's connect reports Wingman staying busy as Busy, so the prompt says Wingman was busy");
         var exitTooLong = Waiting();
         exitTooLong.Finished(new(GrokBotReconnectOutcome.ExitTooLong), null);
         Equal((GrokBotPromptState.CouldNotStart, GrokBotReconnectPolicy.ExitTooLongText), (exitTooLong.State, exitTooLong.Problem),
@@ -845,6 +847,16 @@ internal static class GrokBotReconnectTests
         var lastHost = new FakeHost(new FakeControl(new FakeProcess(target, []) { Exited = true }), reopenedWithPort) { Connects = false, ShowThrowsIn = GrokBotPromptState.CouldNotStart };
         Equal((GrokBotReconnectOutcome.NotConnected, GrokBotPromptState.CouldNotStart), (Act(showFailsLast, GrokBotPromptStep.ApprovedClose, lastHost).Outcome, showFailsLast.State),
             "showing the last word throws: the run still ends with it, not on Working");
+        // The connect fails only because Wingman stayed busy: the prompt says that, with Try again while Grok Bot is open.
+        var busyConnect = GrokBotReconnectPrompt.AfterYes(target, null, T0);
+        var busyHost = new FakeHost(new FakeControl(new FakeProcess(target, []) { Exited = true }), reopenedWithPort) { ConnectBusy = true };
+        var busyResult = Act(busyConnect, GrokBotPromptStep.ApprovedClose, busyHost);
+        Equal((GrokBotReconnectOutcome.NotConnected, true, GrokBotPromptState.CouldNotStart, GrokBotReconnectPolicy.ConnectBusyText, ("Try again", true, "Not now")),
+            (busyResult.Outcome, busyResult.WingmanBusy, busyConnect.State, busyConnect.Message, busyConnect.Buttons), "connect busy, Grok Bot open: Wingman was busy, Try again");
+        Equal((GrokBotReconnectPolicy.ClosedBeforeConnectText, GrokBotReconnectPolicy.ConnectBusyText),
+            (GrokBotReconnectPrompt.Ending(GrokBotPromptReason.NotConnected(true, busy: true), GrokBotHeldState.Gone).Text,
+             GrokBotReconnectPrompt.Ending(GrokBotPromptReason.NotConnected(false, busy: true), GrokBotHeldState.Unknown).Text),
+            "connect busy: gone, it closed before the connect; not seen, Wingman was busy");
         var works = Run(new FakeControl(new FakeProcess(target, []) { Exited = true }));
         Equal((GrokBotReconnectOutcome.Connected, GrokBotPromptState.Closed, "connected", true), (works.Result.Outcome, works.Prompt.State, works.Prompt.ClosedBecause,
             works.Host.Log.Contains("changed Connecting") && works.Host.Log.Contains("connect True")), "reopened and connected: says so until then, then closes");
@@ -923,11 +935,14 @@ internal static class GrokBotReconnectTests
             if (Prompt?.State is { } state && state == ShowThrowsIn) throw new InvalidOperationException("window gone");
         }
         public bool Connects = true;
+        /// <summary>Wingman stays busy, so the connect isn't tried.</summary>
+        public bool ConnectBusy;
         public Exception? ConnectThrows;
-        public Task<bool> ConnectAsync(bool started, CancellationToken cancellationToken)
+        public Task<GrokBotConnectResult> ConnectAsync(bool started, CancellationToken cancellationToken)
         {
             Log.Add("connect " + started);
-            return ConnectThrows is { } error ? throw error : Task.FromResult(Connects);
+            return ConnectThrows is { } error ? throw error
+                : Task.FromResult(ConnectBusy ? GrokBotConnectResult.Busy : Connects ? GrokBotConnectResult.Connected : GrokBotConnectResult.Failed);
         }
     }
 
@@ -1011,10 +1026,11 @@ internal static class GrokBotReconnectTests
         }
         public bool Connects = true;
         public Exception? ConnectThrows;
-        public Task<bool> ConnectAsync(bool started, CancellationToken cancellationToken)
+        public Task<GrokBotConnectResult> ConnectAsync(bool started, CancellationToken cancellationToken)
         {
             Log.Add("connect " + started);
-            return ConnectThrows is { } error ? Task.FromException<bool>(error) : Task.FromResult(Connects);
+            return ConnectThrows is { } error ? Task.FromException<GrokBotConnectResult>(error)
+                : Task.FromResult(Connects ? GrokBotConnectResult.Connected : GrokBotConnectResult.Failed);
         }
         public bool Ending;
         public bool SessionEnding => Ending;
