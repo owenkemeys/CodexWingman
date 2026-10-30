@@ -239,6 +239,22 @@ internal static class GrokBotReconnectTests
         Equal(true, busy.State == GrokBotPromptState.Working && busy.Observe(Seen(Second), busy: false) == GrokBotPromptStep.Reconnect,
             "busy again by then: kept, acts when free");
 
+        // Kept while busy for up to a minute on the tray's clock; then the prompt says Wingman was busy, with its button.
+        var kept = new GrokBotReconnectPrompt(offer);
+        kept.Reconnect(busy: true);
+        Equal(None, kept.Observe(Seen(Second), busy: true, T0), "kept: the clock starts");
+        Equal((None, GrokBotPromptState.Working), (kept.Observe(Seen(Second), busy: true, T0.AddSeconds(59)), kept.State), "kept for under a minute");
+        Equal((None, GrokBotPromptState.CouldNotStart, GrokBotReconnectPolicy.BusyTooLongText, ("Open Grok Bot", true, "Not now")),
+            (kept.Observe(Seen(Second), busy: true, T0.AddSeconds(60)), kept.State, kept.Problem, kept.Buttons), "busy for a minute: says so");
+        var freed = new GrokBotReconnectPrompt(offer);
+        freed.Reconnect(busy: true);
+        freed.Observe(Seen(Second), busy: true, T0);
+        Equal(GrokBotPromptStep.Reconnect, freed.Observe(Seen(Second), busy: false, T0.AddSeconds(30)), "free in time: acts");
+        freed.Finished(new(GrokBotReconnectOutcome.Busy));
+        Equal((None, GrokBotPromptState.Working), (freed.Observe(Seen(Second), busy: true, T0.AddSeconds(80)), freed.State), "kept again: a new minute");
+        Equal(true, File.ReadAllText(Path.Combine(RepositoryRoot(), "src", "CodexWingman", "TrayApplicationContext.cs"))
+            .Contains("prompt.Observe(observation, busy || initializing, DateTimeOffset.UtcNow)", StringComparison.Ordinal), "the tray passes its clock");
+
         var gone = new GrokBotReconnectPrompt(offer);
         gone.Reconnect(busy: true);
         // Pressed: the run (which re-checks the process and starts nothing) says what became of it; never a silent close.

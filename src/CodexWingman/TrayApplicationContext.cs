@@ -1124,7 +1124,7 @@ internal sealed class TrayApplicationContext : ApplicationContext
             var observation = ObserveGrokBot();
             if (grokPrompt is { } prompt)
             {
-                switch (prompt.Observe(observation, busy || initializing))
+                switch (prompt.Observe(observation, busy || initializing, DateTimeOffset.UtcNow))
                 {
                     case GrokBotPromptStep.HandOver:
                         // The same prompt now follows the Grok Bot opened after the press; it is that one's only prompt.

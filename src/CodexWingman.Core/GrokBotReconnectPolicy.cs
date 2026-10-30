@@ -285,6 +285,8 @@ public sealed class GrokBotReconnectPrompt(GrokBotReconnectOffer offer)
 
     private string connectingText = GrokBotReconnectPolicy.ConnectingText;
     private GrokBotProcess? connectFailedFor;
+    /// <summary>When the press now kept while Wingman is busy was first kept (see <see cref="Observe"/>).</summary>
+    private DateTimeOffset? keptSince;
 
     /// <summary>
     /// Open window or Repair after the user's Yes: the prompt for that run, already pressed and working, so every result
@@ -332,7 +334,11 @@ public sealed class GrokBotReconnectPrompt(GrokBotReconnectOffer offer)
     /// Grok Bot that came up with Wingman's port gets its Helpers connected (<see cref="GrokBotPromptStep.Connect"/>), and
     /// this same prompt follows another Grok Bot (<see cref="GrokBotPromptStep.HandOver"/>), with [Open Grok Bot]. Returns a step kept while Wingman was busy, once it is free.
     /// </summary>
-    public GrokBotPromptStep Observe(GrokBotObservation current, bool busy)
+    /// <param name="now">
+    /// The tray's clock: a press kept while Wingman is busy waits for it up to <see cref="GrokBotRelaunchLimits.Busy"/>, then
+    /// the prompt says Wingman was busy (<see cref="GrokBotReconnectOutcome.BusyTooLong"/>'s reason) with its button.
+    /// </param>
+    public GrokBotPromptStep Observe(GrokBotObservation current, bool busy, DateTimeOffset? now = null)
     {
         if (State == GrokBotPromptState.Closed) return GrokBotPromptStep.None;
         if (!Pressed)
@@ -367,7 +373,24 @@ public sealed class GrokBotReconnectPrompt(GrokBotReconnectOffer offer)
             goneText = null;
             return GrokBotPromptStep.None;
         }
-        if (State != GrokBotPromptState.Working || pending == GrokBotPromptStep.None || busy) return GrokBotPromptStep.None;
+        if (State != GrokBotPromptState.Working || pending == GrokBotPromptStep.None)
+        {
+            keptSince = null;
+            return GrokBotPromptStep.None;
+        }
+        if (busy)
+        {
+            if (now is not { } at) return GrokBotPromptStep.None;
+            keptSince ??= at;
+            if (at - keptSince < GrokBotRelaunchLimits.Default.Busy) return GrokBotPromptStep.None;
+            keptSince = null;
+            pending = GrokBotPromptStep.None;
+            Problem = GrokBotReconnectPolicy.BusyTooLongText;
+            goneText = null;
+            State = GrokBotPromptState.CouldNotStart;
+            return GrokBotPromptStep.None;
+        }
+        keptSince = null;
         var step = pending;
         pending = GrokBotPromptStep.None;
         return step;
