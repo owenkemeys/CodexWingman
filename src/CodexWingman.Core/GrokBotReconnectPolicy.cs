@@ -25,23 +25,29 @@ public interface IGrokBotFacts
 }
 
 /// <summary>
-/// Every Grok Bot Wingman starts, whichever path started it (a prompt's run or Open window), recorded the moment Windows
-/// started it, so no prompt ever offers one of them as opened again without Wingman.
+/// The one way Wingman starts Grok Bot, whichever path starts it (a prompt's run or Open window): <see cref="Start"/> runs the
+/// start and records the Grok Bot it started before anything else hears of it, so no prompt ever offers one of them as opened
+/// again without Wingman. There is no start without the record.
 /// </summary>
 public sealed class GrokBotStarts
 {
     private const int Kept = 64;
     private readonly HashSet<GrokBotProcess> started = [];
 
-    /// <summary>Records <paramref name="process"/> as started by Wingman, then tells <paramref name="heard"/> (when given).</summary>
-    public void Started(GrokBotProcess process, Action<GrokBotProcess>? heard)
+    /// <summary>
+    /// Runs <paramref name="start"/> (Windows starting Grok Bot), records the Grok Bot it started, then tells
+    /// <paramref name="heard"/> (when given). A start that throws started nothing, so nothing is recorded or told.
+    /// </summary>
+    public GrokBotProcess Start(Func<GrokBotProcess> start, Action<GrokBotProcess>? heard)
     {
+        var process = start();
         lock (started)
         {
             if (started.Count >= Kept) started.Clear();
             started.Add(process);
         }
         heard?.Invoke(process);
+        return process;
     }
 
     public bool Contains(GrokBotProcess process)

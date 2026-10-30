@@ -1877,7 +1877,7 @@ internal static class GrokBotReconnectTests
         }
         var launcher = File.ReadAllText(Path.Combine(RepositoryRoot(), "src", "CodexWingman", "GrokBotLauncher.cs"));
         var start = launcher.IndexOf("Process.Start(start)", StringComparison.Ordinal);
-        var heard = launcher.IndexOf("Starts.Started(identity, started);", StringComparison.Ordinal);
+        var heard = launcher.IndexOf("}, started);", start, StringComparison.Ordinal);
         Equal(true, start > 0 && heard > start && heard < launcher.IndexOf("AppRuntimePortFile.Write(RuntimePath, port);", start, StringComparison.Ordinal)
             && launcher.Contains("public GrokBotProcess? Start(GrokBotRelaunch.ClosedProcess proof) => launcher.StartWithPort(started);", StringComparison.Ordinal),
             "the real start records Grok Bot the moment it started, before writing the port file");
@@ -1891,21 +1891,26 @@ internal static class GrokBotReconnectTests
     {
         var started = new DateTime(2026, 1, 1, 9, 0, 0, DateTimeKind.Utc);
         var facts = new Facts();
-        // Open window's start: recorded with no one else to tell; a prompt's run is told after the record.
-        facts.Starts.Started(new GrokBotProcess(Second, started), null);
+        // Open window's start: no one else to tell, and still recorded; a prompt's run is told after the record.
+        Equal(Second, facts.Starts.Start(() => new GrokBotProcess(Second, started), null).Id, "the start's Grok Bot is returned");
         var heard = new List<bool>();
         var told = new GrokBotProcess(Third + 5, started);
-        facts.Starts.Started(told, process => heard.Add(facts.Starts.Contains(process)));
+        facts.Starts.Start(() => told, process => heard.Add(facts.Starts.Contains(process)));
         Equal("True", string.Join(",", heard), "a prompt's run hears of its start once, after it is recorded");
+        var threw = false;
+        try { facts.Starts.Start(() => throw new InvalidOperationException("Grok Bot did not start."), _ => heard.Add(false)); }
+        catch (InvalidOperationException) { threw = true; }
+        Equal((true, "True"), (threw, string.Join(",", heard)), "a start that fails records and tells nothing");
         Equal(true, facts.Starts.Contains(new GrokBotProcess(Second, started)), "a later start keeps the earlier ones");
         var lost = 0;
         for (var id = 0; id < 200; id++)
         {
-            facts.Starts.Started(new GrokBotProcess(5000 + id, started), null);
+            var next = new GrokBotProcess(5000 + id, started);
+            facts.Starts.Start(() => next, null);
             if (!facts.Starts.Contains(new GrokBotProcess(5000 + id, started))) lost++;
         }
         Equal(0, lost, "the latest start is always kept");
-        facts.Starts.Started(new GrokBotProcess(Second, started), null);
+        facts.Starts.Start(() => new GrokBotProcess(Second, started), null);
         var policy = new GrokBotReconnectPolicy();
         policy.Observe(new GrokBotObservation(First, true, Present, started.AddHours(-1)), T0, facts);
         GrokBotReconnectOffer? offer = null;
@@ -1917,10 +1922,18 @@ internal static class GrokBotReconnectTests
         Equal(Third, offer?.ProcessId, "a Grok Bot Wingman didn't start is prompted as before");
         var launcher = File.ReadAllText(Path.Combine(RepositoryRoot(), "src", "CodexWingman", "GrokBotLauncher.cs"));
         var start = launcher.IndexOf("Process.Start(start)", StringComparison.Ordinal);
-        var recorded = launcher.IndexOf("Starts.Started(identity, started);", StringComparison.Ordinal);
-        Equal(true, start > 0 && recorded > start && recorded < launcher.IndexOf("AppRuntimePortFile.Write(RuntimePath, port);", start, StringComparison.Ordinal)
-            && launcher.Split("Process.Start(").Length - 1 == 1 && launcher.Contains("public GrokBotStarts Starts { get; } = new();", StringComparison.Ordinal),
-            "the one start Wingman makes is recorded the moment it started, before writing the port file, in the Starts the policy reads");
+        // The launcher's one Process.Start is the start Starts.Start runs, with nothing around it that could skip the record.
+        const string OneStart = """
+                    var identity = Starts.Start(() =>
+                    {
+                        using var process = Process.Start(start) ?? throw new InvalidOperationException("Grok Bot did not start.");
+                        return new GrokBotProcess(process.Id, StartedUtc(process));
+                    }, started);
+                    AppRuntimePortFile.Write(RuntimePath, port);
+            """;
+        Equal(true, launcher.Contains(OneStart.Replace("\r\n", "\n"), StringComparison.Ordinal) && launcher.Split("Process.Start(").Length - 1 == 1
+            && launcher.Split("Starts.Start(").Length - 1 == 1 && launcher.Contains("public GrokBotStarts Starts { get; } = new();", StringComparison.Ordinal),
+            "the one start Wingman makes is Starts.Start, always, before writing the port file, in the Starts the policy reads");
     }
 
     /// <summary>

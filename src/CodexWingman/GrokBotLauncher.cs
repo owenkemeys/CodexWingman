@@ -503,10 +503,11 @@ internal sealed class GrokBotLauncher(string wingmanDataRoot, Func<IEnumerable<i
             WorkingDirectory = Path.GetDirectoryName(Executable)!,
         };
         foreach (var argument in GrokBotLaunchPolicy.Arguments(port)) start.ArgumentList.Add(argument);
-        GrokBotProcess identity;
-        using (var process = Process.Start(start) ?? throw new InvalidOperationException("Grok Bot did not start."))
-            identity = new GrokBotProcess(process.Id, StartedUtc(process));
-        Starts.Started(identity, started);
+        var identity = Starts.Start(() =>
+        {
+            using var process = Process.Start(start) ?? throw new InvalidOperationException("Grok Bot did not start.");
+            return new GrokBotProcess(process.Id, StartedUtc(process));
+        }, started);
         AppRuntimePortFile.Write(RuntimePath, port);
         WingmanLog.Write("grok-bot-start", ("port", port));
         return identity;
