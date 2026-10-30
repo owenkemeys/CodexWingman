@@ -461,13 +461,9 @@ public sealed class GrokBotReconnectPrompt(GrokBotReconnectOffer offer)
             State = GrokBotPromptState.Connecting;
             return GrokBotPromptStep.Connect;
         }
-        if ((State == GrokBotPromptState.CouldNotStart || Quit is not null) && current.Process is { } other && other != Offer.Target)
-        {
-            // Another Grok Bot runs now (opened by the user, or an installer) after the quit, or while the prompt says why it
-            // couldn't reopen Grok Bot (a Reconnect kept while busy runs, and re-checks, first): this same prompt follows it.
-            Follow(other, GrokBotPromptReason.For(GrokBotReconnectOutcome.Reopened), GrokBotFollowed.WithoutWingman);
-            return GrokBotPromptStep.HandOver;
-        }
+        // Another Grok Bot runs now (opened by the user, or an installer) after the quit, or while the prompt says why it
+        // couldn't reopen Grok Bot (a Reconnect kept while busy runs, and re-checks, first): this same prompt follows it.
+        if ((State == GrokBotPromptState.CouldNotStart || Quit is not null) && HandOver(current, handOverAs)) return GrokBotPromptStep.HandOver;
         // Between runs the words and the button follow the held Grok Bot: once it has closed, they say so (Ending), and a
         // press kept while busy names the step it will take for it (WorkingText).
         if (State is GrokBotPromptState.CouldNotStart or GrokBotPromptState.Working) Held = HeldIn(current);
@@ -490,6 +486,30 @@ public sealed class GrokBotReconnectPrompt(GrokBotReconnectOffer offer)
         pending = GrokBotPromptStep.None;
         return step;
     }
+
+    /// <summary>
+    /// The one hand-over rule, for the end of a run and for every check between runs: when another Grok Bot than the held
+    /// one runs, the prompt follows it, with the reason of <paramref name="why"/> (Replaced keeps its own; every other
+    /// result says Grok Bot was opened again without Wingman, titled for an update after UpdatedAndReopened). The held Grok Bot is the one Wingman
+    /// started, once it has (see <see cref="Finished"/>), so that one is never handed over.
+    /// </summary>
+    private bool HandOver(GrokBotObservation? current, GrokBotReconnectOutcome why)
+    {
+        var updated = why == GrokBotReconnectOutcome.UpdatedAndReopened;
+        var reason = why == GrokBotReconnectOutcome.Replaced ? why : GrokBotReconnectOutcome.Reopened;
+        // Replaced, but Wingman couldn't look: a later check follows the replacement with the replaced words.
+        handOverAs = current is null ? reason : GrokBotReconnectOutcome.Reopened;
+        if (current?.Process is not { } other || other == Offer.Target) return false;
+        Follow(other, GrokBotPromptReason.For(reason), updated ? GrokBotFollowed.AfterUpdate : GrokBotFollowed.WithoutWingman);
+        handOverAs = GrokBotReconnectOutcome.Reopened;
+        return true;
+    }
+
+    /// <summary>
+    /// The reason a later check hands over with: Replaced while the replacement isn't followed yet (the run's last look
+    /// failed), so its words stay right; otherwise Reopened.
+    /// </summary>
+    private GrokBotReconnectOutcome handOverAs = GrokBotReconnectOutcome.Reopened;
 
     /// <summary>
     /// The one way the prompt moves to another Grok Bot: the same prompt, still pressed, now for <paramref name="process"/>,
@@ -593,14 +613,11 @@ public sealed class GrokBotReconnectPrompt(GrokBotReconnectOffer offer)
             }
             return;
         }
-        if (outcome is GrokBotReconnectOutcome.Reopened or GrokBotReconnectOutcome.UpdatedAndReopened or GrokBotReconnectOutcome.Replaced
-            && now?.Process is { } reopened && reopened != Offer.Target)
+        // Every other staying result: when another Grok Bot already runs, the same hand-over rule as the next check follows
+        // it now, so the words and the button don't change a moment later. After an update the user's quit started, it goes
+        // straight on to asking for the quit, since the user already chose to reconnect.
+        if (HandOver(now, outcome))
         {
-            // Opened again without Wingman, or the one the user chose replaced: the same prompt follows that Grok Bot, with
-            // the reason it already has, so the next look doesn't hand over again and change the words. After an update the
-            // user's quit started, it goes straight on to asking for the quit, since the user already chose to reconnect.
-            Follow(reopened, GrokBotPromptReason.For(outcome),
-                outcome == GrokBotReconnectOutcome.UpdatedAndReopened ? GrokBotFollowed.AfterUpdate : GrokBotFollowed.WithoutWingman);
             if (outcome == GrokBotReconnectOutcome.UpdatedAndReopened)
             {
                 lastStep = GrokBotPromptStep.Reconnect;

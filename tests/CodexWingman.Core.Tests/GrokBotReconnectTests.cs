@@ -279,6 +279,24 @@ internal static class GrokBotReconnectTests
             "replaced, the replacement open: the prompt follows it and keeps one steady text");
         replacedNow.Observe(Seen(null), busy: false);
         Equal((GrokBotReconnectPolicy.ReplacedText, ("Open Grok Bot", true, "Not now")), (replacedNow.Problem, replacedNow.Buttons), "and once it closes: didn't reopen it, Open Grok Bot");
+        // Replaced, but Wingman couldn't look: the next check follows the replacement with the replaced words, not "opened again".
+        var replacedBlind = new GrokBotReconnectPrompt(offer);
+        replacedBlind.Reconnect(busy: false);
+        replacedBlind.Finished(new(GrokBotReconnectOutcome.Replaced), null);
+        Equal((GrokBotPromptStep.HandOver, Third, "Another Grok Bot replaced the one you chose, so Grok Bot is still open.", ("Try again", true, "Not now")),
+            (replacedBlind.Observe(Seen(Third), busy: false), replacedBlind.Offer.ProcessId, replacedBlind.Problem, replacedBlind.Buttons),
+            "replaced after a blind last look: the next check follows the replacement and still says it replaced the one you chose");
+        // One hand-over rule: a run that ends while another Grok Bot already runs follows it at once, as the next check would.
+        foreach (var ending in new[] { GrokBotReconnectOutcome.Stopped, GrokBotReconnectOutcome.Crashed, GrokBotReconnectOutcome.Gone, GrokBotReconnectOutcome.StillRunning,
+                     GrokBotReconnectOutcome.UpdateTooLong, GrokBotReconnectOutcome.BusyTooLong, GrokBotReconnectOutcome.SessionEnding })
+        {
+            var follows = new GrokBotReconnectPrompt(offer);
+            follows.Reconnect(busy: false);
+            follows.Finished(new(ending), Seen(Third));
+            var atEnd = (follows.Offer.ProcessId, follows.Problem, follows.Buttons);
+            Equal((Third, GrokBotReconnectPolicy.ReopenedText, ("Try again", true, "Not now")), atEnd, ending + " while another Grok Bot runs: follows it at the run's end");
+            Equal((None, atEnd), (follows.Observe(Seen(Third), busy: false), (follows.Offer.ProcessId, follows.Problem, follows.Buttons)), ending + ": the next check changes nothing");
+        }
         // The title follows the Grok Bot the prompt holds: one opened without Wingman says so, one opened by its update says
         // that, and the Grok Bot Wingman was connecting keeps the prompt's own title.
         foreach (var (outcome, title) in new[] { (GrokBotReconnectOutcome.Reopened, GrokBotReconnectPolicy.ReopenedTitle),
@@ -686,8 +704,17 @@ internal static class GrokBotReconnectTests
                 case GrokBotPromptState.CouldNotStart:
                     // A Grok Bot replaced at the press ends the run before any wait a stop could interrupt.
                     Equal(true, ending is not ("Wingman stops" or "shutdown") || path == Replaced || new[] { GrokBotReconnectOutcome.Stopped, GrokBotReconnectOutcome.SessionEnding }.Any(stop =>
-                            prompt.Problem == GrokBotPromptReason.For(stop).WhileOpen || prompt.Problem == GrokBotPromptReason.For(stop).WhenGone),
-                        name + ": a stop says Wingman stopped");
+                            prompt.Problem == GrokBotPromptReason.For(stop).WhileOpen || prompt.Problem == GrokBotPromptReason.For(stop).WhenGone)
+                        || prompt.Problem == GrokBotReconnectPolicy.ReopenedText && prompt.Offer.Target == steps.LastSeen?.Process,
+                        name + ": a stop says Wingman stopped, or that another Grok Bot was opened, once the prompt follows it");
+                    // One hand-over rule for the run's end and the next check: a check that sees what the run's last look saw
+                    // changes neither the words nor the button.
+                    if (steps.LastSeen is { Connected: false } lastLook)
+                    {
+                        var ended = (prompt.Problem, prompt.Buttons, prompt.Offer.Title, prompt.Offer.Target);
+                        Equal((GrokBotPromptStep.None, ended), (prompt.Observe(lastLook, busy: false), (prompt.Problem, prompt.Buttons, prompt.Offer.Title, prompt.Offer.Target)),
+                            name + ": the next check, seeing the same Grok Bot, changes nothing");
+                    }
                     // The words and the button come from Wingman's last look at the Grok Bot the prompt holds, never from the result.
                     var held = steps.LastSeen is not { } last ? GrokBotHeldState.Unknown
                         : last.Process == prompt.Offer.Target ? GrokBotHeldState.Open : GrokBotHeldState.Gone;
