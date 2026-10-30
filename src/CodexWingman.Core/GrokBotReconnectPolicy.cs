@@ -600,6 +600,13 @@ public sealed class GrokBotReconnectPrompt(GrokBotReconnectOffer offer)
         if (State == GrokBotPromptState.Closed) return;
         // A quit's proof that Wingman used to start a Grok Bot (Started) is spent: that start is the prompt's Grok Bot now.
         if (result.Quit is not null && result.Started is null) Quit ??= result.Quit;
+        // An error or Wingman's stop after Wingman started Grok Bot: that Grok Bot is the prompt's own, and the Helpers aren't
+        // connected, so it ends as a failed connect: "Wingman opened Grok Bot", never another Grok Bot.
+        if (result is { Outcome: GrokBotReconnectOutcome.Failed or GrokBotReconnectOutcome.Cancelled, Started: { } startedThenFailed })
+        {
+            Hold(startedThenFailed);
+            result = result with { Outcome = GrokBotReconnectOutcome.NotConnected };
+        }
         switch (result.Outcome)
         {
             case GrokBotReconnectOutcome.Busy:
@@ -786,6 +793,8 @@ public interface IGrokBotReconnectSteps
     bool SessionEnding { get; }
     /// <summary>The prompt's state changed: show it.</summary>
     void Changed();
+    /// <summary>The exact Grok Bot this run started, recorded the moment it started (also when the run then threw); null when it started none.</summary>
+    GrokBotProcess? Started { get; }
 }
 
 /// <summary>

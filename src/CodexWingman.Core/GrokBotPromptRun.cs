@@ -9,8 +9,11 @@ public interface IGrokBotPromptHost
     bool Busy { get; }
     bool Installed { get; }
     bool SessionEnding { get; }
-    /// <summary>Grok Bot's processes, as the relaunch sees and starts them for this run.</summary>
-    IGrokBotProcessControl Control();
+    /// <summary>
+    /// Grok Bot's processes, as the relaunch sees and starts them for this run. <paramref name="started"/> is called with the
+    /// exact Grok Bot the control starts the moment Windows has started it, before anything after the start that can throw.
+    /// </summary>
+    IGrokBotProcessControl Control(Action<GrokBotProcess> started);
     /// <summary>The prompt's state changed: show it.</summary>
     void Changed();
     /// <summary>
@@ -30,6 +33,11 @@ public sealed class GrokBotPromptSteps(GrokBotReconnectPrompt prompt, IGrokBotPr
     private readonly Func<DateTime> now = now ?? (() => DateTime.UtcNow);
     private readonly Func<TimeSpan, CancellationToken, Task> delay = delay ?? ((wait, token) => Task.Delay(wait, token));
 
+    /// <summary>The exact Grok Bot this run started, recorded the moment it started; null when it started none.</summary>
+    public GrokBotProcess? Started { get; private set; }
+
+    private IGrokBotProcessControl Control() => host.Control(process => Started = process);
+
     public GrokBotObservation Observe() => host.Observe();
     public bool AdoptListeningPort(int process) => host.AdoptListeningPort(process);
     public bool Busy => host.Busy;
@@ -45,7 +53,7 @@ public sealed class GrokBotPromptSteps(GrokBotReconnectPrompt prompt, IGrokBotPr
     public async Task<GrokBotRelaunchResult> RelaunchAfterQuitAsync(GrokBotProcess target, CancellationToken cancellationToken)
     {
         RequireInstalled();
-        var result = await GrokBotRelaunch.RunAsync(target, host.Control(), limits, now, delay, cancellationToken, Exited);
+        var result = await GrokBotRelaunch.RunAsync(target, Control(), limits, now, delay, cancellationToken, Exited);
         WingmanLog.Write("grok-bot-reconnect-relaunch", ("process", target.Id), ("result", result.Kind));
         return result;
     }
@@ -54,7 +62,7 @@ public sealed class GrokBotPromptSteps(GrokBotReconnectPrompt prompt, IGrokBotPr
     public async Task<GrokBotRelaunchResult> StartAsync(GrokBotRelaunch.ClosedProcess quit, CancellationToken cancellationToken)
     {
         RequireInstalled();
-        var control = host.Control();
+        var control = Control();
         var result = await GrokBotRelaunch.StartWhenClearAsync(quit, control.ExecutableStamp(), control, limits, now, delay, cancellationToken);
         WingmanLog.Write("grok-bot-reconnect-open", ("process", quit.Process.Id), ("result", result.Kind));
         return result;
@@ -63,7 +71,7 @@ public sealed class GrokBotPromptSteps(GrokBotReconnectPrompt prompt, IGrokBotPr
     public async Task<GrokBotRelaunchResult> OpenAfterPressAsync(GrokBotProcess target, CancellationToken cancellationToken)
     {
         RequireInstalled();
-        var result = await GrokBotRelaunch.OpenAfterPressAsync(target, host.Control(), limits, now, delay, cancellationToken, Exited);
+        var result = await GrokBotRelaunch.OpenAfterPressAsync(target, Control(), limits, now, delay, cancellationToken, Exited);
         WingmanLog.Write("grok-bot-reconnect-open-after-press", ("process", target.Id), ("result", result.Kind));
         return result;
     }
@@ -81,7 +89,7 @@ public sealed class GrokBotPromptSteps(GrokBotReconnectPrompt prompt, IGrokBotPr
     /// </summary>
     public async Task<GrokBotRelaunchResult> AfterUpdateAsync(GrokBotRelaunch.ClosedProcess quit, CancellationToken cancellationToken)
     {
-        var result = await GrokBotRelaunch.AfterUpdateAsync(quit, host.Control(), limits, now, delay, cancellationToken);
+        var result = await GrokBotRelaunch.AfterUpdateAsync(quit, Control(), limits, now, delay, cancellationToken);
         WingmanLog.Write("grok-bot-reconnect-after-update", ("process", quit.Process.Id), ("result", result.Kind));
         return result;
     }
@@ -94,7 +102,7 @@ public sealed class GrokBotPromptSteps(GrokBotReconnectPrompt prompt, IGrokBotPr
     /// </summary>
     public async Task<GrokBotRelaunchResult> AfterApprovedCloseAsync(GrokBotProcess? closed, GrokBotExecutableStamp? since, CancellationToken cancellationToken)
     {
-        var result = await GrokBotRelaunch.AfterCloseRequestAsync(closed, since, host.Control(), limits.Close, limits.Poll, () =>
+        var result = await GrokBotRelaunch.AfterCloseRequestAsync(closed, since, Control(), limits.Close, limits.Poll, () =>
         {
             WingmanLog.Write("grok-bot-open-update-after-close");
             prompt.Updating(null);
@@ -140,15 +148,17 @@ public static class GrokBotPromptRun
                 _ => await GrokBotReconnectRun.RunAsync(prompt.Offer, steps, cancellationToken),
             };
         }
+        // A run that ends in an error or a stop after Wingman started Grok Bot keeps that start, so the prompt says Wingman
+        // opened it rather than taking it for another Grok Bot.
         catch (OperationCanceledException)
         {
-            result = new(GrokBotReconnectOutcome.Cancelled, prompt.Quit);
+            result = new(GrokBotReconnectOutcome.Cancelled, prompt.Quit, steps.Started);
         }
         catch (Exception error)
         {
             // An error is its own outcome: the prompt stays with a plain reason and its buttons, and the log says so.
             WingmanLog.Write("grok-bot-reconnect-failed", ("process", prompt.Offer.ProcessId), ("step", step), ("error", error.GetType().Name));
-            result = new(GrokBotReconnectOutcome.Failed, prompt.Quit);
+            result = new(GrokBotReconnectOutcome.Failed, prompt.Quit, steps.Started);
         }
         finally { ended?.Invoke(); }
         if (result.Outcome == GrokBotReconnectOutcome.Cancelled && steps.SessionEnding) result = result with { Outcome = GrokBotReconnectOutcome.SessionEnding };

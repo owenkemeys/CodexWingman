@@ -1336,7 +1336,7 @@ internal sealed class TrayApplicationContext : ApplicationContext
         public bool Busy => tray.exiting || owned is null && (tray.busy || tray.initializing);
         public bool Installed => tray.grokLauncher.IsInstalled();
         public bool SessionEnding => session.Ending;
-        public IGrokBotProcessControl Control() => tray.grokLauncher.Control(() => !Busy, () => session.Ending);
+        public IGrokBotProcessControl Control(Action<GrokBotProcess> started) => tray.grokLauncher.Control(() => !Busy, () => session.Ending, started);
         private bool afterUpdate;
         private string? status;
         public void Changed()
