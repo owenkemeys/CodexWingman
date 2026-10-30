@@ -61,7 +61,7 @@ internal sealed class TrayApplicationContext : ApplicationContext
     private readonly GrokBotReconnectPolicy grokReconnect = new();
     // The reconnect prompt window and, while the user quits Grok Bot for it, its wait (cancelled by Not now or Cancel).
     // The prompt is held only by the slot, so a pressed prompt can't be swapped for an unpressed one.
-    private readonly GrokBotPromptSlot grokPrompts = new();
+    private readonly GrokBotPromptSlot grokPrompts;
     private GrokBotReconnectPrompt? grokPrompt => grokPrompts.Current;
     private GrokBotPromptWindow? grokPromptWindow;
     private CancellationTokenSource? grokPromptWait;
@@ -131,6 +131,8 @@ internal sealed class TrayApplicationContext : ApplicationContext
             appId: HelperAppIds.T3Code);
         t3WebLauncher = new T3WebLauncher(settingsDirectory, () => HelperSettingsStore.Load(settingsPath), ReservedPorts);
         grokLauncher = new GrokBotLauncher(settingsDirectory, ReservedPorts);
+        // A Grok Bot the prompt follows is titled "Grok Bot updated" by the same proof as a new prompt.
+        grokPrompts = new GrokBotPromptSlot(process => grokReconnect.UpdateProven(process, grokLauncher));
         AppTargetController? t3WebReference = null;
         t3Web = t3WebReference = new AppTargetController(TrayMenuLayout.AppName(WingmanLaunchTarget.T3Web), WingmanLaunchTarget.T3Web, userHelpersRoot, initializedSettings.Path,
             new T3WebTargetSource(targetHttp, t3WebLauncher.Port, t3WebLauncher.Origin, cdpPool), evaluator, HelperAppIds.T3Web,

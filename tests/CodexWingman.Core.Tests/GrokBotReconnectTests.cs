@@ -172,6 +172,37 @@ internal static class GrokBotReconnectTests
         var unknown = new Facts(null);
         Equal(false, OfferWith(unknown)!.Updated, "unknown versions prove nothing");
 
+        // A Grok Bot the prompt follows (from the 2-second check or at a run's end) is titled by the same proof a new prompt
+        // for it would get: the slot hands every prompt the policy's proof.
+        foreach (var (name, make, change) in new (string, Func<Facts>, Action<Facts>?)[]
+                 {
+                     ("plain", () => new Facts("1.0.0", _ => "\"C:\\Apps\\Grok Bot\\Grok Bot.exe\""), null),
+                     ("--updated", () => new Facts("1.0.0", pid => pid == Third ? "\"C:\\Apps\\Grok Bot\\Grok Bot.exe\" --updated" : null), null),
+                     ("version changed", () => new Facts("1.0.0"), changed => changed.Version = "1.1.0"),
+                 })
+        {
+            var seen = make();
+            var policy2 = new GrokBotReconnectPolicy();
+            policy2.Observe(new(First, true, Present), T0, seen);
+            change?.Invoke(seen);
+            GrokBotPromptSlot Slot() => new(process => policy2.UpdateProven(process, seen));
+            var fresh = policy2.UpdateProven(new(Third, null), seen) ? GrokBotReconnectPolicy.UpdatedTitle : GrokBotReconnectPolicy.ReopenedTitle;
+            foreach (var viaCheck in new[] { true, false })
+            {
+                var followed = Slot().Offer(new GrokBotReconnectOffer(Second, false, T0))!;
+                followed.Reconnect(busy: false);
+                followed.Finished(new(GrokBotReconnectOutcome.UpdateTooLong), viaCheck ? new(null, false, Present) : new(Third, false, Present));
+                if (viaCheck) Equal(GrokBotPromptStep.HandOver, followed.Observe(new(Third, false, Present), busy: false), name + ": the check follows the Grok Bot its installer opened");
+                Equal((Third, fresh), (followed.Offer.ProcessId, followed.Offer.Title), name + (viaCheck ? " (check)" : " (run's end)") + ": titled as a new prompt for it would be");
+            }
+            var yes = Slot().AfterYes(new(Second, null), null, T0);
+            yes.Finished(new(GrokBotReconnectOutcome.Reopened), new(Third, false, Present));
+            Equal(fresh, yes.Offer.Title, name + ": the Yes prompt follows by the same proof");
+        }
+        Equal(true, File.ReadAllText(Path.Combine(RepositoryRoot(), "src", "CodexWingman", "TrayApplicationContext.cs"))
+            .Contains("grokPrompts = new GrokBotPromptSlot(process => grokReconnect.UpdateProven(process, grokLauncher));", StringComparison.Ordinal),
+            "the tray's prompts use the policy's proof, with Grok Bot's real facts");
+
         var reads = new Facts("1.0.0");
         var policy = new GrokBotReconnectPolicy();
         for (var second = 0; second < 20; second += 2) policy.Observe(new(First, true, Present), T0.AddSeconds(second), reads);
@@ -297,16 +328,21 @@ internal static class GrokBotReconnectTests
             Equal((Third, GrokBotReconnectPolicy.ReopenedText, ("Try again", true, "Not now")), atEnd, ending + " while another Grok Bot runs: follows it at the run's end");
             Equal((None, atEnd), (follows.Observe(Seen(Third), busy: false), (follows.Offer.ProcessId, follows.Problem, follows.Buttons)), ending + ": the next check changes nothing");
         }
-        // The title follows the Grok Bot the prompt holds: one opened without Wingman says so, one opened by its update says
-        // that, and the Grok Bot Wingman was connecting keeps the prompt's own title.
-        foreach (var (outcome, title) in new[] { (GrokBotReconnectOutcome.Reopened, GrokBotReconnectPolicy.ReopenedTitle),
-                     (GrokBotReconnectOutcome.Replaced, GrokBotReconnectPolicy.ReopenedTitle), (GrokBotReconnectOutcome.UpdatedAndReopened, GrokBotReconnectPolicy.UpdatedTitle) })
+        // The title follows the Grok Bot the prompt holds: one opened without Wingman says Grok Bot updated with the update's
+        // proof and reopened without Wingman without it, whatever the run's result; the Grok Bot Wingman was connecting keeps
+        // the prompt's own title.
+        foreach (var outcome in new[] { GrokBotReconnectOutcome.Reopened, GrokBotReconnectOutcome.Replaced, GrokBotReconnectOutcome.UpdatedAndReopened })
+        foreach (var proven in new[] { false, true })
         {
-            var titled = GrokBotReconnectPrompt.AfterYes(new(Second, started), null, T0);
+            var titled = GrokBotReconnectPrompt.AfterYes(new(Second, started), null, T0, process => proven && process.Id == Third);
             Equal(GrokBotReconnectPolicy.ApprovedTitle, titled.Offer.Title, outcome + ": the Yes prompt starts with its own title");
             titled.Finished(new(outcome), Seen(Third));
-            Equal((Third, title), (titled.Offer.ProcessId, titled.Offer.Title), outcome + ": following a Grok Bot opened without Wingman, the title says how it opened");
+            Equal((Third, proven ? GrokBotReconnectPolicy.UpdatedTitle : GrokBotReconnectPolicy.ReopenedTitle), (titled.Offer.ProcessId, titled.Offer.Title),
+                outcome + (proven ? ", update proven" : ", no proof") + ": following a Grok Bot opened without Wingman, the title says how it opened");
         }
+        var proofFails = GrokBotReconnectPrompt.AfterYes(new(Second, started), null, T0, _ => throw new InvalidOperationException("access denied"));
+        proofFails.Finished(new(GrokBotReconnectOutcome.Reopened), Seen(Third));
+        Equal((Third, GrokBotReconnectPolicy.ReopenedTitle), (proofFails.Offer.ProcessId, proofFails.Offer.Title), "a proof that can't be read proves nothing; the prompt still follows");
         var keepsTitle = GrokBotReconnectPrompt.AfterYes(new(Second, started), null, T0);
         keepsTitle.Finished(new(GrokBotReconnectOutcome.NotConnected, Started: new(Third, started)), Seen(Third));
         Equal((Third, GrokBotReconnectPolicy.ApprovedTitle), (keepsTitle.Offer.ProcessId, keepsTitle.Offer.Title), "the Grok Bot Wingman opened keeps the prompt's title");
@@ -2002,7 +2038,7 @@ internal static class GrokBotReconnectTests
                 tray.Contains("HandOverGrokPrompt", StringComparison.Ordinal), tray.Contains("GrokBotReconnectPrompt.AfterYes(", StringComparison.Ordinal),
                 tray.Contains("private GrokBotReconnectPrompt? grokPrompt => grokPrompts.Current;", StringComparison.Ordinal)),
             "the tray's prompt lives in the slot");
-        var slot = new GrokBotPromptSlot();
+        var slot = new GrokBotPromptSlot(_ => false);
         var first = slot.Offer(offer)!;
         first.Reconnect(busy: false);
         Equal((true, true), (slot.Offer(offer with { ProcessId = Third }) is null, ReferenceEquals(slot.Current, first)), "a pressed prompt can't be replaced by an offer");

@@ -159,10 +159,18 @@ public sealed class GrokBotReconnectPolicy
         if (!wasConnected || promptedProcess == process) return null;
         if (now - unconnectedSince < Settle || observation.UserIdle > PresentWithin || observation.FullScreen) return null;
         promptedProcess = process;
+        return new GrokBotReconnectOffer(process.Id, UpdateProven(process, facts), now, process.Started);
+    }
+
+    /// <summary>
+    /// The one proof of an update, for every prompt's title and every Grok Bot a prompt follows: <paramref name="process"/>
+    /// was started with <c>--updated</c>, or Grok Bot.exe's version changed since Wingman last had it connected.
+    /// </summary>
+    public bool UpdateProven(GrokBotProcess process, IGrokBotFacts facts)
+    {
+        if (HasUpdatedFlag(facts.CommandLine(process.Id))) return true;
         var version = facts.ExecutableVersion();
-        var updated = HasUpdatedFlag(facts.CommandLine(process.Id))
-            || connectedVersion is not null && version is not null && !string.Equals(connectedVersion, version, StringComparison.Ordinal);
-        return new GrokBotReconnectOffer(process.Id, updated, now, process.Started);
+        return connectedVersion is not null && version is not null && !string.Equals(connectedVersion, version, StringComparison.Ordinal);
     }
 
     /// <summary>
@@ -394,14 +402,33 @@ public sealed class GrokBotReconnectPrompt(GrokBotReconnectOffer offer)
     /// Open window or Repair after the user's Yes: the prompt for that run, already pressed and working, so every result
     /// of the close and reopen ends here like a Reconnect's. <paramref name="since"/> is Grok Bot.exe before the close.
     /// </summary>
-    public static GrokBotReconnectPrompt AfterYes(GrokBotProcess? closed, GrokBotExecutableStamp? since, DateTimeOffset now)
+    public static GrokBotReconnectPrompt AfterYes(GrokBotProcess? closed, GrokBotExecutableStamp? since, DateTimeOffset now, Func<GrokBotProcess, bool>? updateProven = null)
     {
         var prompt = new GrokBotReconnectPrompt(new GrokBotReconnectOffer(closed?.Id ?? 0, false, now, closed?.Started) { Approved = true })
         {
-            State = GrokBotPromptState.Working, Pressed = true, ApprovedSince = since,
+            State = GrokBotPromptState.Working, Pressed = true, ApprovedSince = since, UpdateProven = updateProven ?? NoUpdateProof,
         };
         prompt.lastStep = GrokBotPromptStep.ApprovedClose;
         return prompt;
+    }
+
+    /// <summary>
+    /// The policy's proof of an update (<see cref="GrokBotReconnectPolicy.UpdateProven"/>) for a Grok Bot this prompt follows:
+    /// its title says Grok Bot updated only with that proof, as a new prompt's does. Without one, nothing is proven.
+    /// </summary>
+    public Func<GrokBotProcess, bool> UpdateProven { get; init; } = NoUpdateProof;
+
+    private static bool NoUpdateProof(GrokBotProcess process) => false;
+
+    /// <summary>The proof for <paramref name="process"/>; a proof that can't be read proves nothing.</summary>
+    private bool Updated(GrokBotProcess process)
+    {
+        try { return UpdateProven(process); }
+        catch (Exception error)
+        {
+            WingmanLog.Write("grok-bot-update-proof-failed", ("process", process.Id), ("error", error.GetType().Name));
+            return false;
+        }
     }
 
     /// <summary>Grok Bot.exe as it was before Open window or Repair's close (see <see cref="AfterYes"/>).</summary>
@@ -490,17 +517,17 @@ public sealed class GrokBotReconnectPrompt(GrokBotReconnectOffer offer)
     /// <summary>
     /// The one hand-over rule, for the end of a run and for every check between runs: when another Grok Bot than the held
     /// one runs, the prompt follows it, with the reason of <paramref name="why"/> (Replaced keeps its own; every other
-    /// result says Grok Bot was opened again without Wingman, titled for an update after UpdatedAndReopened). The held Grok Bot is the one Wingman
+    /// result says Grok Bot was opened again without Wingman). Its title says Grok Bot updated only with the policy's proof of
+    /// an update for that Grok Bot (<see cref="UpdateProven"/>), the same proof every new prompt's title uses. The held Grok Bot is the one Wingman
     /// started, once it has (see <see cref="Finished"/>), so that one is never handed over.
     /// </summary>
     private bool HandOver(GrokBotObservation? current, GrokBotReconnectOutcome why)
     {
-        var updated = why == GrokBotReconnectOutcome.UpdatedAndReopened;
         var reason = why == GrokBotReconnectOutcome.Replaced ? why : GrokBotReconnectOutcome.Reopened;
         // Replaced, but Wingman couldn't look: a later check follows the replacement with the replaced words.
         handOverAs = current is null ? reason : GrokBotReconnectOutcome.Reopened;
         if (current?.Process is not { } other || other == Offer.Target) return false;
-        Follow(other, GrokBotPromptReason.For(reason), updated ? GrokBotFollowed.AfterUpdate : GrokBotFollowed.WithoutWingman);
+        Follow(other, GrokBotPromptReason.For(reason), Updated(other) ? GrokBotFollowed.AfterUpdate : GrokBotFollowed.WithoutWingman);
         handOverAs = GrokBotReconnectOutcome.Reopened;
         return true;
     }
@@ -642,7 +669,7 @@ public sealed class GrokBotReconnectPrompt(GrokBotReconnectOffer offer)
 /// closed prompt or another unpressed one, so a prompt the user pressed (or said Yes for) can't be replaced by an
 /// unpressed one. Only the Yes to Open window or Repair replaces it, with another pressed prompt.
 /// </summary>
-public sealed class GrokBotPromptSlot
+public sealed class GrokBotPromptSlot(Func<GrokBotProcess, bool> updateProven)
 {
     public GrokBotReconnectPrompt? Current { get; private set; }
 
@@ -650,12 +677,12 @@ public sealed class GrokBotPromptSlot
     public GrokBotReconnectPrompt? Offer(GrokBotReconnectOffer offer)
     {
         if (Current is { Pressed: true, State: not GrokBotPromptState.Closed }) return null;
-        return Current = new GrokBotReconnectPrompt(offer);
+        return Current = new GrokBotReconnectPrompt(offer) { UpdateProven = updateProven };
     }
 
     /// <summary>Open window or Repair after the Yes (see <see cref="GrokBotReconnectPrompt.AfterYes"/>): already pressed.</summary>
     public GrokBotReconnectPrompt AfterYes(GrokBotProcess? closed, GrokBotExecutableStamp? since, DateTimeOffset now) =>
-        Current = GrokBotReconnectPrompt.AfterYes(closed, since, now);
+        Current = GrokBotReconnectPrompt.AfterYes(closed, since, now, updateProven);
 
     /// <summary>Lets go of a prompt once it is closed; Wingman's exit (<paramref name="exiting"/>) lets go of any prompt.</summary>
     public void Release(bool exiting = false)
