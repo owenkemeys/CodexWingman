@@ -151,7 +151,7 @@ public static class GrokBotPromptRun
         if (result.Outcome == GrokBotReconnectOutcome.Cancelled && steps.SessionEnding) result = result with { Outcome = GrokBotReconnectOutcome.SessionEnding };
         WingmanLog.Write("grok-bot-reconnect-outcome", ("process", prompt.Offer.ProcessId), ("step", step), ("outcome", result.Outcome));
         prompt.Finished(result, ObserveSafely(steps));
-        steps.Changed();
+        ShowSafely(prompt, steps);
         // Grok Bot runs with the port: connect its Helpers, also when the user closed the prompt meanwhile.
         if (result.Outcome is not (GrokBotReconnectOutcome.Relaunched or GrokBotReconnectOutcome.Adopted or GrokBotReconnectOutcome.AlreadyConnected)) return result;
         bool connected;
@@ -164,8 +164,21 @@ public static class GrokBotPromptRun
         result = result with { Outcome = connected ? GrokBotReconnectOutcome.Connected : GrokBotReconnectOutcome.NotConnected };
         WingmanLog.Write("grok-bot-reconnect-outcome", ("process", prompt.Offer.ProcessId), ("step", step), ("outcome", result.Outcome));
         prompt.Finished(result, ObserveSafely(steps));
-        steps.Changed();
+        ShowSafely(prompt, steps);
         return result;
+    }
+
+    /// <summary>
+    /// Shows the prompt's new state. A failure to show it is logged and doesn't stop the run, so the connect still runs and
+    /// the prompt's own state (never left on "Working...") is shown at the next change or check.
+    /// </summary>
+    private static void ShowSafely(GrokBotReconnectPrompt prompt, IGrokBotReconnectSteps steps)
+    {
+        try { steps.Changed(); }
+        catch (Exception error)
+        {
+            WingmanLog.Write("grok-bot-prompt-show-failed", ("process", prompt.Offer.ProcessId), ("state", prompt.State), ("error", error.GetType().Name));
+        }
     }
 
     /// <summary>The observation for the prompt's last word; null if even that throws, so the prompt picks no reason on a guess.</summary>

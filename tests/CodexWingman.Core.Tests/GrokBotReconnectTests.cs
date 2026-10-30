@@ -823,6 +823,15 @@ internal static class GrokBotReconnectTests
         Ends((connectThrows, throwingHost, Act(connectThrows, GrokBotPromptStep.ApprovedClose, throwingHost)), GrokBotReconnectOutcome.NotConnected, GrokBotReconnectPolicy.OpenedNotConnectedText,
             "reopened, but connecting the Helpers threw: the prompt says so, never the raw text", "Try again");
 
+        // Showing the prompt fails after the run: the connect still runs, and the prompt ends in its own state.
+        var showFails = GrokBotReconnectPrompt.AfterYes(target, null, T0);
+        var showHost = new FakeHost(new FakeControl(new FakeProcess(target, []) { Exited = true }), reopenedWithPort) { ShowThrowsIn = GrokBotPromptState.Connecting };
+        Equal((GrokBotReconnectOutcome.Connected, GrokBotPromptState.Closed, true), (Act(showFails, GrokBotPromptStep.ApprovedClose, showHost).Outcome, showFails.State,
+            showHost.Log.Contains("connect True")), "showing Connecting throws: the Helpers are still connected and the prompt closes");
+        var showFailsLast = GrokBotReconnectPrompt.AfterYes(target, null, T0);
+        var lastHost = new FakeHost(new FakeControl(new FakeProcess(target, []) { Exited = true }), reopenedWithPort) { Connects = false, ShowThrowsIn = GrokBotPromptState.CouldNotStart };
+        Equal((GrokBotReconnectOutcome.NotConnected, GrokBotPromptState.CouldNotStart), (Act(showFailsLast, GrokBotPromptStep.ApprovedClose, lastHost).Outcome, showFailsLast.State),
+            "showing the last word throws: the run still ends with it, not on Working");
         var works = Run(new FakeControl(new FakeProcess(target, []) { Exited = true }));
         Equal((GrokBotReconnectOutcome.Connected, GrokBotPromptState.Closed, "connected", true), (works.Result.Outcome, works.Prompt.State, works.Prompt.ClosedBecause,
             works.Host.Log.Contains("changed Connecting") && works.Host.Log.Contains("connect True")), "reopened and connected: says so until then, then closes");
@@ -893,7 +902,13 @@ internal static class GrokBotReconnectTests
         public bool Installed { get; set; } = true;
         public bool SessionEnding { get; set; }
         public IGrokBotProcessControl Control() => control;
-        public void Changed() => Log.Add("changed " + Prompt?.State);
+        /// <summary>Showing the prompt throws once it is in this state.</summary>
+        public GrokBotPromptState? ShowThrowsIn;
+        public void Changed()
+        {
+            Log.Add("changed " + Prompt?.State);
+            if (Prompt?.State is { } state && state == ShowThrowsIn) throw new InvalidOperationException("window gone");
+        }
         public bool Connects = true;
         public Exception? ConnectThrows;
         public Task<bool> ConnectAsync(bool started, CancellationToken cancellationToken)
