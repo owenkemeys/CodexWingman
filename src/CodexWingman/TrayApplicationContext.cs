@@ -1078,9 +1078,17 @@ internal sealed class TrayApplicationContext : ApplicationContext
             }
             if (open.Step == GrokBotOpenStep.StoppedAfterYes)
             {
-                // Stopped as the Yes came in: nothing was closed, and the prompt says Wingman stopped, with its button.
+                // Stopped as the Yes came in: nothing was closed, and the prompt says Wingman stopped, in the words and with
+                // the button for what Wingman sees of that Grok Bot now (still open: Try again).
                 var prompt = grokPrompts.AfterYes(open.Closed, open.Since, DateTimeOffset.UtcNow);
-                prompt.Finished(new(GrokBotReconnectOutcome.Cancelled));
+                GrokBotObservation? seen;
+                try { seen = ObserveGrokBot(); }
+                catch (Exception error)
+                {
+                    WingmanLog.Write("grok-bot-observe-failed", ("error", error.GetType().Name));
+                    seen = null;
+                }
+                prompt.Finished(new(GrokBotReconnectOutcome.Cancelled), seen);
                 ShowGrokPrompt(prompt);
                 return;
             }
