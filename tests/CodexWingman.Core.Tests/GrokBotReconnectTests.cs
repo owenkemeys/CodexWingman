@@ -320,6 +320,9 @@ internal static class GrokBotReconnectTests
                 else if (outcome == GrokBotReconnectOutcome.Busy) Equal(GrokBotPromptState.Working, prompt.State, name + ": Working…");
                 else if (outcome is GrokBotReconnectOutcome.QuitTimedOut or GrokBotReconnectOutcome.SessionEnding)
                     Equal((GrokBotPromptState.Offered, true), (prompt.State, prompt.Reconnect(busy: false)), name + ": Reconnect again");
+                else if (outcome == GrokBotReconnectOutcome.Failed)
+                    Equal((GrokBotPromptState.Offered, GrokBotReconnectPolicy.FailedText, true), (prompt.State, prompt.Problem, prompt.Reconnect(busy: false)),
+                        name + ": an error before the quit says so, and Reconnect works again");
                 else
                 {
                     Equal((GrokBotPromptState.CouldNotStart, true), (prompt.State, !string.IsNullOrEmpty(prompt.Problem)), name + ": stays and says why");
@@ -328,6 +331,16 @@ internal static class GrokBotReconnectTests
                     Equal(true, prompt.Open(busy: false), name + ": Open Grok Bot acts");
                 }
             }
+        // An error after the quit: the prompt stays, says so in plain words and offers Open Grok Bot, even with no Grok Bot.
+        var failed = Waiting();
+        failed.Finished(new(GrokBotReconnectOutcome.Failed, quit));
+        for (var tick = 0; tick < 10; tick++) failed.Observe(Seen(null), busy: false);
+        Equal((GrokBotPromptState.CouldNotStart, GrokBotReconnectPolicy.FailedText, true), (failed.State, failed.Problem, failed.Open(busy: false)),
+            "an error after the quit: stays with a plain reason and Open Grok Bot");
+        var trayText = File.ReadAllText(Path.Combine(RepositoryRoot(), "src", "CodexWingman", "TrayApplicationContext.cs"));
+        var act = trayText[trayText.IndexOf("private async Task ActOnGrokPromptAsync", StringComparison.Ordinal)..trayText.IndexOf("private void HandOverGrokPrompt", StringComparison.Ordinal)];
+        Equal(true, !act.Contains("MessageBox", StringComparison.Ordinal) && act.Contains("result = new(GrokBotReconnectOutcome.Failed, prompt.Quit);", StringComparison.Ordinal),
+            "the tray turns an error into Failed, with no message box");
         var exitTooLong = Waiting();
         exitTooLong.Finished(new(GrokBotReconnectOutcome.ExitTooLong));
         Equal((GrokBotPromptState.CouldNotStart, GrokBotReconnectPolicy.ExitTooLongText), (exitTooLong.State, exitTooLong.Problem),

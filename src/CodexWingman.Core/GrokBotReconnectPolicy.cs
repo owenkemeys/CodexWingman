@@ -88,6 +88,7 @@ public sealed class GrokBotReconnectPolicy
     public const string CouldNotOpenText = "Wingman couldn't reopen Grok Bot.";
     public const string ExitTooLongText = "A Grok Bot update started, but Grok Bot didn't finish closing within 30 seconds, so Wingman didn't reopen it.";
     public const string GoneText = "Grok Bot closed before Wingman could reopen it.";
+    public const string FailedText = "Something went wrong, so Wingman didn't reopen Grok Bot. Details are in Wingman's log.";
 
     private bool wasConnected;
     private GrokBotProcess? connectedProcess;
@@ -304,6 +305,11 @@ public sealed class GrokBotReconnectPrompt(GrokBotReconnectOffer offer)
                 Problem = null;
                 State = GrokBotPromptState.Offered;
                 return;
+            // An error in the run itself. Before the quit Grok Bot is still open: Reconnect again. After it, Open Grok Bot.
+            case GrokBotReconnectOutcome.Failed when Quit is null:
+                Problem = GrokBotReconnectPolicy.FailedText;
+                State = GrokBotPromptState.Offered;
+                return;
             case GrokBotReconnectOutcome.SessionEnding:
                 Problem = GrokBotReconnectPolicy.SessionEndingText;
                 State = GrokBotPromptState.CouldNotStart;
@@ -329,6 +335,7 @@ public sealed class GrokBotReconnectPrompt(GrokBotReconnectOffer offer)
         GrokBotReconnectOutcome.UpdateRunning => GrokBotRelaunch.UpdateRunningText,
         GrokBotReconnectOutcome.ExitTooLong => GrokBotReconnectPolicy.ExitTooLongText,
         GrokBotReconnectOutcome.Gone => GrokBotReconnectPolicy.GoneText,
+        GrokBotReconnectOutcome.Failed => GrokBotReconnectPolicy.FailedText,
         GrokBotReconnectOutcome.Reopened or GrokBotReconnectOutcome.UpdatedAndReopened => GrokBotReconnectPolicy.ReopenedText,
         _ => GrokBotReconnectPolicy.CouldNotOpenText,
     };
@@ -379,6 +386,8 @@ public enum GrokBotReconnectOutcome
     Crashed,
     /// <summary>Windows is shutting down or signing out: nothing started.</summary>
     SessionEnding,
+    /// <summary>The run itself threw: nothing more started; the prompt stays and says so, and the log has the error.</summary>
+    Failed,
     Relaunched,
 }
 

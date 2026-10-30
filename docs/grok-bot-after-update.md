@@ -47,6 +47,7 @@ Once you have pressed **Reconnect**, the prompt closes only when Grok Bot is con
 - a Grok Bot process is still running 20 seconds after the quit, or Wingman stays busy for 60 seconds;
 - Grok Bot ended with an error (a crash, or ended from Task Manager) instead of your quit;
 - Windows began to shut down or sign out after your quit, and another app cancelled it.
+- something went wrong inside Wingman while it reopened Grok Bot. The prompt says so in plain words, and the error is in Wingman's log. If that happens before your quit, it offers **Reconnect** again instead.
 
 Grok Bot 0.78.1 starts its installer while it is still shutting down, for up to a few seconds. So when an installer appears while Wingman waits for your quit, Wingman keeps waiting, for up to 30 seconds, for that same Grok Bot to exit, and then waits for the update as above. When Wingman never saw your quit (the second and third cases above), **Open Grok Bot** checks again: it waits up to 30 seconds for that Grok Bot to exit, waits for an update it finds, and starts nothing while another Grok Bot runs.
 

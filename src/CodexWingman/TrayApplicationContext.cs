@@ -1269,11 +1269,15 @@ internal sealed class TrayApplicationContext : ApplicationContext
                 ? await GrokBotReconnectRun.OpenAsync(prompt.Offer.Target, prompt.Quit, steps, wait.Token)
                 : await GrokBotReconnectRun.RunAsync(prompt.Offer, steps, wait.Token);
         }
+        catch (OperationCanceledException) when (wait.IsCancellationRequested)
+        {
+            result = new(GrokBotReconnectOutcome.Cancelled, prompt.Quit);
+        }
         catch (Exception error)
         {
-            WingmanLog.Write("grok-bot-reconnect-failed", ("error", error.GetType().Name));
-            MessageBox.Show(error.Message, "Grok Bot needs attention", MessageBoxButtons.OK, MessageBoxIcon.Warning);
-            result = new(GrokBotReconnectOutcome.Cancelled);
+            // An error is its own outcome: the prompt stays with a plain reason and its buttons, and the log says so.
+            WingmanLog.Write("grok-bot-reconnect-failed", ("process", prompt.Offer.ProcessId), ("step", step), ("error", error.GetType().Name));
+            result = new(GrokBotReconnectOutcome.Failed, prompt.Quit);
         }
         finally { if (ReferenceEquals(grokPromptWait, wait)) grokPromptWait = null; }
         WingmanLog.Write("grok-bot-reconnect-outcome", ("process", prompt.Offer.ProcessId), ("step", step), ("outcome", result.Outcome));
