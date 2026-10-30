@@ -392,25 +392,22 @@ internal sealed class GrokBotLauncher(string wingmanDataRoot, Func<IEnumerable<i
         var processes = Process.GetProcesses();
         try
         {
-            foreach (var process in processes)
-            {
-                string name;
-                try { name = process.ProcessName; }
-                catch (InvalidOperationException) { continue; }
-                if (!MayBeInstaller(name)) continue;
-                var id = process.Id;
-                if (GrokBotInstallers.IsInstaller(WindowProcessInfo.ImagePathOf((uint)id), Executable, () => CommandLine(id),
-                    () => ParentProcessId(id) is { } parent ? WindowProcessInfo.ImagePathOf((uint)parent) : null)) return true;
-            }
-            return false;
+            return GrokBotInstallers.AnyRunning(Named(processes), Executable, id => WindowProcessInfo.ImagePathOf((uint)id), CommandLine, ParentProcessId);
         }
         finally { foreach (var process in processes) process.Dispose(); }
     }
 
-    private static bool MayBeInstaller(string name) =>
-        name.StartsWith("sand-update-", StringComparison.OrdinalIgnoreCase)
-        || name.StartsWith("Uninstall", StringComparison.OrdinalIgnoreCase)
-        || name.Equals("Un_A", StringComparison.OrdinalIgnoreCase) || name.Equals("Au_", StringComparison.OrdinalIgnoreCase);
+    /// <summary>Each process's name and id, skipping one that exited before its name could be read.</summary>
+    private static IEnumerable<(string Name, int Id)> Named(Process[] processes)
+    {
+        foreach (var process in processes)
+        {
+            string name;
+            try { name = process.ProcessName; }
+            catch (InvalidOperationException) { continue; }
+            yield return (name, process.Id);
+        }
+    }
 
     /// <summary>
     /// A Grok Bot process held by its own process handle (SYNCHRONIZE | QUERY_LIMITED_INFORMATION) from the snapshot until

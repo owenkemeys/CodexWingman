@@ -1552,16 +1552,34 @@ internal static class GrokBotReconnectTests
         var reads = 0;
         GrokBotInstallers.IsInstaller(@"C:\Users\a\AppData\Local\Temp\sand-update-x1\sand-update-0.79.0-x64.exe", Grok, () => { reads++; return null; }, () => { reads++; return null; });
         Equal(0, reads, "the staged update needs no command line or parent");
+        // The process scan: only these names are asked about, and only theirs are read.
+        foreach (var name in new[] { "sand-update-0.79.0-x64", "SAND-UPDATE-x", "Uninstall Grok Bot", "uninstall", "Un_A", "au_" })
+            Equal(true, GrokBotInstallers.MayBeInstaller(name), name + ": asked about");
+        foreach (var name in new[] { "Grok Bot", "Un_A2", "Au_x", "sand-updater", "MyUninstall", "explorer", "" })
+            Equal(false, GrokBotInstallers.MayBeInstaller(name), name + ": never asked about");
+        var looked = new List<int>();
+        string? Image(int id)
+        {
+            looked.Add(id);
+            return id switch
+            {
+                5 => Copy,
+                6 => @"C:\Program Files\Other\notepad.exe",
+                7 => @"C:\Users\a\AppData\Local\Programs\Grok Bot\Uninstall Grok Bot.exe",
+                9 => @"C:\Users\a\AppData\Local\Programs\Grok Bot\Uninstall Grok Bot.exe",
+                _ => null,
+            };
+        }
+        string? Line(int id) { looked.Add(-id); return id == 5 ? "\"" + Copy + "\" _?=C:\\Program Files\\Other" : null; }
+        int? Parent(int id) => id == 8 ? 9 : null;
+        Equal(false, GrokBotInstallers.AnyRunning([("notepad", 6), ("Grok Bot", 7)], Grok, Image, Line, Parent), "other names: not installers");
+        Equal(0, looked.Count, "and nothing about them is read");
+        Equal(false, GrokBotInstallers.AnyRunning([("Un_A", 5)], Grok, Image, Line, Parent), "another app's uninstaller copy");
+        Equal(true, GrokBotInstallers.AnyRunning([("notepad", 6), ("Uninstall Grok Bot", 7)], Grok, Image, Line, Parent), "Grok Bot's uninstaller");
+        Equal(true, GrokBotInstallers.AnyRunning([("Au_", 8)], Grok, id => id == 8 ? Copy : Image(id), Line, Parent), "a copy started by Grok Bot's uninstaller");
         var launcher = File.ReadAllText(Path.Combine(RepositoryRoot(), "src", "CodexWingman", "GrokBotLauncher.cs"));
-        Equal(true, launcher.Contains("Executable, () => CommandLine(id),", StringComparison.Ordinal)
-            && launcher.Contains("() => ParentProcessId(id) is { } parent ? WindowProcessInfo.ImagePathOf((uint)parent) : null", StringComparison.Ordinal),
-            "the installer check gives an uninstaller copy's command line and parent");
-        // Only these names are asked about; the docs and the class comment say exactly that.
-        var mayBe = launcher[launcher.IndexOf("private static bool MayBeInstaller(", StringComparison.Ordinal)..];
-        mayBe = mayBe[..mayBe.IndexOf(";\n", StringComparison.Ordinal)];
-        Equal(4, new[] { "StartsWith(\"sand-update-\"", "StartsWith(\"Uninstall\"", "Equals(\"Un_A\"", "Equals(\"Au_\"" }.Count(name => mayBe.Contains(name, StringComparison.Ordinal)),
-            "the launcher asks about sand-update-…, Uninstall…, Un_A and Au_");
-        Equal(4, mayBe.Split("StringComparison.OrdinalIgnoreCase").Length - 1, "and nothing else");
+        Equal(true, launcher.Contains("GrokBotInstallers.AnyRunning(Named(processes), Executable,", StringComparison.Ordinal) && !launcher.Contains("MayBeInstaller", StringComparison.Ordinal),
+            "the launcher's installer check is that scan");
         var installerDocs = File.ReadAllText(Path.Combine(RepositoryRoot(), "docs", "grok-bot-after-update.md"));
         var policySource = File.ReadAllText(Path.Combine(RepositoryRoot(), "src", "CodexWingman.Core", "GrokBotReconnectPolicy.cs"));
         Equal(true, installerDocs.Contains("Wingman looks only at programs named `sand-update-…`, `Uninstall…`, `Un_A` or `Au_`", StringComparison.Ordinal)

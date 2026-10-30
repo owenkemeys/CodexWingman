@@ -833,7 +833,7 @@ public static class GrokBotRelaunch
 /// Grok Bot's installers, recognised by their program file. On Windows Grok Bot stages its update as
 /// <c>%TEMP%\sand-update-…\sand-update-&lt;version&gt;-….exe</c> and runs it when Grok Bot quits (<c>--updated /S</c>).
 /// Wingman asks only about programs named <c>sand-update-…</c>, <c>Uninstall…</c>, <c>Un_A</c> or <c>Au_</c>
-/// (GrokBotLauncher.MayBeInstaller); no other program is checked, also not in the install folder. Of those: a
+/// (<see cref="MayBeInstaller"/>); no other program is checked, also not in the install folder. Of those: a
 /// <c>sand-update-…</c> program counts wherever it runs; one running from Grok Bot's install folder counts (such as
 /// <c>Uninstall Grok Bot.exe</c>). An NSIS uninstaller runs from a <c>%TEMP%\~nsu….tmp</c> copy (<c>Un_A.exe</c> or
 /// <c>Au_.exe</c>), and every NSIS app's does, so such a copy counts only when it is Grok Bot's: its <c>_?=</c> argument
@@ -841,6 +841,25 @@ public static class GrokBotRelaunch
 /// </summary>
 public static class GrokBotInstallers
 {
+    /// <summary>The only process names asked about; any other process is skipped without reading anything about it.</summary>
+    public static bool MayBeInstaller(string name) =>
+        name.StartsWith("sand-update-", StringComparison.OrdinalIgnoreCase)
+        || name.StartsWith("Uninstall", StringComparison.OrdinalIgnoreCase)
+        || name.Equals("Un_A", StringComparison.OrdinalIgnoreCase) || name.Equals("Au_", StringComparison.OrdinalIgnoreCase);
+
+    /// <summary>
+    /// True when one of <paramref name="processes"/> (name and id) is a Grok Bot installer (<see cref="IsInstaller"/>).
+    /// Only names <see cref="MayBeInstaller"/> allows are looked at, and a command line or parent only for those.
+    /// </summary>
+    public static bool AnyRunning(IEnumerable<(string Name, int Id)> processes, string grokExecutable, Func<int, string?> imagePath,
+        Func<int, string?> commandLine, Func<int, int?> parentId)
+    {
+        foreach (var (name, id) in processes)
+            if (MayBeInstaller(name) && IsInstaller(imagePath(id), grokExecutable, () => commandLine(id),
+                    () => parentId(id) is { } parent ? imagePath(parent) : null)) return true;
+        return false;
+    }
+
     /// <param name="commandLine">Read only for an NSIS uninstaller copy; null when Windows won't say.</param>
     /// <param name="parentImagePath">The parent process's program path, read only for an NSIS uninstaller copy.</param>
     public static bool IsInstaller(string? imagePath, string grokExecutable, Func<string?>? commandLine = null, Func<string?>? parentImagePath = null)
