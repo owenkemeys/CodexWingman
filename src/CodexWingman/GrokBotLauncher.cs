@@ -22,6 +22,7 @@ internal sealed class GrokBotLauncher(string wingmanDataRoot, Func<IEnumerable<i
         Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData));
     public string UserData { get; } = GrokBotLaunchPolicy.UserDataDirectory(
         Environment.GetFolderPath(Environment.SpecialFolder.ApplicationData));
+    public GrokBotStarts Starts { get; } = new();
 
     public bool IsInstalled() => File.Exists(Executable);
 
@@ -96,23 +97,6 @@ internal sealed class GrokBotLauncher(string wingmanDataRoot, Func<IEnumerable<i
     private static extern bool GetLastInputInfo(ref LastInputInfo info);
 
     /// <summary>Grok Bot.exe's file version (null when unreadable); a change proves Grok Bot updated.</summary>
-    private readonly HashSet<GrokBotProcess> startedByWingman = [];
-
-    public bool StartedByWingman(GrokBotProcess process)
-    {
-        lock (startedByWingman) return startedByWingman.Contains(process);
-    }
-
-    /// <summary>Records a Grok Bot Wingman started, the moment Windows started it.</summary>
-    private void RecordStart(GrokBotProcess process)
-    {
-        lock (startedByWingman)
-        {
-            if (startedByWingman.Count > 64) startedByWingman.Clear();
-            startedByWingman.Add(process);
-        }
-    }
-
     public string? ExecutableVersion()
     {
         try { return File.Exists(Executable) ? FileVersionInfo.GetVersionInfo(Executable).FileVersion : null; }
@@ -522,8 +506,7 @@ internal sealed class GrokBotLauncher(string wingmanDataRoot, Func<IEnumerable<i
         GrokBotProcess identity;
         using (var process = Process.Start(start) ?? throw new InvalidOperationException("Grok Bot did not start."))
             identity = new GrokBotProcess(process.Id, StartedUtc(process));
-        RecordStart(identity);
-        started?.Invoke(identity);
+        Starts.Started(identity, started);
         AppRuntimePortFile.Write(RuntimePath, port);
         WingmanLog.Write("grok-bot-start", ("port", port));
         return identity;

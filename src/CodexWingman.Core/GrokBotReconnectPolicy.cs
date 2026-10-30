@@ -20,8 +20,34 @@ public interface IGrokBotFacts
 {
     string? CommandLine(int processId);
     string? ExecutableVersion();
-    /// <summary>Whether Wingman started <paramref name="process"/> itself, recorded the moment Windows started it.</summary>
-    bool StartedByWingman(GrokBotProcess process);
+    /// <summary>The Grok Bot processes Wingman started itself, recorded the moment Windows started each.</summary>
+    GrokBotStarts Starts { get; }
+}
+
+/// <summary>
+/// Every Grok Bot Wingman starts, whichever path started it (a prompt's run or Open window), recorded the moment Windows
+/// started it, so no prompt ever offers one of them as opened again without Wingman.
+/// </summary>
+public sealed class GrokBotStarts
+{
+    private const int Kept = 64;
+    private readonly HashSet<GrokBotProcess> started = [];
+
+    /// <summary>Records <paramref name="process"/> as started by Wingman, then tells <paramref name="heard"/> (when given).</summary>
+    public void Started(GrokBotProcess process, Action<GrokBotProcess>? heard)
+    {
+        lock (started)
+        {
+            if (started.Count >= Kept) started.Clear();
+            started.Add(process);
+        }
+        heard?.Invoke(process);
+    }
+
+    public bool Contains(GrokBotProcess process)
+    {
+        lock (started) return started.Contains(process);
+    }
 }
 
 /// <summary>
@@ -164,7 +190,7 @@ public sealed class GrokBotReconnectPolicy
         }
         // A Grok Bot Wingman started itself is never offered as reopened without Wingman, even when an error right after
         // its start (writing its port down, say) left it unconnected.
-        if (!wasConnected || promptedProcess == process || facts.StartedByWingman(process)) return null;
+        if (!wasConnected || promptedProcess == process || facts.Starts.Contains(process)) return null;
         if (now - unconnectedSince < Settle || observation.UserIdle > PresentWithin || observation.FullScreen) return null;
         promptedProcess = process;
         return new GrokBotReconnectOffer(process.Id, UpdateProven(process, facts), now, process.Started);

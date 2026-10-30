@@ -67,9 +67,7 @@ internal static class GrokBotReconnectTests
         public int VersionReads;
         public string? CommandLine(int processId) => commandLine?.Invoke(processId);
         public string? ExecutableVersion() { VersionReads++; return Version; }
-        /// <summary>The Grok Bot processes Wingman started itself.</summary>
-        public readonly HashSet<GrokBotProcess> Started = [];
-        public bool StartedByWingman(GrokBotProcess process) => Started.Contains(process);
+        public GrokBotStarts Starts { get; } = new();
     }
 
     private static GrokBotReconnectOffer?[] Play(GrokBotReconnectPolicy policy, IGrokBotFacts facts,
@@ -1852,7 +1850,7 @@ internal static class GrokBotReconnectTests
         }
         var launcher = File.ReadAllText(Path.Combine(RepositoryRoot(), "src", "CodexWingman", "GrokBotLauncher.cs"));
         var start = launcher.IndexOf("Process.Start(start)", StringComparison.Ordinal);
-        var heard = launcher.IndexOf("started?.Invoke(identity);", StringComparison.Ordinal);
+        var heard = launcher.IndexOf("Starts.Started(identity, started);", StringComparison.Ordinal);
         Equal(true, start > 0 && heard > start && heard < launcher.IndexOf("AppRuntimePortFile.Write(RuntimePath, port);", start, StringComparison.Ordinal)
             && launcher.Contains("public GrokBotProcess? Start(GrokBotRelaunch.ClosedProcess proof) => launcher.StartWithPort(started);", StringComparison.Ordinal),
             "the real start records Grok Bot the moment it started, before writing the port file");
@@ -1866,7 +1864,21 @@ internal static class GrokBotReconnectTests
     {
         var started = new DateTime(2026, 1, 1, 9, 0, 0, DateTimeKind.Utc);
         var facts = new Facts();
-        facts.Started.Add(new GrokBotProcess(Second, started));
+        // Open window's start: recorded with no one else to tell; a prompt's run is told after the record.
+        facts.Starts.Started(new GrokBotProcess(Second, started), null);
+        var heard = new List<bool>();
+        var told = new GrokBotProcess(Third + 5, started);
+        facts.Starts.Started(told, process => heard.Add(facts.Starts.Contains(process)));
+        Equal("True", string.Join(",", heard), "a prompt's run hears of its start once, after it is recorded");
+        Equal(true, facts.Starts.Contains(new GrokBotProcess(Second, started)), "a later start keeps the earlier ones");
+        var lost = 0;
+        for (var id = 0; id < 200; id++)
+        {
+            facts.Starts.Started(new GrokBotProcess(5000 + id, started), null);
+            if (!facts.Starts.Contains(new GrokBotProcess(5000 + id, started))) lost++;
+        }
+        Equal(0, lost, "the latest start is always kept");
+        facts.Starts.Started(new GrokBotProcess(Second, started), null);
         var policy = new GrokBotReconnectPolicy();
         policy.Observe(new GrokBotObservation(First, true, Present, started.AddHours(-1)), T0, facts);
         GrokBotReconnectOffer? offer = null;
@@ -1878,9 +1890,10 @@ internal static class GrokBotReconnectTests
         Equal(Third, offer?.ProcessId, "a Grok Bot Wingman didn't start is prompted as before");
         var launcher = File.ReadAllText(Path.Combine(RepositoryRoot(), "src", "CodexWingman", "GrokBotLauncher.cs"));
         var start = launcher.IndexOf("Process.Start(start)", StringComparison.Ordinal);
-        var recorded = launcher.IndexOf("RecordStart(identity);", StringComparison.Ordinal);
+        var recorded = launcher.IndexOf("Starts.Started(identity, started);", StringComparison.Ordinal);
         Equal(true, start > 0 && recorded > start && recorded < launcher.IndexOf("AppRuntimePortFile.Write(RuntimePath, port);", start, StringComparison.Ordinal)
-            && launcher.Split("RecordStart(").Length - 1 == 2, "every start Wingman makes is recorded the moment it started, before writing the port file");
+            && launcher.Split("Process.Start(").Length - 1 == 1 && launcher.Contains("public GrokBotStarts Starts { get; } = new();", StringComparison.Ordinal),
+            "the one start Wingman makes is recorded the moment it started, before writing the port file, in the Starts the policy reads");
     }
 
     /// <summary>The run's steps, but the look after the run can't see Grok Bot.</summary>
