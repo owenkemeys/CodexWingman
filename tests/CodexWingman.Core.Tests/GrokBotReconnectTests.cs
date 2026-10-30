@@ -1159,10 +1159,10 @@ internal static class GrokBotReconnectTests
         Equal(true, GrokBotRelaunch.UpdateUnderWay(false, null, stamp), "Grok Bot.exe missing");
         Equal(true, GrokBotRelaunch.UpdateUnderWay(false, stamp with { Length = 101 }, stamp), "Grok Bot.exe changed");
         var open = launcher[launcher.IndexOf("public async Task<GrokBotOpen> OpenAsync", StringComparison.Ordinal)..launcher.IndexOf("private async Task ThrowIfUpdateUnderWayAsync", StringComparison.Ordinal)];
-        Equal(true, open.Split("ThrowIfUpdateUnderWayAsync(stamp)").Length == 2
-            && open.IndexOf("ThrowIfUpdateUnderWayAsync(stamp)", StringComparison.Ordinal) < open.IndexOf("confirmRelaunch()", StringComparison.Ordinal)
-            && open.Split("StartWithPort()").Length == 2 && open.IndexOf("StartWithPort()", StringComparison.Ordinal) < open.IndexOf("confirmRelaunch()", StringComparison.Ordinal),
-            "Open window checks before asking, and starts directly only when no Grok Bot runs");
+        var direct = open[open.IndexOf("if (running.Length == 0)", StringComparison.Ordinal)..open.IndexOf("return new(GrokBotOpenStep.Started);", StringComparison.Ordinal)];
+        Equal((2, true, 2, true), (open.Split("ThrowIfUpdateUnderWayAsync(stamp)").Length, direct.Contains("await ThrowIfUpdateUnderWayAsync(stamp);\n                StartWithPort();", StringComparison.Ordinal),
+            open.Split("StartWithPort()").Length, open.IndexOf("StartWithPort()", StringComparison.Ordinal) < open.IndexOf("confirmRelaunch()", StringComparison.Ordinal)),
+            "Open window checks for an installer only right before a direct start, when no Grok Bot runs; with Grok Bot running it asks as before");
         // After the Yes it only asks Grok Bot to close; the close wait and the start are the prompt run's
         // (GrokBotPromptSteps.AfterApprovedCloseAsync, behaviour in OpenWindowsCloseWaitIsUpdateAware).
         var promptSteps = File.ReadAllText(Path.Combine(RepositoryRoot(), "src", "CodexWingman.Core", "GrokBotPromptRun.cs"));

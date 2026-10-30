@@ -251,14 +251,16 @@ internal sealed class GrokBotLauncher(string wingmanDataRoot, Func<IEnumerable<i
             finally { foreach (var process in hooked) process.Dispose(); }
             return new(GrokBotOpenStep.Brought);
         }
-        // Kept for this feature: starting Grok Bot.exe while its installer replaces it could break the very update Wingman reconnects after.
-        await ThrowIfUpdateUnderWayAsync(stamp);
         var closed = MainProcess();
         var running = Running();
         try
         {
             if (running.Length == 0)
             {
+                // Only before a direct start: starting Grok Bot.exe while its installer replaces it could break the very
+                // update Wingman reconnects after. With Grok Bot running the question comes as before; the run after the
+                // Yes waits for an update itself.
+                await ThrowIfUpdateUnderWayAsync(stamp);
                 StartWithPort();
                 await WaitForWindowAsync(cancellationToken);
                 return new(GrokBotOpenStep.Started);
