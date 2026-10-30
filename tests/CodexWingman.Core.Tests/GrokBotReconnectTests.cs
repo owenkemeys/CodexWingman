@@ -634,6 +634,11 @@ internal static class GrokBotReconnectTests
         Ends(Run(new FakeControl(new FakeProcess(target, []) { Exited = true }), connects: false), GrokBotReconnectOutcome.NotConnected, GrokBotReconnectPolicy.ConnectFailedText,
             "reopened, but the Helpers didn't connect: the prompt says so");
 
+        var connectThrows = GrokBotReconnectPrompt.AfterYes(target, null, T0);
+        var throwingHost = new FakeHost(new FakeControl(new FakeProcess(target, []) { Exited = true }), none) { ConnectThrows = new InvalidOperationException("The operation was canceled.") };
+        Ends((connectThrows, throwingHost, Act(connectThrows, GrokBotPromptStep.ApprovedClose, throwingHost)), GrokBotReconnectOutcome.NotConnected, GrokBotReconnectPolicy.ConnectFailedText,
+            "reopened, but connecting the Helpers threw: the prompt says so, never the raw text");
+
         var works = Run(new FakeControl(new FakeProcess(target, []) { Exited = true }));
         Equal((GrokBotReconnectOutcome.Connected, GrokBotPromptState.Closed, "connected", true), (works.Result.Outcome, works.Prompt.State, works.Prompt.ClosedBecause,
             works.Host.Log.Contains("changed Connecting") && works.Host.Log.Contains("connect True")), "reopened and connected: says so until then, then closes");
