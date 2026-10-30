@@ -86,21 +86,22 @@ public sealed class GrokBotReconnectPolicy
     public const string CrashedText = "Grok Bot closed unexpectedly, so Wingman didn't reopen it.";
     public const string SessionEndingText = "Windows began to shut down or sign out, so Wingman didn't reopen Grok Bot.";
     /// <summary>The user quit Grok Bot and that started its update: Wingman reopens it once the update has finished.</summary>
-    public const string UpdatingText = "Grok Bot is updating… Wingman reopens it when the update has finished.";
+    public const string UpdatingText = "Grok Bot is updating... Wingman reopens it when the update has finished.";
     public const string UpdateTooLongText = "Grok Bot's update was still running after 5 minutes, so Wingman didn't reopen it.";
     public const string ReopenedText = "Grok Bot was opened again without Wingman.";
     public const string CouldNotOpenText = "Wingman couldn't reopen Grok Bot.";
     public const string ExitTooLongText = "A Grok Bot update started, but Grok Bot didn't finish closing within 30 seconds, so Wingman didn't reopen it.";
     public const string GoneText = "Grok Bot closed before Wingman could reopen it.";
+    public const string ReplacedText = "Another Grok Bot replaced the one you chose, so Wingman didn't reopen it.";
     public const string QuitTimedOutText = "Grok Bot wasn't closed within 10 minutes, so Wingman left it running.";
     public const string NotClosedText = "Grok Bot didn't close within 20 seconds, so Wingman left it running.";
-    public const string OpeningText = "Wingman is opening Grok Bot…";
+    public const string OpeningText = "Wingman is opening Grok Bot...";
     public const string FailedText = "Something went wrong, so Wingman didn't reopen Grok Bot. Details are in Wingman's log.";
     /// <summary>Wingman's own run ended before it could reopen Grok Bot, and not because the user cancelled it.</summary>
     public const string StoppedText = "Wingman stopped before it could reopen Grok Bot.";
     /// <summary>Grok Bot runs with Wingman's port, but connecting the Helpers to it failed.</summary>
     public const string ConnectFailedText = "Grok Bot is open, but Wingman couldn't connect its Helpers. Details are in Wingman's log.";
-    public const string ConnectingText = "Wingman is connecting Grok Bot's Helpers…";
+    public const string ConnectingText = "Wingman is connecting Grok Bot's Helpers...";
 
     private bool wasConnected;
     private GrokBotProcess? connectedProcess;
@@ -194,15 +195,15 @@ public enum GrokBotPromptState
 {
     /// <summary>[Reconnect] [Not now].</summary>
     Offered,
-    /// <summary>A button was pressed: a disabled "Working…" button; acts once Wingman is free.</summary>
+    /// <summary>A button was pressed: a disabled "Working..." button; acts once Wingman is free.</summary>
     Working,
     /// <summary>Waiting for the user to quit that Grok Bot process; [Cancel].</summary>
     WaitingForQuit,
-    /// <summary>The user quit it and Grok Bot's update is running: "Grok Bot is updating…"; [Cancel]. Wingman reopens it after.</summary>
+    /// <summary>The user quit it and Grok Bot's update is running: "Grok Bot is updating..."; [Cancel]. Wingman reopens it after.</summary>
     Updating,
     /// <summary>It quit, but Wingman couldn't open it again: says why; [Open Grok Bot] [Not now].</summary>
     CouldNotStart,
-    /// <summary>Grok Bot runs with the port: Wingman connects its Helpers; a disabled "Working…". Closes only once they are connected.</summary>
+    /// <summary>Grok Bot runs with the port: Wingman connects its Helpers; a disabled "Working...". Closes only once they are connected.</summary>
     Connecting,
     Closed,
 }
@@ -219,8 +220,8 @@ public enum GrokBotPromptStep { None, Reconnect, Open, HandOver, Connect, Approv
 /// that process exits or is replaced, when Grok Bot connects, or after Not now. Once the user has pressed Reconnect,
 /// it never closes silently: it closes once Grok Bot is reconnected (or the user cancels); when another Grok Bot opens
 /// after the quit it hands over to a prompt for that one, or else stays and says "Grok Bot was opened again without
-/// Wingman."; it shows "Grok Bot is updating…" while an update runs, or stays and says why Wingman couldn't open it, with an
-/// Open Grok Bot button. A button pressed while Wingman is busy shows "Working…" and
+/// Wingman."; it shows "Grok Bot is updating..." while an update runs, or stays and says why Wingman couldn't open it, with an
+/// Open Grok Bot button. A button pressed while Wingman is busy shows "Working..." and
 /// acts once Wingman is free.
 /// </summary>
 public sealed class GrokBotReconnectPrompt(GrokBotReconnectOffer offer)
@@ -237,7 +238,7 @@ public sealed class GrokBotReconnectPrompt(GrokBotReconnectOffer offer)
     public string? Problem { get; private set; }
 
     /// <summary>
-    /// The window's text for the current state. "Working…" never shows the reason from before the press: it says Wingman is
+    /// The window's text for the current state. "Working..." never shows the reason from before the press: it says Wingman is
     /// opening Grok Bot after Open Grok Bot, and the prompt's own text after Reconnect.
     /// </summary>
     public string Message => State switch
@@ -260,7 +261,7 @@ public sealed class GrokBotReconnectPrompt(GrokBotReconnectOffer offer)
         GrokBotPromptState.WaitingForQuit or GrokBotPromptState.Updating => (null, false, "Cancel"),
         GrokBotPromptState.CouldNotStart => ("Open Grok Bot", true, "Not now"),
         GrokBotPromptState.Offered => ("Reconnect", true, "Not now"),
-        _ => ("Working…", false, "Not now"),
+        _ => ("Working...", false, "Not now"),
     };
 
     /// <summary>
@@ -427,6 +428,7 @@ public sealed class GrokBotReconnectPrompt(GrokBotReconnectOffer offer)
         GrokBotReconnectOutcome.UpdateRunning => GrokBotRelaunch.UpdateRunningText,
         GrokBotReconnectOutcome.ExitTooLong => GrokBotReconnectPolicy.ExitTooLongText,
         GrokBotReconnectOutcome.Gone => GrokBotReconnectPolicy.GoneText,
+        GrokBotReconnectOutcome.Replaced => GrokBotReconnectPolicy.ReplacedText,
         GrokBotReconnectOutcome.Failed => GrokBotReconnectPolicy.FailedText,
         GrokBotReconnectOutcome.Reopened or GrokBotReconnectOutcome.UpdatedAndReopened => GrokBotReconnectPolicy.ReopenedText,
         GrokBotReconnectOutcome.Stopped or GrokBotReconnectOutcome.Cancelled => GrokBotReconnectPolicy.StoppedText,
@@ -447,12 +449,14 @@ public sealed class GrokBotReconnectPrompt(GrokBotReconnectOffer offer)
 /// <summary>What a press on the prompt led to. Only <see cref="Relaunched"/> means Grok Bot was opened again.</summary>
 public enum GrokBotReconnectOutcome
 {
-    /// <summary>The offer's Grok Bot process was gone or replaced at the press: nothing started; the prompt says so.</summary>
+    /// <summary>The offer's Grok Bot process was gone at the press: nothing started; the prompt says so.</summary>
     Gone,
+    /// <summary>Another Grok Bot process runs instead of the offer's at the press: nothing started; the prompt says so.</summary>
+    Replaced,
     AlreadyConnected,
     /// <summary>Grok Bot already had a usable port: adopted, nothing restarted.</summary>
     Adopted,
-    /// <summary>Wingman was busy: the prompt shows "Working…" and acts once free.</summary>
+    /// <summary>Wingman was busy: the prompt shows "Working..." and acts once free.</summary>
     Busy,
     /// <summary>Not now or Cancel: nothing started.</summary>
     Cancelled,
@@ -545,7 +549,7 @@ public static class GrokBotReconnectRun
     private static async Task<GrokBotReconnectResult> RunAsync(GrokBotReconnectOffer offer, GrokBotObservation current, IGrokBotReconnectSteps steps, CancellationToken cancellationToken)
     {
         if (current.Connected) return new(GrokBotReconnectOutcome.AlreadyConnected);
-        if (!offer.Owns(current)) return new(GrokBotReconnectOutcome.Gone);
+        if (!offer.Owns(current)) return new(current.Process is null ? GrokBotReconnectOutcome.Gone : GrokBotReconnectOutcome.Replaced);
         if (steps.AdoptListeningPort(offer.ProcessId)) return new(GrokBotReconnectOutcome.Adopted);
         if (steps.Busy) return new(GrokBotReconnectOutcome.Busy);
         steps.WaitingForQuit();
