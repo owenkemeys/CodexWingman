@@ -785,14 +785,42 @@ internal static class GrokBotReconnectTests
         var tray = File.ReadAllText(Path.Combine(RepositoryRoot(), "src", "CodexWingman", "TrayApplicationContext.cs"));
         Equal(true, tray.Contains("Microsoft.Win32.SystemEvents.SessionEnding += OnSessionEnding;", StringComparison.Ordinal)
             && tray.Contains("Microsoft.Win32.SystemEvents.SessionEnding -= OnSessionEnding;", StringComparison.Ordinal)
-            && tray.Contains("        sessionEnding = true;\n", StringComparison.Ordinal)
-            && tray.Contains("tray.grokLauncher.ReconnectAsync(target, () => !Busy, () => tray.sessionEnding, cancellationToken)", StringComparison.Ordinal)
-            && tray.Contains("tray.grokLauncher.StartAfterQuitAsync(quit, () => !Busy, () => tray.sessionEnding, cancellationToken)", StringComparison.Ordinal),
-            "the tray tells the relaunch when Windows is shutting down or signing out");
+            && tray.Contains("        sessionWatch.SessionEnding();\n", StringComparison.Ordinal),
+            "the tray tells the runs under way when Windows is shutting down or signing out");
+        TheShutdownBelongsToTheRunsItStopped(tray);
         var launcher = File.ReadAllText(Path.Combine(RepositoryRoot(), "src", "CodexWingman", "GrokBotLauncher.cs"));
         Equal(true, launcher.Contains("public bool SessionEnding() => sessionEnding();", StringComparison.Ordinal)
             && launcher.Contains("public int? ExitCode => HasExited && GetExitCodeProcess(handle, out var code) ? unchecked((int)code) : null;", StringComparison.Ordinal),
             "the launcher passes it on and reads the real exit code from its process handle");
+    }
+
+    /// <summary>
+    /// Windows doesn't say when another app cancels a shutdown, so the news is scoped to the runs under way: a run begun
+    /// after a cancelled shutdown (the next Reconnect, Open Grok Bot, Open window or Repair) starts unmarked.
+    /// </summary>
+    private static void TheShutdownBelongsToTheRunsItStopped(string tray)
+    {
+        var watch = new GrokBotSessionWatch();
+        var during = watch.Begin();
+        var other = watch.Begin();
+        watch.SessionEnding();
+        Equal((true, true), (during.Ending, other.Ending), "every run under way is told");
+        during.Dispose();
+        other.Dispose();
+        using var next = watch.Begin();
+        Equal(false, next.Ending, "a run begun after a shutdown another app cancelled starts unmarked");
+        using var later = watch.Begin();
+        watch.SessionEnding();
+        Equal((true, true), (next.Ending, later.Ending), "and is told about the next one");
+        Equal(true, !tray.Contains("bool sessionEnding", StringComparison.Ordinal) && !tray.Contains("tray.sessionEnding", StringComparison.Ordinal)
+            && tray.Split("using var session = sessionWatch.Begin();").Length - 1 == 2 && !tray.Contains("() => sessionEnding", StringComparison.Ordinal)
+            && tray.Split("() => session.Ending").Length - 1 == 5
+            && tray.Contains("tray.grokLauncher.ReconnectAsync(target, () => !Busy, () => session.Ending, cancellationToken)", StringComparison.Ordinal)
+            && tray.Contains("tray.grokLauncher.StartAfterQuitAsync(quit, () => !Busy, () => session.Ending, cancellationToken)", StringComparison.Ordinal)
+            && tray.Contains("tray.grokLauncher.OpenAfterPressAsync(target, () => !Busy, () => session.Ending, cancellationToken)", StringComparison.Ordinal)
+            && tray.Contains("tray.grokLauncher.AfterUpdateAsync(quit, () => !Busy, () => session.Ending, cancellationToken)", StringComparison.Ordinal)
+            && tray.Contains("() => SetBusy(true, \"Grok Bot is updating...\"), () => session.Ending))", StringComparison.Ordinal),
+            "the tray keeps no shutdown flag of its own: the prompt's run and Open window/Repair each begin their own");
     }
 
     /// <summary>The prompt is closed from its own click handlers: hidden at once, disposed after the handler returns.</summary>

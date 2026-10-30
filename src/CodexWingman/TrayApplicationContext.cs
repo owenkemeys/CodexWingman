@@ -67,7 +67,8 @@ internal sealed class TrayApplicationContext : ApplicationContext
     private System.Windows.Forms.Timer grokReconnectTimer = null!;
     // Set when Windows says it is shutting down or signing out: the reconnect never starts Grok Bot then. Cleared by the
     // user's next Reconnect or Open Grok Bot press (a shutdown another app cancelled).
-    private volatile bool sessionEnding;
+    /// <summary>Windows shutting down or signing out, per Grok Bot run (a shutdown another app cancels isn't remembered).</summary>
+    private readonly GrokBotSessionWatch sessionWatch = new();
     private bool reloadPending;
     private bool synchronizingMenu;
     private bool checkingRelease;
@@ -1043,6 +1044,7 @@ internal sealed class TrayApplicationContext : ApplicationContext
     {
         if (busy || exiting) return;
         // 2 minutes, paused while the user answers Yes/No; after the answer, room for an update the close starts too.
+        using var session = sessionWatch.Begin();
         using var deadline = new CancellationTokenSource(TimeSpan.FromMinutes(2));
         activeInteractiveOperation = deadline;
         SetBusy(true, "Opening Grok Bot...");
@@ -1055,7 +1057,7 @@ internal sealed class TrayApplicationContext : ApplicationContext
             Func<bool> confirm = () => GrokBotAnswerTime.AskOffTheClock(deadline, GrokBotAnswerTime.AfterYes(GrokBotRelaunchLimits.Default), ask);
             // A Grok Bot already running with a usable port Wingman didn't launch is adopted first, so nothing restarts.
             if (grokLauncher.MainProcess() is { } running) AdoptGrokBotPort(running.Id, "open");
-            if (!await grokLauncher.OpenAsync(confirm, deadline.Token, () => SetBusy(true, "Grok Bot is updating..."), () => sessionEnding))
+            if (!await grokLauncher.OpenAsync(confirm, deadline.Token, () => SetBusy(true, "Grok Bot is updating..."), () => session.Ending))
             {
                 if (plainEntry)
                     WingmanLog.Write("plain-launch", ("app", WingmanLaunchTarget.GrokBot), ("step", PlainLaunchPolicy.Decide(AppState.RunningNotConnected)));
@@ -1198,7 +1200,6 @@ internal sealed class TrayApplicationContext : ApplicationContext
         window.ReconnectClicked += () =>
         {
             if (!ReferenceEquals(grokPrompt, prompt)) return;
-            sessionEnding = false;
             var actNow = prompt.Reconnect(busy || initializing || exiting);
             WingmanLog.Write("grok-bot-reconnect-clicked", ("process", offer.ProcessId), ("now", actNow));
             if (actNow) _ = ActOnGrokPromptAsync(prompt, GrokBotPromptStep.Reconnect);
@@ -1207,7 +1208,6 @@ internal sealed class TrayApplicationContext : ApplicationContext
         window.OpenClicked += () =>
         {
             if (!ReferenceEquals(grokPrompt, prompt)) return;
-            sessionEnding = false;
             var actNow = prompt.Open(busy || initializing || exiting);
             WingmanLog.Write("grok-bot-reconnect-open-clicked", ("process", offer.ProcessId), ("now", actNow));
             if (actNow) _ = ActOnGrokPromptAsync(prompt, GrokBotPromptStep.Open);
@@ -1258,7 +1258,7 @@ internal sealed class TrayApplicationContext : ApplicationContext
     /// <summary>Windows is shutting down or signing out: stop any reconnect wait, so Grok Bot is never started now.</summary>
     private void OnSessionEnding(object? sender, Microsoft.Win32.SessionEndingEventArgs e)
     {
-        sessionEnding = true;
+        sessionWatch.SessionEnding();
         WingmanLog.Write("grok-bot-reconnect-session-ending", ("reason", e.Reason), ("waiting", grokPromptWait is not null));
         grokPromptWait?.Cancel();
     }
@@ -1273,7 +1273,8 @@ internal sealed class TrayApplicationContext : ApplicationContext
     {
         using var wait = new CancellationTokenSource();
         grokPromptWait = wait;
-        var steps = new TrayReconnectSteps(this, prompt);
+        using var session = sessionWatch.Begin();
+        var steps = new TrayReconnectSteps(this, prompt, session);
         GrokBotReconnectResult result;
         try
         {
@@ -1316,7 +1317,7 @@ internal sealed class TrayApplicationContext : ApplicationContext
         SyncGrokPromptWindow();
     }
 
-    private sealed class TrayReconnectSteps(TrayApplicationContext tray, GrokBotReconnectPrompt prompt) : IGrokBotReconnectSteps
+    private sealed class TrayReconnectSteps(TrayApplicationContext tray, GrokBotReconnectPrompt prompt, GrokBotSessionWatch.Run session) : IGrokBotReconnectSteps
     {
         public GrokBotObservation Observe() => tray.ObserveGrokBot();
         public bool AdoptListeningPort(int process) => tray.AdoptGrokBotPort(process, "reconnect");
@@ -1327,9 +1328,9 @@ internal sealed class TrayApplicationContext : ApplicationContext
             if (ReferenceEquals(tray.grokPrompt, prompt)) tray.SyncGrokPromptWindow();
         }
         public Task<GrokBotRelaunchResult> RelaunchAfterQuitAsync(GrokBotProcess target, CancellationToken cancellationToken) =>
-            tray.grokLauncher.ReconnectAsync(target, () => !Busy, () => tray.sessionEnding, cancellationToken);
+            tray.grokLauncher.ReconnectAsync(target, () => !Busy, () => session.Ending, cancellationToken);
         public Task<GrokBotRelaunchResult> StartAsync(GrokBotRelaunch.ClosedProcess quit, CancellationToken cancellationToken) =>
-            tray.grokLauncher.StartAfterQuitAsync(quit, () => !Busy, () => tray.sessionEnding, cancellationToken);
+            tray.grokLauncher.StartAfterQuitAsync(quit, () => !Busy, () => session.Ending, cancellationToken);
         public void Updating(GrokBotRelaunch.ClosedProcess quit)
         {
             WingmanLog.Write("grok-bot-reconnect-updating", ("process", quit.Process.Id));
@@ -1337,9 +1338,9 @@ internal sealed class TrayApplicationContext : ApplicationContext
             if (ReferenceEquals(tray.grokPrompt, prompt)) tray.SyncGrokPromptWindow();
         }
         public Task<GrokBotRelaunchResult> OpenAfterPressAsync(GrokBotProcess target, CancellationToken cancellationToken) =>
-            tray.grokLauncher.OpenAfterPressAsync(target, () => !Busy, () => tray.sessionEnding, cancellationToken);
+            tray.grokLauncher.OpenAfterPressAsync(target, () => !Busy, () => session.Ending, cancellationToken);
         public Task<GrokBotRelaunchResult> AfterUpdateAsync(GrokBotRelaunch.ClosedProcess quit, CancellationToken cancellationToken) =>
-            tray.grokLauncher.AfterUpdateAsync(quit, () => !Busy, () => tray.sessionEnding, cancellationToken);
+            tray.grokLauncher.AfterUpdateAsync(quit, () => !Busy, () => session.Ending, cancellationToken);
     }
 
     /// <summary>After the reconnect started Grok Bot with Wingman's port: waits for its window and connects the Helpers.</summary>
