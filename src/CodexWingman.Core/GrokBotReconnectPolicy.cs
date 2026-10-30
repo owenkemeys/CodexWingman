@@ -58,8 +58,9 @@ public sealed class GrokBotStarts
 
 /// <summary>
 /// The one prompt Wingman showed for one unconnected Grok Bot process. <see cref="OpenedBy"/> says how the Grok Bot it holds
-/// opened, and the title follows it: AfterUpdate only when an update is proven (the process was started with <c>--updated</c>,
-/// or Grok Bot.exe's version changed since Wingman last had it connected).
+/// opened: AfterUpdate only when an update is proven (the process was started with <c>--updated</c>, or Grok Bot.exe's version
+/// changed since Wingman last had it connected). The prompt's title comes from it and from what the prompt says
+/// (<see cref="GrokBotReconnectPrompt.Title"/>).
 /// </summary>
 public sealed record GrokBotReconnectOffer(int ProcessId, GrokBotOpenedBy OpenedBy, DateTimeOffset ShownAt, DateTime? ProcessStarted = null)
 {
@@ -70,13 +71,6 @@ public sealed record GrokBotReconnectOffer(int ProcessId, GrokBotOpenedBy Opened
 
     public bool Updated => OpenedBy == GrokBotOpenedBy.AfterUpdate;
 
-    /// <summary>The window's title, from how the held Grok Bot opened; never "reopened without Wingman" for one Wingman opened.</summary>
-    public string Title => OpenedBy switch
-    {
-        GrokBotOpenedBy.AfterUpdate => GrokBotReconnectPolicy.UpdatedTitle,
-        GrokBotOpenedBy.Wingman => GrokBotReconnectPolicy.ApprovedTitle,
-        _ => GrokBotReconnectPolicy.ReopenedTitle,
-    };
     public string Text => GrokBotReconnectPolicy.PromptText;
 }
 
@@ -272,6 +266,12 @@ public enum GrokBotHeldState { Unknown, Open, Gone }
 /// </summary>
 public sealed record GrokBotPromptReason(string WhileOpen, string WhenGone, string? WhenUnknown = null)
 {
+    /// <summary>
+    /// Every word of this reason speaks for Wingman: it opened Grok Bot, or connected or failed to connect its Helpers
+    /// (<see cref="AfterStart"/>, <see cref="NotConnected"/>), so the title is Wingman's (<see cref="GrokBotReconnectPrompt.Title"/>).
+    /// </summary>
+    public bool ForWingman { get; private init; }
+
     public const string StillOpenText = "Grok Bot is still open.";
 
     private static GrokBotPromptReason Because(string cause, string whenGone, string? detail = null) =>
@@ -289,7 +289,7 @@ public sealed record GrokBotPromptReason(string WhileOpen, string WhenGone, stri
             GrokBotReconnectOutcome.Stopped or GrokBotReconnectOutcome.Cancelled => GrokBotReconnectPolicy.StartedThenStoppedText,
             _ => GrokBotReconnectPolicy.StartedThenFailedText,
         };
-        return new(text, GrokBotReconnectPolicy.ClosedBeforeConnectText, text);
+        return new(text, GrokBotReconnectPolicy.ClosedBeforeConnectText, text) { ForWingman = true };
     }
 
     /// <summary>Every result that leaves the prompt open, except a failed connect (<see cref="NotConnected"/>) and an end after Wingman's start (<see cref="AfterStart"/>).</summary>
@@ -322,10 +322,10 @@ public sealed record GrokBotPromptReason(string WhileOpen, string WhenGone, stri
     /// another; gone, it closed meanwhile; not seen, neutral words. When Wingman stayed busy (<paramref name="busy"/>), that
     /// is the reason, whether or not Grok Bot is still open.
     /// </summary>
-    public static GrokBotPromptReason NotConnected(bool openedByWingman, bool busy = false) => busy
-        ? new(GrokBotReconnectPolicy.ConnectBusyText, GrokBotReconnectPolicy.ClosedBeforeConnectText, GrokBotReconnectPolicy.ConnectBusyText)
-        : new(openedByWingman ? GrokBotReconnectPolicy.OpenedNotConnectedText : GrokBotReconnectPolicy.ConnectFailedText,
-            GrokBotReconnectPolicy.ClosedBeforeConnectText, GrokBotReconnectPolicy.NotConnectedUnseenText);
+    public static GrokBotPromptReason NotConnected(bool openedByWingman, bool busy = false) => (busy
+        ? new GrokBotPromptReason(GrokBotReconnectPolicy.ConnectBusyText, GrokBotReconnectPolicy.ClosedBeforeConnectText, GrokBotReconnectPolicy.ConnectBusyText)
+        : new GrokBotPromptReason(openedByWingman ? GrokBotReconnectPolicy.OpenedNotConnectedText : GrokBotReconnectPolicy.ConnectFailedText,
+            GrokBotReconnectPolicy.ClosedBeforeConnectText, GrokBotReconnectPolicy.NotConnectedUnseenText)) with { ForWingman = true };
 }
 
 /// <summary>What the prompt window shows.</summary>
@@ -416,25 +416,50 @@ public sealed class GrokBotReconnectPrompt(GrokBotReconnectOffer offer)
     /// The window's text for the current state. "Working..." never shows the reason from before the press: it says Wingman is
     /// opening Grok Bot after Open Grok Bot, and the prompt's own text after Reconnect.
     /// </summary>
-    public string Message => State switch
+    public string Message => Shown.Message;
+
+    /// <summary>
+    /// The window's title, decided with <see cref="Message"/> from the same state, so the two never disagree and only change
+    /// together. While the message speaks for Wingman (opening Grok Bot, having opened it, connecting its Helpers, or failing
+    /// to), the title is Wingman's: Grok Bot, or Grok Bot updated for a proven update. Otherwise it says how the Grok Bot the
+    /// prompt holds opened, as before any press.
+    /// </summary>
+    public string Title => Shown.Title;
+
+    private (string Title, string Message) Shown
     {
-        GrokBotPromptState.WaitingForQuit => GrokBotReconnectPolicy.QuitText,
-        GrokBotPromptState.Updating => GrokBotReconnectPolicy.UpdatingText,
-        GrokBotPromptState.CouldNotStart => Problem ?? GrokBotReconnectPolicy.StillRunningText,
-        GrokBotPromptState.Working => WorkingText,
-        GrokBotPromptState.Connecting => connectingText,
-        _ => Problem ?? (Quit is not null ? GrokBotReconnectPolicy.QuitText : GrokBotReconnectPolicy.PromptText),
-    };
+        get
+        {
+            var (message, forWingman) = State switch
+            {
+                GrokBotPromptState.WaitingForQuit => (GrokBotReconnectPolicy.QuitText, false),
+                GrokBotPromptState.Updating => (GrokBotReconnectPolicy.UpdatingText, false),
+                GrokBotPromptState.CouldNotStart when Problem is { } problem => (problem, reason!.ForWingman),
+                GrokBotPromptState.CouldNotStart => (GrokBotReconnectPolicy.StillRunningText, false),
+                GrokBotPromptState.Working => WorkingText,
+                GrokBotPromptState.Connecting => (connectingText, true),
+                _ => (Quit is not null ? GrokBotReconnectPolicy.QuitText : GrokBotReconnectPolicy.PromptText, false),
+            };
+            var title = Offer.OpenedBy switch
+            {
+                GrokBotOpenedBy.AfterUpdate => GrokBotReconnectPolicy.UpdatedTitle,
+                _ when forWingman => GrokBotReconnectPolicy.ApprovedTitle,
+                GrokBotOpenedBy.Wingman => GrokBotReconnectPolicy.ApprovedTitle,
+                _ => GrokBotReconnectPolicy.ReopenedTitle,
+            };
+            return (title, message);
+        }
+    }
 
     /// <summary>
     /// "Working..."'s words name the next step: with the quit's proof, or after Open Grok Bot or the Yes while the held Grok
     /// Bot isn't seen open, Wingman opens Grok Bot; after Reconnect, or Try again while that Grok Bot is still open, the next
     /// step asks for its close, so the words are the prompt's own.
     /// </summary>
-    private string WorkingText => Quit is not null
+    private (string Text, bool ForWingman) WorkingText => Quit is not null
         || lastStep == GrokBotPromptStep.ApprovedClose
         || lastStep == GrokBotPromptStep.Open && Held != GrokBotHeldState.Open
-        ? GrokBotReconnectPolicy.OpeningText : GrokBotReconnectPolicy.PromptText;
+        ? (GrokBotReconnectPolicy.OpeningText, true) : (GrokBotReconnectPolicy.PromptText, false);
 
     /// <summary>
     /// The window's buttons for the current state: the primary one (null: hidden) and whether it is enabled, and the other
