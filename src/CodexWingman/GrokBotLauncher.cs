@@ -302,58 +302,13 @@ internal sealed class GrokBotLauncher(string wingmanDataRoot, Func<IEnumerable<i
     }
 
     /// <summary>
-    /// The reconnect prompt's relaunch. Wingman never closes Grok Bot: it brings exactly <paramref name="target"/>'s window
-    /// forward (id and start time, from one snapshot) and waits up to 10 minutes for the user to quit that process. Grok Bot
-    /// is started only once it has exited, no Grok Bot is left running (up to 20 s) and <paramref name="mayStart"/> holds
-    /// (up to 60 s), and never while a Grok Bot installer runs or Grok Bot.exe changed (GrokBotRelaunch). Relaunched:
-    /// started; the caller waits with <see cref="WaitForWindowAsync"/>.
+    /// Grok Bot's processes for the reconnect prompt's relaunch (GrokBotRelaunch through GrokBotPromptSteps). Wingman never
+    /// closes Grok Bot there: it brings exactly the offer's window forward (id and start time, from one snapshot) and waits
+    /// for the user to quit that process. Grok Bot is started only once it has exited, no Grok Bot is left running and
+    /// <paramref name="mayStart"/> holds, and never while a Grok Bot installer runs, Grok Bot.exe changed, or
+    /// <paramref name="sessionEnding"/> says Windows is shutting down or signing out.
     /// </summary>
-    public async Task<GrokBotRelaunchResult> ReconnectAsync(GrokBotProcess target, Func<bool> mayStart, Func<bool> sessionEnding,
-        Action<GrokBotRelaunch.ClosedProcess> exited, CancellationToken cancellationToken)
-    {
-        if (!IsInstalled()) throw new FileNotFoundException("Grok Bot is not installed in its usual folder.");
-        var result = await GrokBotRelaunch.RunAsync(target, new ProcessControl(this, mayStart, sessionEnding), GrokBotRelaunchLimits.Default,
-            () => DateTime.UtcNow, (wait, token) => Task.Delay(wait, token), cancellationToken, exited);
-        WingmanLog.Write("grok-bot-reconnect-relaunch", ("process", target.Id), ("result", result.Kind));
-        return result;
-    }
-
-    /// <summary>The Open Grok Bot button after Wingman couldn't reopen it: the same bounded, installer-safe start.</summary>
-    public async Task<GrokBotRelaunchResult> StartAfterQuitAsync(GrokBotRelaunch.ClosedProcess quit, Func<bool> mayStart, Func<bool> sessionEnding, CancellationToken cancellationToken)
-    {
-        if (!IsInstalled()) throw new FileNotFoundException("Grok Bot is not installed in its usual folder.");
-        var control = new ProcessControl(this, mayStart, sessionEnding);
-        var result = await GrokBotRelaunch.StartWhenClearAsync(quit, control.ExecutableStamp(), control, GrokBotRelaunchLimits.Default,
-            () => DateTime.UtcNow, (wait, token) => Task.Delay(wait, token), cancellationToken);
-        WingmanLog.Write("grok-bot-reconnect-open", ("process", quit.Process.Id), ("result", result.Kind));
-        return result;
-    }
-
-    /// <summary>Open Grok Bot after Reconnect without the quit's proof (<see cref="GrokBotRelaunch.OpenAfterPressAsync"/>).</summary>
-    public async Task<GrokBotRelaunchResult> OpenAfterPressAsync(GrokBotProcess target, Func<bool> mayStart, Func<bool> sessionEnding,
-        Action<GrokBotRelaunch.ClosedProcess> exited, CancellationToken cancellationToken)
-    {
-        if (!IsInstalled()) throw new FileNotFoundException("Grok Bot is not installed in its usual folder.");
-        var control = new ProcessControl(this, mayStart, sessionEnding);
-        var result = await GrokBotRelaunch.OpenAfterPressAsync(target, control, GrokBotRelaunchLimits.Default,
-            () => DateTime.UtcNow, (wait, token) => Task.Delay(wait, token), cancellationToken, exited);
-        WingmanLog.Write("grok-bot-reconnect-open-after-press", ("process", target.Id), ("result", result.Kind));
-        return result;
-    }
-
-    /// <summary>
-    /// The user's quit started a Grok Bot update: waits for it to finish, then opens Grok Bot with the port (see
-    /// <see cref="GrokBotRelaunch.AfterUpdateAsync"/>). Grok Bot.exe may be missing while the installer replaces it, so
-    /// this doesn't require it to be installed up front; the start's own guards do.
-    /// </summary>
-    public async Task<GrokBotRelaunchResult> AfterUpdateAsync(GrokBotRelaunch.ClosedProcess quit, Func<bool> mayStart, Func<bool> sessionEnding, CancellationToken cancellationToken)
-    {
-        var control = new ProcessControl(this, mayStart, sessionEnding);
-        var result = await GrokBotRelaunch.AfterUpdateAsync(quit, control, GrokBotRelaunchLimits.Default,
-            () => DateTime.UtcNow, (wait, token) => Task.Delay(wait, token), cancellationToken);
-        WingmanLog.Write("grok-bot-reconnect-after-update", ("process", quit.Process.Id), ("result", result.Kind));
-        return result;
-    }
+    public IGrokBotProcessControl Control(Func<bool> mayStart, Func<bool> sessionEnding) => new ProcessControl(this, mayStart, sessionEnding);
 
     private sealed class ProcessControl(GrokBotLauncher launcher, Func<bool> mayStart, Func<bool> sessionEnding) : IGrokBotProcessControl
     {

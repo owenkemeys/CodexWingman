@@ -77,8 +77,9 @@ internal sealed class GrokBotPromptWindow : Form
     }
 
     /// <summary>
-    /// Shows <paramref name="prompt"/>'s state: [Reconnect] [Not now]; a disabled "Working…"; [Cancel] while waiting for the
-    /// quit or while Grok Bot updates; or why Wingman couldn't reopen Grok Bot with [Open Grok Bot] [Not now].
+    /// Shows <paramref name="prompt"/>'s state with its own text and buttons (GrokBotReconnectPrompt.Buttons): [Reconnect]
+    /// [Not now]; a disabled "Working…"; [Cancel] while waiting for the quit or while Grok Bot updates; or why Wingman
+    /// couldn't reopen or connect Grok Bot with [Open Grok Bot] [Not now].
     /// </summary>
     public void Render(GrokBotReconnectPrompt prompt)
     {
@@ -86,29 +87,11 @@ internal sealed class GrokBotPromptWindow : Form
         // The primary button is Open Grok Bot only where it shows it, with or without the quit's proof.
         openMode = prompt.State == GrokBotPromptState.CouldNotStart;
         message.Text = prompt.Message;
-        switch (prompt.State)
-        {
-            case GrokBotPromptState.WaitingForQuit:
-                primary.Visible = false;
-                secondary.Text = "Cancel";
-                break;
-            case GrokBotPromptState.Updating:
-                primary.Visible = false;
-                secondary.Text = "Cancel";
-                break;
-            case GrokBotPromptState.CouldNotStart:
-                primary.Visible = true;
-                primary.Enabled = true;
-                primary.Text = "Open Grok Bot";
-                secondary.Text = "Not now";
-                break;
-            default:
-                primary.Visible = true;
-                primary.Enabled = prompt.State == GrokBotPromptState.Offered;
-                primary.Text = prompt.State == GrokBotPromptState.Offered ? "Reconnect" : "Working…";
-                secondary.Text = "Not now";
-                break;
-        }
+        var (primaryText, primaryEnabled, secondaryText) = prompt.Buttons;
+        primary.Visible = primaryText is not null;
+        primary.Enabled = primaryEnabled;
+        primary.Text = primaryText ?? "";
+        secondary.Text = secondaryText;
         PerformLayout();
         if (IsHandleCreated) Place();
     }
