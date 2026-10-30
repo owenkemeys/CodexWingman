@@ -362,7 +362,7 @@ internal sealed class GrokBotLauncher(string wingmanDataRoot, Func<IEnumerable<i
             finally { foreach (var process in running) process.Dispose(); }
         }
         public void BringForward(IGrokBotProcessHandle process) => ((ProcessHandle)process).BringForward();
-        public bool AnyRunning() => launcher.StillRunning();
+        public bool AnyRunning() => launcher.IsRunning();
         public GrokBotProcess? MainProcess() => launcher.MainProcess();
         public bool MayStart() => mayStart();
         public GrokBotExecutableStamp? ExecutableStamp() => launcher.ExecutableStamp();
@@ -570,26 +570,11 @@ internal sealed class GrokBotLauncher(string wingmanDataRoot, Func<IEnumerable<i
         throw new TimeoutException("Grok Bot started but did not expose its window to Wingman on the local port.");
     }
 
-    /// <summary>
-    /// Whether Grok Bot is still running: Grok Bot itself or its own children (GrokBotLaunchPolicy.KeepsGrokBotRunning). A
-    /// leftover Grok Bot.exe running only a script, such as a detached local-exec daemon, doesn't count unless it owns the
-    /// single-instance window.
-    /// </summary>
-    private bool StillRunning()
+    /// <summary>Whether any Grok Bot.exe runs in this session (Grok Bot or one of its own children, which end with it).</summary>
+    private bool IsRunning()
     {
         var processes = Running();
-        try
-        {
-            HashSet<int>? owners = null;
-            foreach (var process in processes)
-            {
-                var commandLine = CommandLine(process.Id);
-                if (commandLine is null || !GrokBotLaunchPolicy.RunsScriptOnly(commandLine)) return true;
-                owners ??= SingleInstanceWindowOwners();
-                if (GrokBotLaunchPolicy.KeepsGrokBotRunning(commandLine, owners.Contains(process.Id))) return true;
-            }
-            return false;
-        }
+        try { return processes.Length > 0; }
         finally { foreach (var process in processes) process.Dispose(); }
     }
 

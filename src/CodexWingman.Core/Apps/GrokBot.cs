@@ -83,8 +83,9 @@ public static class GrokBotLaunchPolicy
 
     /// <summary>
     /// Whether a Grok Bot.exe command line is its main (browser) process: Chromium's helper processes (renderer, GPU and
-    /// the like) carry a <c>--type=</c> switch before any bare <c>--</c>, and Grok Bot.exe running a script as Node (such
-    /// as its <c>local-exec-daemon\main.cjs</c>) names a script file there. Unreadable (null): not known to be the main one.
+    /// the like, and in 0.78.1 its local-exec daemon, a <c>--type=utility</c> child) carry a <c>--type=</c> switch before any
+    /// bare <c>--</c>. Grok Bot.exe running a script as Node (<c>ELECTRON_RUN_AS_NODE</c>, as an unpackaged Grok Bot starts
+    /// its box-computer server; a packaged 0.78.1 doesn't) names a script file there. Unreadable (null): not known to be the main one.
     /// </summary>
     public static bool IsMainProcess(string? commandLine)
     {
@@ -96,28 +97,6 @@ public static class GrokBotLaunchPolicy
             if (ChromiumSwitch.Parse(argument) is null && IsScript(argument)) return false;
         }
         return true;
-    }
-
-    /// <summary>
-    /// Whether a Grok Bot.exe process means Grok Bot is still running: Grok Bot itself, one of its own Chromium children
-    /// (<c>--type=</c>, which end with it), or a process whose command line can't be read. A Grok Bot.exe running a script as
-    /// Node (such as a detached <c>local-exec-daemon\main.cjs</c>, which can outlive the app) doesn't count, unless it owns
-    /// Grok Bot's single-instance window: then a new launch would only be handed to it.
-    /// </summary>
-    public static bool KeepsGrokBotRunning(string? commandLine, bool ownsSingleInstanceWindow) =>
-        commandLine is null || ownsSingleInstanceWindow || !RunsScriptOnly(commandLine);
-
-    /// <summary>A script argument and no <c>--type=</c> before a bare <c>--</c>, read as <see cref="IsMainProcess"/> does.</summary>
-    public static bool RunsScriptOnly(string commandLine)
-    {
-        var script = false;
-        foreach (var argument in GrokBotReconnectPolicy.SplitCommandLine(commandLine).Skip(1))
-        {
-            if (argument == "--") break;
-            if (ChromiumSwitch.Parse(argument) is ("type", _)) return false;
-            if (ChromiumSwitch.Parse(argument) is null && IsScript(argument)) script = true;
-        }
-        return script;
     }
 
     private static readonly string[] ScriptExtensions = [".js", ".cjs", ".mjs", ".ts", ".cts", ".mts"];

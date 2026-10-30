@@ -5,7 +5,7 @@
 ## Not yet released
 
 - **Grok Bot after an update.** When Grok Bot updates itself and comes back without Wingman's connection, Wingman shows a small prompt window. The reconnect never closes Grok Bot: after **Reconnect**, you close Grok Bot's window and Wingman opens it again connected, also after an update that your close starts. A Grok Bot already running with a usable debugging port is connected to without a restart. Optionally (development builds only, off by default, with a backup), Wingman's port can be added to the arguments of Grok Bot's Start menu shortcut, whose target stays Grok Bot. See [Grok Bot after an update](docs/grok-bot-after-update.md).
-- **Grok Bot `Open window` and `Repair`.** They connect to a Grok Bot that already has a usable port before asking to restart it, start nothing while a Grok Bot installer runs, and no longer count a leftover helper process (a Grok Bot.exe running only a script) as Grok Bot still running. If the close you said Yes to starts Grok Bot's update, Wingman waits for it and then opens Grok Bot.
+- **Grok Bot `Open window` and `Repair`.** They connect to a Grok Bot that already has a usable port before asking to restart it, and start nothing while a Grok Bot installer runs. If the close you said Yes to starts Grok Bot's update, Wingman waits for it and then opens Grok Bot.
 
 ## New in 2.1.1
 

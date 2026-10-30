@@ -697,10 +697,11 @@ internal static class GrokBotReconnectTests
             "the process listing runs on the thread pool");
     }
 
-    /// <summary>Grok Bot.exe running its local-exec daemon script as Node is not Grok Bot's main process; the single-instance owner is preferred.</summary>
+    /// <summary>A --type= child or a Grok Bot.exe running a script as Node is not Grok Bot's main process; the single-instance owner is preferred.</summary>
     private static void TheMainProcessIsGrokBotItself()
     {
-        Equal(false, GrokBotLaunchPolicy.IsMainProcess("\"C:\\Grok Bot\\Grok Bot.exe\" \"C:\\Grok Bot\\resources\\local-exec-daemon\\main.cjs\" --port 4100"), "the local-exec daemon");
+        Equal(false, GrokBotLaunchPolicy.IsMainProcess("\"C:\\Grok Bot\\Grok Bot.exe\" --type=utility --utility-sub-type=node.mojom.NodeService"), "a utility child (0.78.1's local-exec daemon)");
+        Equal(false, GrokBotLaunchPolicy.IsMainProcess("\"C:\\Grok Bot\\Grok Bot.exe\" \"C:\\Grok Bot\\resources\\box-computer\\main.cjs\""), "a script run as Node");
         Equal(false, GrokBotLaunchPolicy.IsMainProcess("\"C:\\Grok Bot\\Grok Bot.exe\" C:\\tools\\helper.MJS"), "any script, any case");
         Equal(true, GrokBotLaunchPolicy.IsMainProcess("\"C:\\Grok Bot\\Grok Bot.exe\" --updated"), "Grok Bot itself");
         Equal(true, GrokBotLaunchPolicy.IsMainProcess("\"C:\\Grok Bot\\Grok Bot.exe\" grokbot://open"), "a link it was opened with");
@@ -713,26 +714,18 @@ internal static class GrokBotReconnectTests
     }
 
     /// <summary>
-    /// "Still running" (the reconnect's settle check and Open window's close wait) counts Grok Bot and its own children only:
-    /// a leftover Grok Bot.exe running a script never blocks a start, unless it holds the single-instance window.
+    /// "Still running" (the reconnect's settle check and Open window's close wait) is any Grok Bot.exe in the session. In
+    /// 0.78.1 every Grok Bot.exe besides the main one is its own <c>--type=</c> child (the local-exec daemon is a
+    /// <c>--type=utility</c> child), and those end with it, so nothing is left out.
     /// </summary>
     private static void StillRunningMeansGrokBotItself()
     {
-        const string daemon = "\"C:\\Grok Bot\\Grok Bot.exe\" \"C:\\Grok Bot\\resources\\local-exec-daemon\\main.cjs\"";
-        Equal(false, GrokBotLaunchPolicy.KeepsGrokBotRunning(daemon, ownsSingleInstanceWindow: false), "a detached local-exec daemon");
-        Equal(false, GrokBotLaunchPolicy.KeepsGrokBotRunning("\"C:\\Grok Bot\\Grok Bot.exe\" C:\\x\\tool.TS --flag", false), "any script");
-        Equal(true, GrokBotLaunchPolicy.KeepsGrokBotRunning(daemon, ownsSingleInstanceWindow: true), "a script holding the single-instance window: a launch would go to it");
-        Equal(true, GrokBotLaunchPolicy.KeepsGrokBotRunning("\"C:\\Grok Bot\\Grok Bot.exe\" --updated", false), "Grok Bot itself");
-        Equal(true, GrokBotLaunchPolicy.KeepsGrokBotRunning("\"C:\\Grok Bot\\Grok Bot.exe\" --type=renderer --lang=en", false), "its renderer");
-        Equal(true, GrokBotLaunchPolicy.KeepsGrokBotRunning("\"C:\\Grok Bot\\Grok Bot.exe\" --type=utility --utility-sub-type=node.mojom.NodeService", false),
-            "its utility process (how 0.78.1 runs the daemon): ends with Grok Bot");
-        Equal(true, GrokBotLaunchPolicy.KeepsGrokBotRunning("\"C:\\Grok Bot\\Grok Bot.exe\" --type=utility x.cjs", false), "a --type= child with a script still counts");
-        Equal(true, GrokBotLaunchPolicy.KeepsGrokBotRunning("\"C:\\Grok Bot\\Grok Bot.exe\" -- x.cjs", false), "after -- it's a plain argument");
-        Equal(true, GrokBotLaunchPolicy.KeepsGrokBotRunning(null, false), "unreadable: counts, so nothing starts on a guess");
         var launcher = File.ReadAllText(Path.Combine(RepositoryRoot(), "src", "CodexWingman", "GrokBotLauncher.cs"));
-        Equal(true, launcher.Contains("public bool AnyRunning() => launcher.StillRunning();", StringComparison.Ordinal)
-            && !launcher.Contains("IsRunning()", StringComparison.Ordinal),
-            "the reconnect and Open window both use StillRunning");
+        var isRunning = launcher[launcher.IndexOf("private bool IsRunning()", StringComparison.Ordinal)..launcher.IndexOf("private Process[] Running()", StringComparison.Ordinal)];
+        Equal(true, launcher.Contains("public bool AnyRunning() => launcher.IsRunning();", StringComparison.Ordinal)
+            && isRunning.Contains("return processes.Length > 0;", StringComparison.Ordinal) && !isRunning.Contains("CommandLine", StringComparison.Ordinal),
+            "the reconnect and Open window count every Grok Bot.exe in the session");
+        Equal(false, typeof(GrokBotLaunchPolicy).GetMethods().Any(method => method.Name is "KeepsGrokBotRunning" or "RunsScriptOnly"), "no script exception is left");
 
         // Open window and Repair use the reconnect's installer guard before any start.
         var stamp = new GrokBotExecutableStamp(new DateTime(2026, 1, 1, 0, 0, 0, DateTimeKind.Utc), 100);
