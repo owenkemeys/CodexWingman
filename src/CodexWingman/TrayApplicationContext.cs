@@ -1327,9 +1327,13 @@ internal sealed class TrayApplicationContext : ApplicationContext
         public bool Installed => tray.grokLauncher.IsInstalled();
         public bool SessionEnding => session.Ending;
         public IGrokBotProcessControl Control() => tray.grokLauncher.Control(() => !Busy, () => session.Ending);
+        private bool afterUpdate;
+        private string? status;
         public void Changed()
         {
-            if (owned is not null && prompt.State == GrokBotPromptState.Updating) tray.SetBusy(true, "Grok Bot is updating...");
+            afterUpdate |= prompt.State == GrokBotPromptState.Updating;
+            if (owned is not null && GrokBotReconnectPolicy.StatusWhileOwned(prompt.State, afterUpdate) is { } text && text != status)
+                tray.SetBusy(true, status = text);
             if (ReferenceEquals(tray.grokPrompt, prompt)) tray.SyncGrokPromptWindow();
         }
         public Task<bool> ConnectAsync(bool started, CancellationToken cancellationToken) => tray.ConnectGrokBotAsync(started, owned);

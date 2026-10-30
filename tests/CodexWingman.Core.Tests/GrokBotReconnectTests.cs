@@ -642,6 +642,17 @@ internal static class GrokBotReconnectTests
         var updating = Run(new FakeControl(new FakeProcess(target, []) { Exited = true }) { InstallerAt = _ => true });
         Ends(updating, GrokBotReconnectOutcome.UpdateTooLong, GrokBotReconnectPolicy.UpdateTooLongText, "the update still runs after 5 minutes: the prompt says so");
         Equal(true, updating.Host.Log.Contains("changed Updating"), "while Wingman waits for the update, the prompt says Grok Bot is updating");
+        // The tray status follows: updating only while it waits, then what Wingman does next; before any update, Open
+        // window's or Repair's own status stays.
+        Equal(("Grok Bot is updating...", "Opening Grok Bot...", "Connecting Grok Bot...", (string?)null, (string?)null, (string?)null),
+            (GrokBotReconnectPolicy.StatusWhileOwned(GrokBotPromptState.Updating, true), GrokBotReconnectPolicy.StatusWhileOwned(GrokBotPromptState.Working, true),
+             GrokBotReconnectPolicy.StatusWhileOwned(GrokBotPromptState.Connecting, true), GrokBotReconnectPolicy.StatusWhileOwned(GrokBotPromptState.Working, false),
+             GrokBotReconnectPolicy.StatusWhileOwned(GrokBotPromptState.Connecting, false), GrokBotReconnectPolicy.StatusWhileOwned(GrokBotPromptState.CouldNotStart, true)),
+            "tray status while Open window or Repair waits");
+        var trayHost = File.ReadAllText(Path.Combine(RepositoryRoot(), "src", "CodexWingman", "TrayApplicationContext.cs"));
+        Equal((true, false), (trayHost.Contains("afterUpdate |= prompt.State == GrokBotPromptState.Updating;", StringComparison.Ordinal)
+            && trayHost.Contains("GrokBotReconnectPolicy.StatusWhileOwned(prompt.State, afterUpdate) is { } text", StringComparison.Ordinal),
+            trayHost.Contains("tray.SetBusy(true, \"Grok Bot is updating...\")", StringComparison.Ordinal)), "the tray takes its status from the prompt's state");
 
         var exitsLate = Run(new FakeControl(new FakeProcess(target, [])) { InstallerAt = check => check >= 1 });
         Ends(exitsLate, GrokBotReconnectOutcome.ExitTooLong, GrokBotReconnectPolicy.ExitTooLongText, "an update started but Grok Bot didn't finish closing: the prompt says so");

@@ -87,6 +87,19 @@ public sealed class GrokBotReconnectPolicy
     public const string SessionEndingText = "Windows began to shut down or sign out, so Wingman didn't reopen Grok Bot.";
     /// <summary>The user quit Grok Bot and that started its update: Wingman reopens it once the update has finished.</summary>
     public const string UpdatingText = "Grok Bot is updating... Wingman reopens it when the update has finished.";
+
+    /// <summary>
+    /// The tray status while Open window or Repair holds Wingman's busy state and its prompt works: "Grok Bot is updating..."
+    /// while it waits for the update, then what it does next. Null keeps the status as it is (before any update, Open
+    /// window's or Repair's own status stays).
+    /// </summary>
+    public static string? StatusWhileOwned(GrokBotPromptState state, bool afterUpdate) => state switch
+    {
+        GrokBotPromptState.Updating => "Grok Bot is updating...",
+        GrokBotPromptState.Working or GrokBotPromptState.WaitingForQuit when afterUpdate => "Opening Grok Bot...",
+        GrokBotPromptState.Connecting when afterUpdate => "Connecting Grok Bot...",
+        _ => null,
+    };
     public const string UpdateTooLongText = "Grok Bot's update was still running after 5 minutes, so Wingman didn't reopen it.";
     public const string ReopenedText = "Grok Bot was opened again without Wingman.";
     public const string CouldNotOpenText = "Wingman couldn't reopen Grok Bot.";
