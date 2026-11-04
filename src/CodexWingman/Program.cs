@@ -101,12 +101,13 @@ internal static class Program
     {
         var dataRoot = Path.GetDirectoryName(HelperSettingsStore.DefaultPath(options.LocalAppData))!;
         WingmanLog.Configure(WingmanLog.LogDirectory(dataRoot));
-        var grok = GrokBotLaunchPolicy.ExecutablePath(Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData));
         string text;
         var failed = false;
         try
         {
-            if (options.Command == WingmanCommand.GrokBotStartLinkStatus) text = GrokBotStartLinkWindows.StatusJson(grok, dataRoot);
+            var grok = GrokBotInstallWindows.Resolve().Executable;
+            if (options.Command == WingmanCommand.GrokBotInstallStatus) text = GrokBotInstallWindows.StatusJson();
+            else if (options.Command == WingmanCommand.GrokBotStartLinkStatus) text = GrokBotStartLinkWindows.StatusJson(grok, dataRoot);
             else
             {
                 var restored = GrokBotStartLinkWindows.RestoreForUninstall(grok, dataRoot);

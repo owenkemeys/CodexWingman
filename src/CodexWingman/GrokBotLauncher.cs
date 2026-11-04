@@ -18,8 +18,21 @@ internal sealed class GrokBotLauncher(string wingmanDataRoot, Func<IEnumerable<i
     private static readonly TimeSpan EndpointTimeout = TimeSpan.FromSeconds(45);
     private static readonly HttpClient Http = new() { Timeout = TimeSpan.FromSeconds(2) };
     public string RuntimePath { get; } = GrokBotLaunchPolicy.RuntimePath(wingmanDataRoot);
-    public string Executable { get; } = GrokBotLaunchPolicy.ExecutablePath(
-        Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData));
+    private string? executable;
+
+    /// <summary>
+    /// Grok Bot.exe wherever this PC has it (<see cref="GrokBotInstallWindows"/>), kept while the file is there and looked up
+    /// again once it isn't (an uninstall, a move between per-user and per-machine, or not installed yet).
+    /// </summary>
+    public string Executable
+    {
+        get
+        {
+            var known = executable;
+            if (known is not null && File.Exists(known)) return known;
+            return executable = GrokBotInstallWindows.Resolve().Executable;
+        }
+    }
     public string UserData { get; } = GrokBotLaunchPolicy.UserDataDirectory(
         Environment.GetFolderPath(Environment.SpecialFolder.ApplicationData));
     public GrokBotStarts Starts { get; } = new();
@@ -244,7 +257,7 @@ internal sealed class GrokBotLauncher(string wingmanDataRoot, Func<IEnumerable<i
     /// </summary>
     public async Task<GrokBotOpen> OpenAsync(Func<bool> confirmRelaunch, CancellationToken cancellationToken)
     {
-        if (!IsInstalled()) throw new FileNotFoundException("Grok Bot is not installed in its usual folder.");
+        if (!IsInstalled()) throw new FileNotFoundException("Grok Bot was not found on this PC (per-user or per-machine install).");
         var stamp = ExecutableStamp();
         if ((await PagesAsync(cancellationToken)).Count > 0 && Running() is { Length: > 0 } hooked)
         {
@@ -538,15 +551,15 @@ internal sealed class GrokBotLauncher(string wingmanDataRoot, Func<IEnumerable<i
         // Session and image path are asked per process id: cheaper than Process.GetCurrentProcess().SessionId
         // (a machine-wide snapshot) and MainModule (a module-list walk) on this 2-second status path.
         var currentSession = WindowProcessInfo.CurrentSession();
-        var executable = Path.GetFullPath(Executable);
+        var executable = Executable;
         var result = new List<Process>();
-        foreach (var process in Process.GetProcessesByName(Path.GetFileNameWithoutExtension(Executable)))
+        foreach (var process in Process.GetProcessesByName(Path.GetFileNameWithoutExtension(executable)))
         {
             try
             {
                 if (process.SessionId == currentSession
                     && WindowProcessInfo.ImagePathOf((uint)process.Id) is { Length: > 0 } image
-                    && string.Equals(Path.GetFullPath(image), executable, StringComparison.OrdinalIgnoreCase))
+                    && GrokBotInstall.SameExecutable(image, executable))
                 {
                     result.Add(process);
                     continue;

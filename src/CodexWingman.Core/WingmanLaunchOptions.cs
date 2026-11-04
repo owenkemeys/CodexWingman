@@ -12,6 +12,8 @@ public enum WingmanCommand
     GrokBotStartLinkStatus,
     /// <summary>Runs on its own, any build: remove Wingman's debugging port from Grok Bot's Start menu shortcut.</summary>
     RestoreGrokBotStartLink,
+    /// <summary>Runs on its own, any build: print where Grok Bot was found and which running processes are it. Reads only.</summary>
+    GrokBotInstallStatus,
 }
 
 public sealed record WingmanLaunchOptions(
@@ -71,6 +73,7 @@ public sealed record WingmanLaunchOptions(
         "--grok-bot-start-link" => WingmanCommand.GrokBotStartLink,
         "--grok-bot-start-link-status" => WingmanCommand.GrokBotStartLinkStatus,
         "--restore-grok-bot-start-link" => WingmanCommand.RestoreGrokBotStartLink,
+        "--grok-bot-install-status" => WingmanCommand.GrokBotInstallStatus,
         _ => null,
     };
 
@@ -81,7 +84,7 @@ public sealed record WingmanLaunchOptions(
 
     /// <summary>Commands that run in the launched process itself instead of signalling a running Wingman.</summary>
     public static bool RunsOnItsOwn(WingmanCommand command) =>
-        command is WingmanCommand.GrokBotStartLinkStatus or WingmanCommand.RestoreGrokBotStartLink;
+        command is WingmanCommand.GrokBotStartLinkStatus or WingmanCommand.RestoreGrokBotStartLink or WingmanCommand.GrokBotInstallStatus;
 
     /// <summary>Event a running development build listens on for this command.</summary>
     public static string CommandEventName(WingmanCommand command) => command == WingmanCommand.None

@@ -132,7 +132,7 @@ public sealed class GrokBotPromptSteps(GrokBotReconnectPrompt prompt, IGrokBotPr
 
     private void RequireInstalled()
     {
-        if (!host.Installed) throw new FileNotFoundException("Grok Bot is not installed in its usual folder.");
+        if (!host.Installed) throw new FileNotFoundException("Grok Bot was not found on this PC (per-user or per-machine install).");
     }
 }
 
