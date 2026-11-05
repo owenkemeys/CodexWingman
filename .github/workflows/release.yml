@@ -65,6 +65,10 @@ jobs:
           Set-Content -LiteralPath ($asset + '.sha256') -Value "$hash  $asset" -Encoding ascii
           python tools/release_identity.py --tag $tag --notes-output release-notes.md
           if ($LASTEXITCODE -ne 0) { throw 'Release notes identity check failed' }
-          gh release create $tag $asset ($asset + '.sha256') --verify-tag --title $tag --notes-file release-notes.md
+          # A draft: nothing is offered to users until a separate check publishes it (release-publish.yml).
+          gh release create $tag $asset ($asset + '.sha256') --verify-tag --draft --title $tag --notes-file release-notes.md
+          if ($LASTEXITCODE -ne 0) { throw 'Draft release creation failed' }
+          Write-Output "$asset sha256 $hash"
+          Add-Content -LiteralPath $env:GITHUB_STEP_SUMMARY -Value "Draft $tag created. ``$asset`` SHA-256 ``$hash``"
         env:
           GH_TOKEN: ${{ github.token }}
