@@ -61,5 +61,5 @@ Verify the shortcut targets this installation's Wingman executable, launch it, a
 
 Give the user the installed location, what works, any disabled optional integrations, and any customization still needed. If a missing choice or permission blocks an optional helper, finish the rest and identify that exact item. Do not claim a colleague's live installation has been tested on the author's machine.
 
-T3 web and Grok Bot are optional targets. Do not pin anything for the user and do not enable `Open on launch` for them. T3 web pairing needs a T3 host that answers pairing requests (see [Configuration](configuration.md)); never copy browser cookies to sign a window in. The Grok Bot pin retarget is the user's own opt-in from the tray.
+T3 web and Grok Bot are optional targets. Do not pin anything for the user and do not enable `Open on launch` for them. T3 web pairing needs a T3 host that answers pairing requests (see [Configuration](configuration.md)); never copy browser cookies to sign a window in. The Grok Bot pin retarget and the Grok Bot Start menu shortcut port are the user's own opt-ins; never turn them on for the user.
 

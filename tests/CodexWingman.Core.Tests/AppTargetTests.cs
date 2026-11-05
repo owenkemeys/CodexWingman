@@ -148,10 +148,12 @@ internal static class AppTargetTests
         try
         {
             False(HelperSettings.Default.T3Web?.IsConfigured == true, "T3 web unconfigured by default");
+            False(HelperSettings.Default.IncludePrereleaseUpdates, "update checks offer stable releases only by default");
             var settings = HelperSettings.Default with
             {
                 T3Web = new T3WebSettings(Origin, new T3PairingSettings(Folder: "R:\\ops\\t3-pairing"), OpenOnLaunch: true),
                 OpenGrokBotOnLaunch = true,
+                IncludePrereleaseUpdates = true,
             };
             HelperSettingsStore.Save(path, settings);
             var loaded = HelperSettingsStore.Load(path);
@@ -159,6 +161,8 @@ internal static class AppTargetTests
             Equal("R:\\ops\\t3-pairing", loaded.T3Web?.Pairing?.Folder, "pairing folder round trip");
             True(loaded.T3Web?.IsConfigured == true, "configured T3 web");
             True(loaded.OpenGrokBotOnLaunch, "Grok Bot open-on-launch round trip");
+            True(loaded.IncludePrereleaseUpdates, "prerelease opt-in round trip");
+            True(File.ReadAllText(path).Contains("\"includePrereleaseUpdates\": true", StringComparison.Ordinal), "prerelease opt-in is saved as includePrereleaseUpdates");
             True(new T3WebSettings(Pairing: new T3PairingSettings(Folder: "X:\\p")).IsConfigured, "pairing folder alone is enough (zero setup)");
         }
         finally

@@ -2,6 +2,11 @@
 
 **Wingman 2.0 supports Codex and T3 Code.** It provides separate launch and repair controls for each app, with Helpers that declare which apps they support. See [the 2.0 design](docs/wingman-2.md) and [the GitHub release contract](docs/codex-app-release-contract.md).
 
+## Not yet released
+
+- **Grok Bot after an update.** When Grok Bot updates itself and comes back without Wingman's connection, Wingman shows a small prompt window. The reconnect never closes Grok Bot: after **Reconnect**, you close Grok Bot's window and Wingman opens it again connected, also after an update that your close starts. A Grok Bot already running with a usable debugging port is connected to without a restart. Optionally (development builds only, off by default, with a backup), Wingman's port can be added to the arguments of Grok Bot's Start menu shortcut, whose target stays Grok Bot. See [Grok Bot after an update](docs/grok-bot-after-update.md).
+- **Grok Bot `Open window` and `Repair`.** They connect to a Grok Bot that already has a usable port before asking to restart it, and don't start Grok Bot while a Grok Bot installer runs. After you say Yes to closing Grok Bot, the reconnect prompt shows how it goes: if the close starts Grok Bot's update, Wingman waits for it, opens Grok Bot and connects the Helpers; anything else that stops it is shown there in plain words, with **Try again** while Grok Bot is still open or **Open Grok Bot** once it has closed.
+
 ## New in 2.1.1
 
 - **The plain Wingman entry follows your startup choices.** Starting Wingman from its general entry, or clicking that entry while Wingman already runs, opens exactly the apps ticked `Open when Wingman starts`, and nothing when none is ticked. It no longer opens Codex on its own, including while Wingman is busy with another app. Clicking it again is safe: an app that is already open is brought forward, never opened in a new window, and only apps that aren't running are started. App launchers such as `Wingman Codex` open only their app, as before, and a second click while that app is being opened doesn't open it twice. If settings.json can't be read, Wingman keeps the settings it last read and otherwise opens no app, and it never writes over that file.

@@ -3,7 +3,18 @@ namespace CodexWingman.Core;
 public enum WingmanLaunchTarget { Preferences, Codex, T3Code, T3Web, GrokBot }
 
 /// <summary>Development-channel commands for an already running Wingman. A command never starts a new tray.</summary>
-public enum WingmanCommand { None, T3WebRenewNow, Close, DumpMenu, T3WebCheckSignIn, GrokBotPin }
+public enum WingmanCommand
+{
+    None, T3WebRenewNow, Close, DumpMenu, T3WebCheckSignIn, GrokBotPin,
+    /// <summary>Development: add or remove Wingman's debugging port on Grok Bot's Start menu shortcut (asks first).</summary>
+    GrokBotStartLink,
+    /// <summary>Runs on its own, any build: print Grok Bot's Start menu shortcut and KeepShortcuts. Reads only.</summary>
+    GrokBotStartLinkStatus,
+    /// <summary>Runs on its own, any build: remove Wingman's debugging port from Grok Bot's Start menu shortcut.</summary>
+    RestoreGrokBotStartLink,
+    /// <summary>Runs on its own, any build: print where Grok Bot was found and which running processes are it. Reads only.</summary>
+    GrokBotInstallStatus,
+}
 
 public sealed record WingmanLaunchOptions(
     WingmanLaunchTarget Target = WingmanLaunchTarget.Preferences,
@@ -59,12 +70,21 @@ public sealed record WingmanLaunchOptions(
         "--dump-menu" => WingmanCommand.DumpMenu,
         "--t3-web-check-sign-in" => WingmanCommand.T3WebCheckSignIn,
         "--grok-bot-pin" => WingmanCommand.GrokBotPin,
+        "--grok-bot-start-link" => WingmanCommand.GrokBotStartLink,
+        "--grok-bot-start-link-status" => WingmanCommand.GrokBotStartLinkStatus,
+        "--restore-grok-bot-start-link" => WingmanCommand.RestoreGrokBotStartLink,
+        "--grok-bot-install-status" => WingmanCommand.GrokBotInstallStatus,
         _ => null,
     };
 
     /// <summary>Every command a running development build listens for.</summary>
     public static IReadOnlyList<WingmanCommand> Commands { get; } =
-        [WingmanCommand.T3WebRenewNow, WingmanCommand.Close, WingmanCommand.DumpMenu, WingmanCommand.T3WebCheckSignIn, WingmanCommand.GrokBotPin];
+        [WingmanCommand.T3WebRenewNow, WingmanCommand.Close, WingmanCommand.DumpMenu, WingmanCommand.T3WebCheckSignIn, WingmanCommand.GrokBotPin,
+            WingmanCommand.GrokBotStartLink];
+
+    /// <summary>Commands that run in the launched process itself instead of signalling a running Wingman.</summary>
+    public static bool RunsOnItsOwn(WingmanCommand command) =>
+        command is WingmanCommand.GrokBotStartLinkStatus or WingmanCommand.RestoreGrokBotStartLink or WingmanCommand.GrokBotInstallStatus;
 
     /// <summary>Event a running development build listens on for this command.</summary>
     public static string CommandEventName(WingmanCommand command) => command == WingmanCommand.None

@@ -1,0 +1,219 @@
+namespace CodexWingman.Core;
+
+/// <summary>What a prompt's run needs from the tray. Everything else (the order of checks, the relaunch, the logs) is here in Core.</summary>
+public interface IGrokBotPromptHost
+{
+    GrokBotObservation Observe();
+    /// <summary>True when the process already has a usable port (127.0.0.1, listening, owned by it) and it was recorded.</summary>
+    bool AdoptListeningPort(int process);
+    bool Busy { get; }
+    bool Installed { get; }
+    bool SessionEnding { get; }
+    /// <summary>
+    /// Grok Bot's processes, as the relaunch sees and starts them for this run. <paramref name="started"/> is called with the
+    /// exact Grok Bot the control starts the moment Windows has started it, before anything after the start that can throw.
+    /// </summary>
+    IGrokBotProcessControl Control(Action<GrokBotProcess> started);
+    /// <summary>The prompt's state changed: show it.</summary>
+    void Changed();
+    /// <summary>
+    /// Connects the Helpers to Grok Bot running with Wingman's port: Connected once they are; Busy when Wingman stayed busy
+    /// and so didn't try; Failed (or a throw) otherwise.
+    /// </summary>
+    Task<GrokBotConnectResult> ConnectAsync(bool started, CancellationToken cancellationToken);
+}
+
+/// <summary>
+/// The prompt's steps over the real relaunch: each wait goes straight to <see cref="GrokBotRelaunch"/>, which hands the
+/// prompt the quit's proof (<see cref="GrokBotReconnectPrompt.Exited"/>) the moment the offer's process exits.
+/// </summary>
+public sealed class GrokBotPromptSteps(GrokBotReconnectPrompt prompt, IGrokBotPromptHost host, GrokBotRelaunchLimits limits,
+    Func<DateTime>? now = null, Func<TimeSpan, CancellationToken, Task>? delay = null) : IGrokBotReconnectSteps
+{
+    private readonly Func<DateTime> now = now ?? (() => DateTime.UtcNow);
+    private readonly Func<TimeSpan, CancellationToken, Task> delay = delay ?? ((wait, token) => Task.Delay(wait, token));
+
+    /// <summary>The exact Grok Bot this run started, recorded the moment it started; null when it started none.</summary>
+    public GrokBotProcess? Started { get; private set; }
+
+    /// <summary>
+    /// The control for this run. The single start point (<see cref="GrokBotStarts.Start"/>) tells it the moment Windows has
+    /// started Grok Bot, and that is the only place the prompt hears Wingman is opening it
+    /// (<see cref="GrokBotReconnectPrompt.WingmanStarted"/>): no step can say so before a start has happened.
+    /// </summary>
+    private IGrokBotProcessControl Control() => host.Control(process =>
+    {
+        Started = process;
+        prompt.WingmanStarted();
+        // Grok Bot has started: a window that can't be shown must not stop the start's own bookkeeping (its port file).
+        try { host.Changed(); }
+        catch (Exception error) { WingmanLog.Write("grok-bot-prompt-show-failed", ("error", error.GetType().Name)); }
+    });
+
+    public GrokBotObservation Observe() => host.Observe();
+    public bool AdoptListeningPort(int process) => host.AdoptListeningPort(process);
+    public bool Busy => host.Busy;
+    public bool SessionEnding => host.SessionEnding;
+    public void Changed() => host.Changed();
+
+    public void WaitingForQuit()
+    {
+        prompt.WaitingForQuit();
+        host.Changed();
+    }
+
+    public async Task<GrokBotRelaunchResult> RelaunchAfterQuitAsync(GrokBotProcess target, CancellationToken cancellationToken)
+    {
+        RequireInstalled();
+        var result = await GrokBotRelaunch.RunAsync(target, Control(), limits, now, delay, cancellationToken, Exited);
+        WingmanLog.Write("grok-bot-reconnect-relaunch", ("process", target.Id), ("result", result.Kind));
+        return result;
+    }
+
+    /// <summary>The Open Grok Bot button after Wingman couldn't reopen it: the same bounded, installer-safe start.</summary>
+    public async Task<GrokBotRelaunchResult> StartAsync(GrokBotStartPermit permit, CancellationToken cancellationToken)
+    {
+        RequireInstalled();
+        var control = Control();
+        var result = await GrokBotRelaunch.StartWhenClearAsync(permit, control.ExecutableStamp(), control, limits, now, delay, cancellationToken);
+        WingmanLog.Write("grok-bot-reconnect-open", ("process", permit.After?.Process.Id), ("result", result.Kind));
+        return result;
+    }
+
+    public async Task<GrokBotRelaunchResult> OpenAfterPressAsync(GrokBotProcess target, GrokBotOpenPress? press, CancellationToken cancellationToken)
+    {
+        RequireInstalled();
+        var result = await GrokBotRelaunch.OpenAfterPressAsync(target, press, Control(), limits, now, delay, cancellationToken, Exited);
+        WingmanLog.Write("grok-bot-reconnect-open-after-press", ("process", target.Id), ("result", result.Kind));
+        return result;
+    }
+
+    public void Updating(GrokBotRelaunch.ClosedProcess quit)
+    {
+        WingmanLog.Write("grok-bot-reconnect-updating", ("process", quit.Process.Id));
+        prompt.Updating(quit);
+        host.Changed();
+    }
+
+    /// <summary>
+    /// Grok Bot.exe may be missing while the installer replaces it, so this doesn't require it to be installed up front;
+    /// the start's own guards do.
+    /// </summary>
+    public async Task<GrokBotRelaunchResult> AfterUpdateAsync(GrokBotStartPermit permit, CancellationToken cancellationToken)
+    {
+        var result = await GrokBotRelaunch.AfterUpdateAsync(permit, Control(), limits, now, delay, cancellationToken);
+        WingmanLog.Write("grok-bot-reconnect-after-update", ("process", permit.After?.Process.Id), ("result", result.Kind));
+        return result;
+    }
+
+    public Task<GrokBotConnectResult> ConnectAsync(bool started, CancellationToken cancellationToken) => host.ConnectAsync(started, cancellationToken);
+
+    /// <summary>
+    /// Open window or Repair after the Yes and the close request: up to <c>Close</c> for Grok Bot to close; an update that
+    /// close starts shows in the prompt, and Grok Bot is reopened after it.
+    /// </summary>
+    public async Task<GrokBotRelaunchResult> AfterApprovedCloseAsync(GrokBotProcess? closed, GrokBotExecutableStamp? since, CancellationToken cancellationToken)
+    {
+        var result = await GrokBotRelaunch.AfterCloseRequestAsync(closed, since, Control(), limits.Close, limits.Poll, () =>
+        {
+            WingmanLog.Write("grok-bot-open-update-after-close");
+            prompt.Updating(null);
+            host.Changed();
+        }, limits, now, delay, cancellationToken, Exited);
+        WingmanLog.Write("grok-bot-open-close-wait", ("result", result.Kind));
+        return result;
+    }
+
+    private void Exited(GrokBotRelaunch.ClosedProcess quit)
+    {
+        prompt.Exited(quit);
+        host.Changed();
+    }
+
+    private void RequireInstalled()
+    {
+        if (!host.Installed) throw new FileNotFoundException("Grok Bot was not found on this PC (per-user or per-machine install).");
+    }
+}
+
+/// <summary>
+/// One press on the prompt, from the step to where the prompt ends up. Every way a run can end goes through
+/// <see cref="GrokBotReconnectPrompt.Finished"/>: an error is <see cref="GrokBotReconnectOutcome.Failed"/>, a cancel is
+/// <see cref="GrokBotReconnectOutcome.Cancelled"/> (or SessionEnding), and Grok Bot running with the port is followed by
+/// connecting its Helpers, which ends in Connected or NotConnected. Nothing here shows a message box.
+/// </summary>
+public static class GrokBotPromptRun
+{
+    /// <param name="ended">Called once the relaunch has ended, before the prompt is told, also after an error.</param>
+    public static async Task<GrokBotReconnectResult> ActAsync(GrokBotReconnectPrompt prompt, GrokBotPromptStep step, IGrokBotReconnectSteps steps,
+        CancellationToken cancellationToken, Action? ended = null)
+    {
+        GrokBotReconnectResult result;
+        try
+        {
+            result = step switch
+            {
+                GrokBotPromptStep.Open => await GrokBotReconnectRun.OpenAsync(prompt.Offer.Target, prompt.Quit, prompt.OpenPress, steps, cancellationToken, prompt.Offer),
+                GrokBotPromptStep.Connect => new(GrokBotReconnectOutcome.AlreadyConnected, prompt.Quit),
+                GrokBotPromptStep.ApprovedClose => await GrokBotReconnectRun.ApprovedCloseAsync(prompt.Offer.ProcessId == 0 ? null : prompt.Offer.Target,
+                    prompt.ApprovedSince, steps, cancellationToken),
+                _ => await GrokBotReconnectRun.RunAsync(prompt.Offer, steps, cancellationToken),
+            };
+        }
+        // A run that ends in an error or a stop after Wingman started Grok Bot keeps that start, so the prompt says Wingman
+        // opened it rather than taking it for another Grok Bot.
+        catch (OperationCanceledException)
+        {
+            result = new(GrokBotReconnectOutcome.Cancelled, prompt.Quit, steps.Started);
+        }
+        catch (Exception error)
+        {
+            // An error is its own outcome: the prompt stays with a plain reason and its buttons, and the log says so.
+            WingmanLog.Write("grok-bot-reconnect-failed", ("process", prompt.Offer.ProcessId), ("step", step), ("error", error.GetType().Name));
+            result = new(GrokBotReconnectOutcome.Failed, prompt.Quit, steps.Started);
+        }
+        finally { ended?.Invoke(); }
+        if (result.Outcome == GrokBotReconnectOutcome.Cancelled && steps.SessionEnding) result = result with { Outcome = GrokBotReconnectOutcome.SessionEnding };
+        WingmanLog.Write("grok-bot-reconnect-outcome", ("process", prompt.Offer.ProcessId), ("step", step), ("outcome", result.Outcome));
+        prompt.Finished(result, ObserveSafely(steps));
+        ShowSafely(prompt, steps);
+        // Grok Bot runs with the port: connect its Helpers, also when the user closed the prompt meanwhile.
+        if (result.Outcome is not (GrokBotReconnectOutcome.Relaunched or GrokBotReconnectOutcome.Adopted or GrokBotReconnectOutcome.AlreadyConnected)) return result;
+        GrokBotConnectResult connected;
+        try { connected = await steps.ConnectAsync(result.Outcome == GrokBotReconnectOutcome.Relaunched, CancellationToken.None); }
+        catch (Exception error)
+        {
+            WingmanLog.Write("grok-bot-reconnect-connect-failed", ("process", prompt.Offer.ProcessId), ("error", error.GetType().Name));
+            connected = GrokBotConnectResult.Failed;
+        }
+        result = result with
+        {
+            Outcome = connected == GrokBotConnectResult.Connected ? GrokBotReconnectOutcome.Connected : GrokBotReconnectOutcome.NotConnected,
+            WingmanBusy = connected == GrokBotConnectResult.Busy,
+        };
+        WingmanLog.Write("grok-bot-reconnect-outcome", ("process", prompt.Offer.ProcessId), ("step", step), ("outcome", result.Outcome));
+        prompt.Finished(result, ObserveSafely(steps));
+        ShowSafely(prompt, steps);
+        return result;
+    }
+
+    /// <summary>
+    /// Shows the prompt's new state. A failure to show it is logged and doesn't stop the run, so the connect still runs and
+    /// the prompt's own state (never left on "Working...") is shown at the next change or check.
+    /// </summary>
+    private static void ShowSafely(GrokBotReconnectPrompt prompt, IGrokBotReconnectSteps steps)
+    {
+        try { steps.Changed(); }
+        catch (Exception error)
+        {
+            WingmanLog.Write("grok-bot-prompt-show-failed", ("process", prompt.Offer.ProcessId), ("state", prompt.State), ("error", error.GetType().Name));
+        }
+    }
+
+    /// <summary>The observation for the prompt's last word; null if even that throws, so the prompt picks no reason on a guess.</summary>
+    private static GrokBotObservation? ObserveSafely(IGrokBotReconnectSteps steps)
+    {
+        try { return steps.Observe(); }
+        catch (Exception) { return null; }
+    }
+}

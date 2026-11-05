@@ -1,9 +1,10 @@
 {
-  "version": "2.1.1",
+  "version": "2.2.0",
   "highlights": [
-    "The plain Wingman entry opens exactly the apps ticked Open when Wingman starts, whether or not Wingman is already running, and nothing when none is ticked; an app that is already open is brought forward, never opened twice.",
-    "An app's own launcher opens only that app, and a second click while Wingman is opening an app doesn't open it twice.",
-    "Unreadable settings never turn on Open when Wingman starts, and Wingman never writes over a settings file it can't read.",
-    "Wingman keeps a small local event log to help trace launch problems."
+    "Check for updates goes straight to the newest release from any older version, ordered by version number, and offers prereleases only when includePrereleaseUpdates is turned on in settings.",
+    "After Grok Bot updates itself and comes back without Wingman's connection, one prompt gets the Helpers back: press Reconnect, close Grok Bot when asked, and Wingman reopens it with the Helpers.",
+    "Wingman never closes Grok Bot itself and starts it only after you close it or press Open Grok Bot; Try again always ends with a plain result instead of waiting.",
+    "Wingman finds Grok Bot wherever it is installed, per user or per machine.",
+    "An optional setting, off by default, makes Grok Bot's own Start menu shortcut open it ready for Wingman's Helpers."
   ]
 }

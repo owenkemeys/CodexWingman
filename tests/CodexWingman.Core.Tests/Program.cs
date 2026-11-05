@@ -178,6 +178,9 @@ await TestTargetAppIsolation();
 TestT3CodeLaunchPolicy();
 await AppTargetTests.RunAsync();
 await LauncherActivationTests.RunAsync();
+GrokBotReconnectTests.Run();
+GrokBotStartLinkTests.Run();
+GrokBotInstallTests.Run();
 Equal("CodexWingman.Desktop.Singleton.v1", WingmanIdentity.SingleInstanceName, "stable single-instance identity");
 Equal("CodexWingman.Desktop.Activate.v1", WingmanIdentity.ActivationEventName, "stable activation identity");
 Equal("Wingman", WingmanIdentity.RunningMenuText, "concise Wingman menu heading");
@@ -2143,7 +2146,7 @@ catch (Exception error)
 static async Task TestReleaseDiscoveryAsync()
 {
     const string digest = "sha256:0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef";
-    var json = JsonSerializer.Serialize(new
+    var json = JsonSerializer.Serialize(new[] { new
     {
         draft = false,
         prerelease = false,
@@ -2159,7 +2162,7 @@ static async Task TestReleaseDiscoveryAsync()
                 browser_download_url = "https://github.com/owenkemeys/CodexWingman/releases/download/v2.0.0/Wingman-v2.0.0-win-x64.zip",
             },
         },
-    });
+    } });
     using var http = new HttpClient(new StaticHttpMessageHandler(request =>
     {
         Equal("api.github.com", request.RequestUri?.Host, "release check uses the GitHub API");
@@ -2172,8 +2175,8 @@ static async Task TestReleaseDiscoveryAsync()
     Equal(null, await client.CheckAsync("owenkemeys/CodexWingman", "Wingman", new Version(2, 0, 0)),
         "current release is not offered again");
     using var emptyHttp = new HttpClient(new StaticHttpMessageHandler(request =>
-        new HttpResponseMessage(request.RequestUri!.AbsolutePath.EndsWith("/releases/latest", StringComparison.Ordinal)
-            ? HttpStatusCode.NotFound : HttpStatusCode.OK)));
+        new HttpResponseMessage(HttpStatusCode.OK) { Content = new StringContent(
+            request.RequestUri!.AbsolutePath.EndsWith("/releases", StringComparison.Ordinal) ? "[]" : "{}") }));
     Equal(null, await new AppReleaseClient(emptyHttp, "Wingman")
         .CheckAsync("owenkemeys/CodexWingman", "Wingman", new Version(1, 0, 0)),
         "an accessible repository with no stable release is an ordinary empty update check");
@@ -2198,6 +2201,88 @@ static async Task TestReleaseDiscoveryAsync()
         "asset outside the selected repository is not installable");
     Equal(null, await CheckFixtureAsync(json.Replace("\"prerelease\":false", "\"prerelease\":true", StringComparison.Ordinal)),
         "stable channel ignores prereleases");
+    await TestReleaseJumpAsync(digest);
+}
+
+// An old install must go straight to the newest release, never step through each one in between.
+static async Task TestReleaseJumpAsync(string digest)
+{
+    const string Repo = "owenkemeys/CodexWingman";
+    static object Release(string tag, bool prerelease = false, bool draft = false, string state = "uploaded", string? digestValue = null, string stem = "Wingman") => new
+    {
+        draft,
+        prerelease,
+        tag_name = tag,
+        body = $"- {tag} notes",
+        assets = new[]
+        {
+            new
+            {
+                name = $"{stem}-{tag}-win-x64.zip",
+                state,
+                digest = digestValue,
+                browser_download_url = $"https://github.com/{Repo}/releases/download/{Uri.EscapeDataString(tag)}/{stem}-{tag}-win-x64.zip",
+            },
+        },
+    };
+    string? lastPath = null;
+    async Task<AppReleaseCheck> Check(object[] releases, Version installed, AppReleaseChannel channel = AppReleaseChannel.Stable)
+    {
+        var body = JsonSerializer.Serialize(releases);
+        using var http = new HttpClient(new StaticHttpMessageHandler(request =>
+        {
+            lastPath = request.RequestUri!.PathAndQuery;
+            return new HttpResponseMessage(HttpStatusCode.OK) { Content = new StringContent(body) };
+        }));
+        return await new AppReleaseClient(http, "Wingman").CheckLatestAsync(Repo, "Wingman", installed, channel);
+    }
+    // GitHub lists releases newest-created first; a hotfix to an old line can be created after a newer release.
+    var feed = new object[]
+    {
+        Release("v2.1.2", digestValue: digest),                // hotfix created last
+        Release("v2.3.0-beta.1", prerelease: true, digestValue: digest),
+        Release("v2.2.0", digestValue: digest),
+        Release("v2.4.0", draft: true, digestValue: digest),   // draft: never offered
+        Release("v2.1.1", digestValue: digest),
+        Release("v2.1.0", digestValue: digest),
+        Release("v2.0.1", digestValue: digest),
+        Release("v2.0.0", digestValue: digest),
+        Release("releasekit-v9.9.9", digestValue: digest),     // another package's tag in the same repository
+    };
+    var fromOld = await Check(feed, new Version(2, 0, 0, 0));
+    Equal("/repos/owenkemeys/CodexWingman/releases?per_page=100", lastPath, "the check reads the release list, not only releases/latest");
+    Equal(AppReleaseCheckStatus.UpdateAvailable, fromOld.Status, "2.0.0 sees an update");
+    Equal("v2.2.0", fromOld.Release?.Tag, "2.0.0 jumps straight to the newest stable release, skipping 2.0.1 to 2.1.2");
+    Equal(new Version(2, 2, 0), fromOld.Release?.Version, "the offered version has three parts");
+    Equal("v2.2.0", (await Check(feed, new Version(2, 1, 1, 0))).Release?.Tag, "2.1.1 also jumps to 2.2.0, not the 2.1.2 hotfix");
+    Equal(AppReleaseCheckStatus.Current, (await Check(feed, new Version(2, 2, 0, 0))).Status, "the newest stable release is current; the draft 2.4.0 is not offered");
+    Equal(AppReleaseCheckStatus.Current, (await Check(feed, new Version(2, 2, 0))).Status, "a three-part installed version compares the same as four parts");
+    Equal("v2.3.0-beta.1", (await Check(feed, new Version(2, 0, 0), AppReleaseChannel.Prerelease)).Release?.Tag,
+        "opted in to prereleases, 2.0.0 jumps to the newest prerelease");
+    var preOnlyOlder = new object[] { Release("v2.2.0-rc.1", prerelease: true, digestValue: digest), Release("v2.2.0", digestValue: digest) };
+    Equal("v2.2.0", (await Check(preOnlyOlder, new Version(2, 1, 0), AppReleaseChannel.Prerelease)).Release?.Tag,
+        "a release outranks its own release candidate");
+    var unflagged = new object[] { Release("v3.0.0-alpha", digestValue: digest), Release("v2.2.0", digestValue: digest) };
+    Equal("v2.2.0", (await Check(unflagged, new Version(2, 0, 0))).Release?.Tag, "a -suffix tag counts as a prerelease even without GitHub's flag");
+    var withMetadata = new object[] { Release("v2.5.0+9c1a07b", digestValue: digest) };
+    Equal("v2.5.0+9c1a07b", (await Check(withMetadata, new Version(2, 1, 1))).Release?.Tag, "build metadata on a tag is ignored for ordering");
+    Equal(AppReleaseCheckStatus.Current, (await Check(withMetadata, new Version(2, 5, 0, 0))).Status, "2.5.0+sha equals 2.5.0");
+    var uploading = new object[] { Release("v2.6.0", state: "starter", digestValue: digest), Release("v2.2.0", digestValue: digest) };
+    Equal("v2.2.0", (await Check(uploading, new Version(2, 0, 0))).Release?.Tag, "a newest release still uploading doesn't hide the newest installable one");
+    var noneReady = new object[] { Release("v2.6.0", digestValue: null) };
+    Equal(AppReleaseCheckStatus.NoCompatibleDownload, (await Check(noneReady, new Version(2, 0, 0))).Status, "no verified download is reported as such");
+    Equal(AppReleaseCheckStatus.NoStableRelease, (await Check([Release("v2.3.0-beta.1", prerelease: true, digestValue: digest)], new Version(2, 0, 0))).Status,
+        "only prereleases: nothing for the stable channel");
+    var tenMinors = Enumerable.Range(0, 12).Select(minor => Release($"v2.{minor}.0", digestValue: digest)).Reverse().ToArray();
+    Equal("v2.11.0", (await Check(tenMinors, new Version(2, 0, 0))).Release?.Tag, "versions order numerically (2.11 after 2.9)");
+
+    Equal(true, ReleaseVersion.TryParse("1.2.3-rc.1+abc", out var parsed) && parsed.Prerelease == "rc.1", "prerelease parsed, metadata dropped");
+    Equal(false, ReleaseVersion.TryParse("1.2", out _), "two parts is not a release version");
+    Equal(false, ReleaseVersion.TryParse("1.2.3.4", out _), "four parts is not a release version");
+    Equal(true, new ReleaseVersion(1, 0, 0, "alpha").CompareTo(new ReleaseVersion(1, 0, 0, "alpha.1")) < 0, "semver: alpha < alpha.1");
+    Equal(true, new ReleaseVersion(1, 0, 0, "beta.2").CompareTo(new ReleaseVersion(1, 0, 0, "beta.11")) < 0, "semver: numeric identifiers compare as numbers");
+    Equal(true, new ReleaseVersion(1, 0, 0, "rc.1").CompareTo(new ReleaseVersion(1, 0, 0, null)) < 0, "semver: rc < release");
+    Console.WriteLine("Release jump tests passed");
 }
 
 static void TestSealedReleasePackage()

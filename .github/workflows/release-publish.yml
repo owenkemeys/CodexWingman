@@ -1,0 +1,39 @@
+name: Wingman release publish
+# Publishes a draft made by release.yml once it has been checked: push the tag publish-vX.Y.Z.
+# The draft's download is checked again before anything is public.
+on:
+  push:
+    tags: ['publish-v*']
+permissions:
+  contents: write
+jobs:
+  publish:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    env:
+      GH_TOKEN: ${{ github.token }}
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262
+        with:
+          fetch-depth: 0
+      - uses: actions/setup-python@7f4fc3e22c37d6ff65e88745f38bd3157c663f7c
+        with:
+          python-version: '3.11'
+      - name: Check and publish the draft
+        shell: bash
+        run: |
+          set -euo pipefail
+          tag="${GITHUB_REF_NAME#publish-}"
+          [[ "$tag" =~ ^v[0-9]+\.[0-9]+\.[0-9]+$ ]] || { echo "Invalid release tag"; exit 1; }
+          [ "$(gh release view "$tag" --json isDraft --jq .isDraft)" = "true" ] || { echo "$tag is not a draft"; exit 1; }
+          [ "$(git rev-list -n 1 "$tag")" = "$(git rev-list -n 1 "$GITHUB_SHA")" ] || { echo "publish tag and release tag point at different commits"; exit 1; }
+          asset="Wingman-$tag-win-x64.zip"
+          mkdir -p draft && cd draft
+          gh release download "$tag" --pattern "$asset" --pattern "$asset.sha256"
+          tr -d '\r' < "$asset.sha256" | sha256sum -c -
+          digest="$(gh release view "$tag" --json assets --jq ".assets[] | select(.name == \"$asset\") | .digest")"
+          [ "$digest" = "sha256:$(sha256sum "$asset" | cut -d' ' -f1)" ] || { echo "GitHub digest differs from the download"; exit 1; }
+          cd ..
+          python tools/release_hygiene.py zip "draft/$asset"
+          python tools/release_archive.py "draft/$asset" --root-name CodexWingman-verified --repository 'https://github.com/owenkemeys/CodexWingman' --version "${tag#v}"
+          gh release edit "$tag" --draft=false --latest

@@ -22,6 +22,98 @@ public static class GrokBotLaunchPolicy
         return ["--remote-debugging-address=127.0.0.1", "--remote-debugging-port=" + port];
     }
 
+    /// <summary>
+    /// The debugging port a Grok Bot command line asks for, when it listens where Wingman connects: 127.0.0.1, either named
+    /// or as Chromium's default with no address switch. Null for no port, an invalid one, or any other address (including
+    /// <c>localhost</c> and <c>::1</c>, which Wingman's 127.0.0.1 connection may not reach). Switches are read the way
+    /// Chromium reads them on Windows: "--name", "-name" and "/name" alike, names in any case.
+    /// </summary>
+    public static int? DebugPortFrom(string? commandLine)
+    {
+        if (commandLine is null) return null;
+        int? port = null;
+        foreach (var argument in GrokBotReconnectPolicy.SplitCommandLine(commandLine).Skip(1))
+        {
+            if (argument == "--") break; // Chromium reads no switches after a bare "--"
+            switch (ChromiumSwitch.Parse(argument))
+            {
+                case ("remote-debugging-address", var address) when !WingmanConnects(address):
+                    return null;
+                case ("remote-debugging-port", var value):
+                    port = int.TryParse(value, out var number) && number is >= 1024 and <= 65535 ? number : null;
+                    break;
+            }
+        }
+        return port;
+    }
+
+    /// <summary>
+    /// Wingman connects to Grok Bot only at <c>http://127.0.0.1:&lt;port&gt;</c>: the one address switch value it adopts
+    /// (with no address switch at all, Chromium listens there by default).
+    /// </summary>
+    public static bool WingmanConnects(string? address) => address is "127.0.0.1";
+
+    /// <summary>
+    /// Whether a listening socket is where Wingman connects: IPv4 127.0.0.1 only, the same loopback-only rule as adoption
+    /// (<see cref="WingmanConnects"/>). A socket on all addresses (<c>0.0.0.0</c>) or IPv6 (<c>::1</c>, <c>::</c>) never
+    /// counts as connected or adoptable.
+    /// </summary>
+    public static bool ReachableByWingman(System.Net.IPEndPoint listener, int port) =>
+        listener.Port == port && listener.Address.Equals(System.Net.IPAddress.Loopback);
+
+    /// <summary>
+    /// Whether Grok Bot is connected for Wingman: something listens on 127.0.0.1 (see <see cref="ReachableByWingman"/>)
+    /// at its recorded <paramref name="port"/> and the listening socket belongs to that Grok Bot process, the same terms as
+    /// adoption. Another program on the port is not Grok Bot.
+    /// </summary>
+    public static bool Connected(int? port, int? listenerProcess, int? grokProcess) =>
+        port is not null && grokProcess is { } grok && listenerProcess == grok;
+
+    /// <summary>
+    /// Whether Wingman may take <paramref name="port"/> (from Grok Bot's own command line) as Grok Bot's port: never one of
+    /// the ports Wingman keeps for Codex or T3 (their preferred ports and <paramref name="otherAppPorts"/> in use now), and
+    /// only once the port is verified listening and owned by that Grok Bot process (<paramref name="listenerProcess"/>
+    /// is the listening socket's owner, null when nothing listens there or Windows can't tell).
+    /// </summary>
+    public static bool Adoptable(int? port, IEnumerable<int> otherAppPorts, int? listenerProcess, int grokProcess) =>
+        port is { } value
+        && value != CodexLaunchPolicy.PreferredPort && value != T3CodeLaunchPolicy.PreferredPort && value != T3WebLaunchPolicy.PreferredPort
+        && !otherAppPorts.Contains(value)
+        && listenerProcess == grokProcess;
+
+    /// <summary>
+    /// Whether a Grok Bot.exe command line is its main (browser) process: Chromium's helper processes (renderer, GPU and
+    /// the like, and in 0.78.1 its local-exec daemon, a <c>--type=utility</c> child) carry a <c>--type=</c> switch before any
+    /// bare <c>--</c>. Grok Bot.exe running a script as Node (<c>ELECTRON_RUN_AS_NODE</c>, as an unpackaged Grok Bot starts
+    /// its box-computer server; a packaged 0.78.1 doesn't) names a script file there. Unreadable (null): not known to be the main one.
+    /// </summary>
+    public static bool IsMainProcess(string? commandLine)
+    {
+        if (commandLine is null) return false;
+        foreach (var argument in GrokBotReconnectPolicy.SplitCommandLine(commandLine).Skip(1))
+        {
+            if (argument == "--") break;
+            if (ChromiumSwitch.Parse(argument) is ("type", _)) return false;
+            if (ChromiumSwitch.Parse(argument) is null && IsScript(argument)) return false;
+        }
+        return true;
+    }
+
+    private static readonly string[] ScriptExtensions = [".js", ".cjs", ".mjs", ".ts", ".cts", ".mts"];
+
+    private static bool IsScript(string argument) =>
+        ScriptExtensions.Any(extension => argument.TrimEnd().EndsWith(extension, StringComparison.OrdinalIgnoreCase));
+
+    /// <summary>
+    /// Grok Bot's main process among <paramref name="candidates"/> (each already <see cref="IsMainProcess"/>): the one that
+    /// owns Grok Bot's single-instance window (<paramref name="singleInstanceOwners"/>) if any does, else the earliest started.
+    /// </summary>
+    public static GrokBotProcess? ChooseMainProcess(IEnumerable<GrokBotProcess> candidates, IReadOnlySet<int> singleInstanceOwners) =>
+        candidates
+            .OrderBy(candidate => singleInstanceOwners.Contains(candidate.Id) ? 0 : 1)
+            .ThenBy(candidate => candidate.Started ?? DateTime.MaxValue)
+            .FirstOrDefault();
+
     public static bool IsGrokBotExecutable(string? path) =>
         !string.IsNullOrWhiteSpace(path)
         && Path.GetFileName(path.Replace('/', '\\').Split('\\')[^1]).Equals("Grok Bot.exe", StringComparison.OrdinalIgnoreCase);
@@ -36,6 +128,27 @@ public static class GrokBotLaunchPolicy
         for (var port = PreferredPort; port < PreferredPort + 50; port++)
             if (port != remembered && !blocked.Contains(port)) yield return port;
     }
+}
+
+/// <summary>A Chromium switch as Chromium reads it on Windows: "--name", "-name" or "/name", the name in any case.</summary>
+public static class ChromiumSwitch
+{
+    /// <summary>The lower-case name and the value after '=' (null when there is none), or null for a plain argument.</summary>
+    public static (string Name, string? Value)? Parse(string argument)
+    {
+        var text = argument.Replace("\"", string.Empty);
+        var body = text.StartsWith("--", StringComparison.Ordinal) ? text[2..]
+            : text.StartsWith('-') || text.StartsWith('/') ? text[1..]
+            : null;
+        if (string.IsNullOrEmpty(body)) return null;
+        var equals = body.IndexOf('=');
+        return equals < 0 ? (body.ToLowerInvariant(), null) : (body[..equals].ToLowerInvariant(), body[(equals + 1)..]);
+    }
+
+    /// <summary>Any remote debugging switch (port, address, pipe and the like).</summary>
+    public static bool IsRemoteDebugging(string argument) =>
+        Parse(argument) is { Name: var name } && name.StartsWith("remote-debugging-", StringComparison.Ordinal);
+
 }
 
 public static class GrokBotTargetCatalog
