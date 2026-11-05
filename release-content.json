@@ -1,5 +1,5 @@
 {
-  "version": "2.2.0",
+  "version": "2.2.1",
   "highlights": [
     "Check for updates goes straight to the newest release from any older version, ordered by version number, and offers prereleases only when includePrereleaseUpdates is turned on in settings.",
     "After Grok Bot updates itself and comes back without Wingman's connection, one prompt gets the Helpers back: press Reconnect, close Grok Bot when asked, and Wingman reopens it with the Helpers.",
