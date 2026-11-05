@@ -61,7 +61,9 @@ internal static class GrokBotStartLinkTests
             Copies++;
             Links[destination] = Links[source];
         }
-        public IEnumerable<string> Files(string folder) => Links.Keys.Where(path => Path.GetDirectoryName(path) == folder).ToArray();
+        public IEnumerable<string> Files(string folder) => Links.Keys.Where(path => Slashes(Path.GetDirectoryName(path)) == Slashes(folder)).ToArray();
+        // Windows reports these test folders with backslashes; compare them with forward slashes on every OS.
+        private static string? Slashes(string? path) => path?.Replace('\\', '/');
     }
 
     private static (GrokBotStartLink Change, MemoryShortcuts Files) Setup(ShortcutLink? existing = null, int minute = 0)
@@ -111,7 +113,7 @@ internal static class GrokBotStartLinkTests
         var backup = change.Apply(9523, GrokBotStartLinkSetting.Off, Ignore);
         var edited = files.Links[Link];
         Equal(Original with { Arguments = Flags9523 }, edited, "only the arguments change: target, folder, icon, AppUserModelID, description kept");
-        Equal(Backups + "/20260101-090000 Grok Bot.lnk", backup, "backup named by time");
+        Equal(Path.Combine(Backups, "20260101-090000 Grok Bot.lnk"), backup, "backup named by time");
         Equal(Original, files.Links[backup!], "backup is the original");
         Equal(GrokBotStartLinkState.Ours, change.State(9523), "with the record: Wingman's pair");
         Equal(GrokBotStartLinkState.Foreign, change.State(null), "without the record it isn't claimed");
