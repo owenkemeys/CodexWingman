@@ -46,6 +46,8 @@ Missing or malformed settings fall back to safe defaults: usage dials enabled an
 }
 ```
 
+Set `includePrereleaseUpdates` to `true` to let Check for updates offer prereleases. It is `false` by default, so only stable releases are offered. Either way the check offers the newest release above the installed version directly, from any older version, ordered by version number (build metadata such as `+abc1234` is ignored). Drafts are never offered.
+
 Set `forceHighPerformanceGpu` to `true` on a hybrid-graphics Windows machine to add Chromium's high-performance-GPU override whenever Wingman launches Codex. It is disabled by default so other installations retain their existing graphics behavior.
 
 Environment variables in additional roots are expanded when the helper starts. Duplicate roots are ignored. The helper always includes the current user's standard local roots:
@@ -82,5 +84,5 @@ T3 web needs the https address of your T3 server and, for automatic sign-in and 
 
 `t3Web.chromePath` overrides Chrome discovery. `t3Web.pairing.label` overrides the session label (default `Wingman T3 web (<PC name>)`). Only https addresses are accepted. Without a pairing folder, T3 web still opens; sign in inside its window with a pairing link from your T3 server, and repeat that when the 30-day session ends. Wingman's T3 web Chrome data stays in `%LOCALAPPDATA%\CodexWingman\t3-web\chrome-data` and its pairing record in `t3-web\pairing.json` (expiry only, no credential).
 
-Grok Bot needs no settings. Wingman uses the standard install (`%LOCALAPPDATA%\Programs\Grok Bot\Grok Bot.exe`) and reads only its local weekly-usage cache under `%APPDATA%\Grok Bot\sand-client-persistence`. It records Grok Bot's debugging port in `%LOCALAPPDATA%\CodexWingman\grok-runtime.json`. The optional Start menu shortcut setting is `%LOCALAPPDATA%\CodexWingman\grok-bot-start-link.json` (missing means off); see [Grok Bot after an update](grok-bot-after-update.md).
+Grok Bot needs no settings. Wingman finds Grok Bot wherever it is installed: a running Grok Bot, the per-user folder (`%LOCALAPPDATA%\Programs\Grok Bot`), the per-machine folder (Program Files), its uninstall entry, then its Start menu shortcut. It reads only its local weekly-usage cache under `%APPDATA%\Grok Bot\sand-client-persistence`. It records Grok Bot's debugging port in `%LOCALAPPDATA%\CodexWingman\grok-runtime.json`. The optional Start menu shortcut setting is `%LOCALAPPDATA%\CodexWingman\grok-bot-start-link.json` (missing means off); see [Grok Bot after an update](grok-bot-after-update.md).
 

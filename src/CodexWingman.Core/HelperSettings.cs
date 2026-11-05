@@ -11,7 +11,8 @@ public sealed record HelperSettings(
     bool OpenCodexOnLaunch = true,
     bool OpenT3CodeOnLaunch = false,
     T3WebSettings? T3Web = null,
-    bool OpenGrokBotOnLaunch = false)
+    bool OpenGrokBotOnLaunch = false,
+    bool IncludePrereleaseUpdates = false)
 {
     public static HelperSettings Default { get; } = new(
         true,
@@ -212,7 +213,8 @@ public static class HelperSettingsStore
                     value.OpenCodexOnLaunch,
                     value.OpenT3CodeOnLaunch,
                     value.T3Web,
-                    value.OpenGrokBotOnLaunch);
+                    value.OpenGrokBotOnLaunch,
+                    value.IncludePrereleaseUpdates);
     }
 
     /// <summary>

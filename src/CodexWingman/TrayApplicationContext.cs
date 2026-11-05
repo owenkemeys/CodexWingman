@@ -1676,7 +1676,11 @@ internal sealed class TrayApplicationContext : ApplicationContext
             var version = typeof(TrayApplicationContext).Assembly.GetName().Version
                 ?? throw new InvalidOperationException("Wingman version is unavailable.");
             var client = new AppReleaseClient(releaseHttp, "Wingman");
-            var check = await client.CheckLatestAsync("owenkemeys/CodexWingman", "Wingman", version);
+            // Offers the newest release from any older version; prereleases only when settings opt in.
+            var channel = HelperSettingsStore.Load(settingsPath).IncludePrereleaseUpdates
+                ? AppReleaseChannel.Prerelease
+                : AppReleaseChannel.Stable;
+            var check = await client.CheckLatestAsync("owenkemeys/CodexWingman", "Wingman", version, channel);
             var release = check.Release;
             if (exiting) return;
             if (release is null)
